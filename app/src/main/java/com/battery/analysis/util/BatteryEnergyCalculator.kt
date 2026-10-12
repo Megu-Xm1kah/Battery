@@ -342,6 +342,30 @@ object BatteryEnergyCalculator {
         }
         val offWattsStr = if (offWatts > 0f) String.format(Locale.getDefault(), "%.2f W", offWatts) else "--"
 
+        // 息屏放电速度（%/h 与 mAh/h）
+        val offHours = overview.screenOffDurationMs / 3600000.0
+        val offRateStr = if (offHours > 0.005) {
+            val percentRate = if (overview.screenOffPercent > 0f) {
+                overview.screenOffPercent / offHours
+            } else if (nominalTotalWh != null && nominalTotalWh > 0f && offWatts > 0f) {
+                (offWatts / nominalTotalWh) * 100.0
+            } else {
+                0.0
+            }
+            val mahRate = if (offMah > 0f) offMah / offHours else 0.0
+            if (percentRate > 0.0 && mahRate > 0.0) {
+                String.format(Locale.getDefault(), "%.1f%%/h (约 %.1f mAh/h)", percentRate, mahRate)
+            } else if (percentRate > 0.0) {
+                String.format(Locale.getDefault(), "%.1f%%/h", percentRate)
+            } else if (mahRate > 0.0) {
+                String.format(Locale.getDefault(), "约 %.1f mAh/h", mahRate)
+            } else {
+                "--"
+            }
+        } else {
+            "--"
+        }
+
         // 亮屏总耗电数据对比
         val onPercentStr = if (overview.screenOnPercent > 0f) {
             String.format(Locale.getDefault(), "%.1f%%", overview.screenOnPercent)
@@ -373,13 +397,39 @@ object BatteryEnergyCalculator {
         }
         val onWattsStr = if (onWatts > 0f) String.format(Locale.getDefault(), "%.2f W", onWatts) else "--"
 
+        // 亮屏放电速度（%/h 与 mAh/h）
+        val onHours = overview.screenOnDurationMs / 3600000.0
+        val onRateStr = if (onHours > 0.005) {
+            val percentRate = if (overview.screenOnPercent > 0f) {
+                overview.screenOnPercent / onHours
+            } else if (nominalTotalWh != null && nominalTotalWh > 0f && onWatts > 0f) {
+                (onWatts / nominalTotalWh) * 100.0
+            } else {
+                0.0
+            }
+            val mahRate = if (onMah > 0f) onMah / onHours else 0.0
+            if (percentRate > 0.0 && mahRate > 0.0) {
+                String.format(Locale.getDefault(), "%.1f%%/h (约 %.1f mAh/h)", percentRate, mahRate)
+            } else if (percentRate > 0.0) {
+                String.format(Locale.getDefault(), "%.1f%%/h", percentRate)
+            } else if (mahRate > 0.0) {
+                String.format(Locale.getDefault(), "约 %.1f mAh/h", mahRate)
+            } else {
+                "--"
+            }
+        } else {
+            "--"
+        }
+
         return buildString {
             append("【息屏耗电】\n")
             append("• 息屏掉电：$offPercentStr（待机 $offDurStr）\n")
+            append("• 放电速度：$offRateStr\n")
             append("• 消耗能量：$offEnergyStr (折合 $offMahStr)\n")
             append("• 平均功率：$offWattsStr\n\n")
             append("【亮屏对比】\n")
             append("• 亮屏掉电：$onPercentStr（时长 $onDurStr）\n")
+            append("• 亮屏放电速度：$onRateStr\n")
             append("• 消耗能量：$onEnergyStr (折合 $onMahStr)\n")
             append("• 平均功率：$onWattsStr\n\n")
             append("💡 说明：\n")
@@ -449,6 +499,30 @@ object BatteryEnergyCalculator {
         }
         val awakeWattsStr = if (awakeWatts > 0f) String.format(Locale.getDefault(), "%.2f W", awakeWatts) else "--"
 
+        // 唤醒放电速度（%/h 与 mAh/h）
+        val awakeHours = overview.screenOffAwakeDurationMs / 3600000.0
+        val awakeRateStr = if (awakeHours > 0.005) {
+            val percentRate = if (overview.screenOffAwakePercent > 0f) {
+                overview.screenOffAwakePercent / awakeHours
+            } else if (nominalTotalWh != null && nominalTotalWh > 0f && awakeWatts > 0f) {
+                (awakeWatts / nominalTotalWh) * 100.0
+            } else {
+                0.0
+            }
+            val mahRate = if (awakeMah > 0f) awakeMah / awakeHours else 0.0
+            if (percentRate > 0.0 && mahRate > 0.0) {
+                String.format(Locale.getDefault(), "%.1f%%/h (约 %.1f mAh/h)", percentRate, mahRate)
+            } else if (percentRate > 0.0) {
+                String.format(Locale.getDefault(), "%.1f%%/h", percentRate)
+            } else if (mahRate > 0.0) {
+                String.format(Locale.getDefault(), "约 %.1f mAh/h", mahRate)
+            } else {
+                "--"
+            }
+        } else {
+            "--"
+        }
+
         val awakeCountStr = if (overview.screenOffAwakeCount != null) {
             val count = overview.screenOffAwakeCount
             val offHours = overview.screenOffDurationMs / 3600000.0
@@ -472,6 +546,7 @@ object BatteryEnergyCalculator {
         return buildString {
             append("【息屏唤醒】\n")
             append("• 唤醒掉电：$awakePercentStr（活跃 $awakeDurStr）\n")
+            append("• 放电速度：$awakeRateStr\n")
             append("• 消耗能量：$awakeEnergyStr (折合 $awakeMahStr)\n")
             append("• 平均功率：$awakeWattsStr\n")
             append("• 唤醒频次：$awakeCountStr\n")
@@ -557,13 +632,23 @@ object BatteryEnergyCalculator {
         }
 
         val deepSleepHours = overview.screenOffDeepSleepDurationMs / 3600000.0
-        val sleepRateStr = if (deepSleepHours > 0.1 && sleepMah > 0f) {
-            val mahPerHour = sleepMah / deepSleepHours
-            if (overview.screenOffDeepSleepPercent > 0f) {
-                val percentPerHour = overview.screenOffDeepSleepPercent / deepSleepHours
-                String.format(Locale.getDefault(), "%.2f %%/h (%.1f mAh/h)", percentPerHour, mahPerHour)
+        val sleepRateStr = if (deepSleepHours > 0.005) {
+            val percentRate = if (overview.screenOffDeepSleepPercent > 0f) {
+                overview.screenOffDeepSleepPercent / deepSleepHours
+            } else if (nominalTotalWh != null && nominalTotalWh > 0f && sleepWatts > 0f) {
+                (sleepWatts / nominalTotalWh) * 100.0
             } else {
-                String.format(Locale.getDefault(), "%.1f mAh/h", mahPerHour)
+                0.0
+            }
+            val mahRate = if (sleepMah > 0f) sleepMah / deepSleepHours else 0.0
+            if (percentRate > 0.0 && mahRate > 0.0) {
+                String.format(Locale.getDefault(), "%.2f%%/h (约 %.1f mAh/h)", percentRate, mahRate)
+            } else if (percentRate > 0.0) {
+                String.format(Locale.getDefault(), "%.2f%%/h", percentRate)
+            } else if (mahRate > 0.0) {
+                String.format(Locale.getDefault(), "约 %.1f mAh/h", mahRate)
+            } else {
+                "--"
             }
         } else {
             "--"
@@ -572,10 +657,11 @@ object BatteryEnergyCalculator {
         return buildString {
             append("【深度睡眠】\n")
             append("• 深睡掉电：$sleepPercentStr（累计 $sleepDurStr）\n")
+            append("• 放电速度：$sleepRateStr\n")
             append("• 消耗能量：$sleepEnergyStr (折合 $sleepMahStr)\n")
             append("• 休眠功率：$sleepWattsStr\n")
             append("• 深度睡眠率：$deepSleepRatioStr\n")
-            append("• 进入休眠：$sleepCountStr（速率 $sleepRateStr）\n\n")
+            append("• 进入休眠：$sleepCountStr\n\n")
             append("💡 说明：\n")
             append("• 灭屏后 CPU 挂起仅留硬件底噪的极低功耗模式；\n")
             append("• 睡眠率越接近 100%，表明待机休眠越充分、耗电越平稳。")
@@ -584,16 +670,19 @@ object BatteryEnergyCalculator {
 
     /**
      * 格式化放电速度卡片（亮屏、息屏、全局）点击弹框展示的详细说明文本。
-     * 全面呈现当前放电速度、最近7天内统计放电速度与有效时长、满电可用时长以及详细原理解释，
+     * 全面呈现当前放电速度、累积7天物理使用时间的统计放电速度与有效时长、满电可用理论时长以及详细物理原理解释，
+     * 在全局卡片中完整展示模式1（全局加权）与模式2（场景占空比融合）两套续航推算结果，
      * 并在亮屏卡片弹框中特别展示预测真实容量（单位：多少Wh（多少mAh））。
      *
      * @param rowType 行分类标识（[ROW_SCREEN_ON] 为亮屏，[ROW_SCREEN_OFF] 为息屏，[ROW_GLOBAL] 为全局）
      * @param currentRatePercentPerHour 当前周期的放电速率（单位：%/h，缺失时为 null）
-     * @param sevenDaysRatePercentPerHour 最近7天内的统计放电速率（单位：%/h，缺失时为 null）
-     * @param sevenDaysDurationMs 最近7天内的有效统计时长（单位：毫秒，缺失时为 null）
-     * @param fullDurationMs 充满电理论可用时长（单位：毫秒，缺失时为 null）
+     * @param sevenDaysRatePercentPerHour 累积7天实际使用时间的统计放电速率（单位：%/h，缺失时为 null）
+     * @param sevenDaysDurationMs 累积7天实际使用时间的有效统计时长（单位：毫秒，缺失时为 null）
+     * @param fullDurationMs 充满电理论可用时长（模式1全局加权，单位：毫秒，缺失时为 null）
      * @param predictedCapacityWh 预测电池真实容量能量值（单位：Wh，若不可用传入 null）
      * @param predictedCapacityMah 预测电池真实容量电荷值（单位：mAh，若不可用传入 null）
+     * @param sceneScreenOnRatio 统计窗口内真实日常亮屏时间占比（取值 0.0f ~ 1.0f，无数据时为 null）
+     * @param sceneFullDurationMs 模式2基于日常场景占空比融合推算的充满电理论综合续航（单位：毫秒，缺失时为 null）
      * @return 格式化后的详细气泡说明字符串
      */
     fun formatDischargeSpeedCardDetailMessage(
@@ -603,7 +692,9 @@ object BatteryEnergyCalculator {
         sevenDaysDurationMs: Long?,
         fullDurationMs: Long?,
         predictedCapacityWh: Float? = null,
-        predictedCapacityMah: Float? = null
+        predictedCapacityMah: Float? = null,
+        sceneScreenOnRatio: Float? = null,
+        sceneFullDurationMs: Long? = null
     ): String {
         val currentRateStr = if (currentRatePercentPerHour != null && currentRatePercentPerHour > 0f) {
             String.format(Locale.getDefault(), "%.1f%%/h", currentRatePercentPerHour)
@@ -627,15 +718,15 @@ object BatteryEnergyCalculator {
                     append("【亮屏放电速度】\n")
                     append("• 当前放电速度：$currentRateStr\n")
                     if (sevenDaysDurStr.isNotBlank()) {
-                        append("• 最近7天内放电速度：$sevenDaysRateStr（统计时长 $sevenDaysDurStr）\n")
+                        append("• 累积7天亮屏放电速度：$sevenDaysRateStr（统计时长 $sevenDaysDurStr）\n")
                     } else {
-                        append("• 最近7天内放电速度：$sevenDaysRateStr\n")
+                        append("• 累积7天亮屏放电速度：$sevenDaysRateStr\n")
                     }
                     append("• 满电亮屏续航：$fullDurationStr\n")
                     append("• 预测真实容量：$capacityStr\n\n")
                     append("💡 说明：\n")
                     append("• 速度由亮屏硬件功耗与电池总容量折算；\n")
-                    append("• 满电续航按最近7天实际使用加权推算；\n")
+                    append("• 满电续航按累积7天实际亮屏使用时间加权推算；\n")
                     append("• 预测容量读取电量计充满容量(FCC)与健康度。")
                 }
             }
@@ -644,30 +735,41 @@ object BatteryEnergyCalculator {
                     append("【息屏放电速度】\n")
                     append("• 当前放电速度：$currentRateStr\n")
                     if (sevenDaysDurStr.isNotBlank()) {
-                        append("• 最近7天内放电速度：$sevenDaysRateStr（统计时长 $sevenDaysDurStr）\n")
+                        append("• 累积7天息屏放电速度：$sevenDaysRateStr（统计时长 $sevenDaysDurStr）\n")
                     } else {
-                        append("• 最近7天内放电速度：$sevenDaysRateStr\n")
+                        append("• 累积7天息屏放电速度：$sevenDaysRateStr\n")
                     }
                     append("• 满电待机时长：$fullDurationStr\n\n")
                     append("💡 说明：\n")
                     append("• 速度反映熄屏待机电量消耗；\n")
-                    append("• 待机时长按最近7天实际待机加权推算；\n")
+                    append("• 待机时长按累积7天实际待机时间加权推算；\n")
                     append("• 由深度休眠底噪与后台唤醒共同构成。")
                 }
             }
             ROW_GLOBAL -> {
+                val sceneFullDurationStr = formatFullDuration(sceneFullDurationMs)
                 buildString {
                     append("【全局放电速度】\n")
                     append("• 当前放电速度：$currentRateStr\n")
                     if (sevenDaysDurStr.isNotBlank()) {
-                        append("• 最近7天内放电速度：$sevenDaysRateStr（统计时长 $sevenDaysDurStr）\n")
+                        append("• 累积7天全局放电速度：$sevenDaysRateStr（统计时长 $sevenDaysDurStr）\n\n")
                     } else {
-                        append("• 最近7天内放电速度：$sevenDaysRateStr\n")
+                        append("• 累积7天全局放电速度：$sevenDaysRateStr\n\n")
                     }
-                    append("• 满电综合续航：$fullDurationStr\n\n")
+                    append("📊 满电综合续航推算（双模型）：\n")
+                    append("• 模式1（全局加权）：$fullDurationStr\n")
+                    append("  基于累积7天全局真实放电功耗线性推算\n")
+                    if (sceneFullDurationMs != null && sceneFullDurationMs > 0L && sceneScreenOnRatio != null) {
+                        val ratioOnStr = String.format(Locale.getDefault(), "%.1f%%", sceneScreenOnRatio * 100f)
+                        val ratioOffStr = String.format(Locale.getDefault(), "%.1f%%", (1.0f - sceneScreenOnRatio) * 100f)
+                        append("• 模式2（场景融合）：$sceneFullDurationStr\n")
+                        append("  按日常习惯 $ratioOnStr 亮屏 + $ratioOffStr 息屏动态加权\n\n")
+                    } else {
+                        append("• 模式2（场景融合）：$sceneFullDurationStr\n\n")
+                    }
                     append("💡 说明：\n")
-                    append("• 综合反映日常整机实际掉电表现；\n")
-                    append("• 综合续航按最近7天综合放电加权推算；\n")
+                    append("• 模式1忠实反映历史全周期能量总积分；\n")
+                    append("• 模式2解构亮屏与待机两态比例；\n")
                     append("• 融合亮屏活跃与息屏待机全周期能耗。")
                 }
             }
@@ -736,7 +838,7 @@ object BatteryEnergyCalculator {
     }
 
     /**
-     * 将满电推算可用时长格式化为紧凑字符串。
+     * 将满电推算可用时长格式化为友好紧凑字符串，精确到分钟（如 "17h07m"、"01d07h15m"）。
      *
      * @param ms 充满电可用物理时长毫秒数
      * @return 格式化后的紧凑时长字符串，数据无效时返回 "--"
@@ -748,7 +850,7 @@ object BatteryEnergyCalculator {
         val hours = (totalSec % 86400L) / 3600L
         val minutes = (totalSec % 3600L) / 60L
         return when {
-            days > 0L -> String.format(Locale.getDefault(), "%02dd%02dh", days, hours)
+            days > 0L -> String.format(Locale.getDefault(), "%02dd%02dh%02dm", days, hours, minutes)
             hours > 0L -> String.format(Locale.getDefault(), "%02dh%02dm", hours, minutes)
             else -> String.format(Locale.getDefault(), "%02dm", minutes)
         }

@@ -341,7 +341,7 @@ class BatteryEnergyCalculatorTest {
     }
 
     /**
-     * 测试亮屏放电速度卡片弹框详细格式化，验证包含“最近7天内”、满电续航及“预测真实容量：多少Wh（多少mAh）”。
+     * 测试亮屏放电速度卡片弹框详细格式化，验证包含“累积7天亮屏放电速度”、满电续航及“预测真实容量：多少Wh（多少mAh）”。
      */
     @Test
     fun testFormatScreenOnDischargeSpeedDetailMessage() {
@@ -357,14 +357,14 @@ class BatteryEnergyCalculatorTest {
 
         assertTrue("标题包含亮屏放电速度", message.contains("【亮屏放电速度】"))
         assertTrue("包含当前放电速度", message.contains("• 当前放电速度：6.3%/h"))
-        assertTrue("包含最近7天内放电速度与统计时长", message.contains("• 最近7天内放电速度：6.1%/h（统计时长 02d05h）"))
+        assertTrue("包含累积7天亮屏放电速度与统计时长", message.contains("• 累积7天亮屏放电速度：6.1%/h（统计时长 02d05h）"))
         assertTrue("包含满电亮屏续航", message.contains("• 满电亮屏续航：16h24m"))
         assertTrue("包含预测真实容量（多少Wh（多少mAh））", message.contains("• 预测真实容量：19.25 Wh (5000 mAh)"))
         assertTrue("包含说明模块", message.contains("💡 说明："))
     }
 
     /**
-     * 测试息屏放电速度卡片弹框详细格式化，验证包含“最近7天内”与对应数值。
+     * 测试息屏放电速度卡片弹框详细格式化，验证包含“累积7天息屏放电速度”与对应数值。
      */
     @Test
     fun testFormatScreenOffDischargeSpeedDetailMessage() {
@@ -378,13 +378,13 @@ class BatteryEnergyCalculatorTest {
 
         assertTrue("标题包含息屏放电速度", message.contains("【息屏放电速度】"))
         assertTrue("当前息屏暂无数据展示--", message.contains("• 当前放电速度：--"))
-        assertTrue("包含最近7天内放电速度与统计时长", message.contains("• 最近7天内放电速度：1.0%/h（统计时长 04d01h）"))
-        assertTrue("包含满电待机时长", message.contains("• 满电待机时长：04d01h"))
+        assertTrue("包含累积7天息屏放电速度与统计时长", message.contains("• 累积7天息屏放电速度：1.0%/h（统计时长 04d01h）"))
+        assertTrue("包含满电待机时长", message.contains("• 满电待机时长：04d01h00m"))
         assertTrue("包含说明模块", message.contains("💡 说明："))
     }
 
     /**
-     * 测试全局放电速度卡片弹框详细格式化，验证包含“最近7天内”与对应数值。
+     * 测试全局放电速度卡片弹框详细格式化，验证包含“累积7天全局放电速度”、模式1（全局加权）与模式2（场景融合）双模型推算（精确到分钟）。
      */
     @Test
     fun testFormatGlobalDischargeSpeedDetailMessage() {
@@ -393,14 +393,54 @@ class BatteryEnergyCalculatorTest {
             currentRatePercentPerHour = 6.3f,
             sevenDaysRatePercentPerHour = 2.8f,
             sevenDaysDurationMs = (6 * 86400 + 7 * 3600) * 1000L, // 06d07h
-            fullDurationMs = (1 * 86400 + 11 * 3600) * 1000L // 01d11h
+            fullDurationMs = (1 * 86400 + 11 * 3600 + 12 * 60) * 1000L, // 01d11h12m
+            sceneScreenOnRatio = 0.25f,
+            sceneFullDurationMs = (1 * 86400 + 15 * 3600 + 35 * 60) * 1000L // 01d15h35m
         )
 
         assertTrue("标题包含全局放电速度", message.contains("【全局放电速度】"))
         assertTrue("包含当前放电速度", message.contains("• 当前放电速度：6.3%/h"))
-        assertTrue("包含最近7天内放电速度与统计时长", message.contains("• 最近7天内放电速度：2.8%/h（统计时长 06d07h）"))
-        assertTrue("包含满电综合续航", message.contains("• 满电综合续航：01d11h"))
+        assertTrue("包含累积7天全局放电速度与统计时长", message.contains("• 累积7天全局放电速度：2.8%/h（统计时长 06d07h）"))
+        assertTrue("包含双模型标题", message.contains("📊 满电综合续航推算（双模型）："))
+        assertTrue("包含模式1全局加权结果（精确到分）", message.contains("• 模式1（全局加权）：01d11h12m"))
+        assertTrue("包含模式2场景融合结果（精确到分）", message.contains("• 模式2（场景融合）：01d15h35m"))
+        assertTrue("包含模式2动态加权说明", message.contains("按日常习惯 25.0% 亮屏 + 75.0% 息屏动态加权"))
         assertTrue("包含说明模块", message.contains("💡 说明："))
+    }
+
+    /**
+     * 测试息屏耗电、唤醒及深度睡眠三个卡片弹框中均包含独立的放电速度行。
+     */
+    @Test
+    fun testSleepAwakeCardDischargeRateDisplay() {
+        val overview = com.battery.analysis.manager.PowerOverviewStats(
+            avgPowerWatts = 0.5f,
+            screenOffPercent = 6.0f,
+            screenOffDurationMs = 5 * 3600 * 1000L, // 5 小时
+            screenOffEnergyWh = 1.155f,
+            screenOffPowerWatts = 0.231f,
+            screenOffDrainMah = 300f,
+            screenOffAwakePercent = 3.5f,
+            screenOffAwakeDurationMs = 1 * 3600 * 1000L, // 1 小时
+            screenOffAwakeEnergyWh = 0.674f,
+            screenOffAwakePowerWatts = 0.674f,
+            screenOffAwakeDrainMah = 175f,
+            screenOffDeepSleepPercent = 2.5f,
+            screenOffDeepSleepDurationMs = 4 * 3600 * 1000L, // 4 小时
+            screenOffDeepSleepEnergyWh = 0.481f,
+            screenOffDeepSleepPowerWatts = 0.12f,
+            screenOffDeepSleepDrainMah = 125f,
+            isScreenOffDecomposedAvailable = true
+        )
+
+        val screenOffMsg = BatteryEnergyCalculator.formatScreenOffCardDetailMessage(overview, 19.25f)
+        assertTrue("息屏弹框包含息屏放电速度", screenOffMsg.contains("• 息屏放电速度："))
+
+        val awakeMsg = BatteryEnergyCalculator.formatAwakeCardDetailMessage(overview, 19.25f)
+        assertTrue("唤醒弹框包含唤醒放电速度", awakeMsg.contains("• 唤醒放电速度："))
+
+        val deepSleepMsg = BatteryEnergyCalculator.formatDeepSleepCardDetailMessage(overview, 19.25f)
+        assertTrue("深度睡眠弹框包含深度睡眠放电速度", deepSleepMsg.contains("• 深度睡眠放电速度："))
     }
 
     /**

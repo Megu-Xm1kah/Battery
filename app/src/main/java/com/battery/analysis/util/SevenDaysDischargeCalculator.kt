@@ -6,26 +6,83 @@ import com.battery.analysis.manager.PowerOverviewStats
 import com.battery.analysis.model.SevenDaysDischargeStats
 
 /**
- * 过去 7 天核心放电统计指标与充满电可用时长物理计算器。
+ * 累积 7 天物理使用时间核心放电统计指标与充满电可用时长物理计算器。
  * 严格基于设备本地数据库真实历史快照记录与当前正在进行的放电会话，
- * 统计 7 天滑动窗口（7 * 24h）内的能量积分与持续物理时长，
- * 严谨换算亮屏、息屏与全局 7 天加权平均放电速率（%/h）并推导充满电理论使用时长。
+ * 按时间倒序独立累加亮屏、息屏与全局三个维度的实际物理放电使用时长（上限为 7 天 = 168 小时），
+ * 超出 168 小时时进行边界物理等比裁剪以确保放电平均功率不变与能量守恒，
+ * 数据不足时忠实保留真实历史累积值绝不虚构数据，严谨换算加权平均放电速率（%/h）并推导充满电理论使用时长（包含模式1全局加权与模式2场景融合两套模型）。
  */
 object SevenDaysDischargeCalculator {
 
     /**
-     * 7 天物理毫秒时长常量（7 * 24 * 3600 * 1000 毫秒）。
+     * 7 天物理毫秒时长常量（7 * 24 * 3600 * 1000 毫秒 = 168 小时）。
      */
     private const val SEVEN_DAYS_MS = 7L * 24L * 3600L * 1000L
 
     /**
-     * 计算过去 7 天的亮屏、息屏与全局加权放电速度及充满电可用时长。
+     * 单个维度（亮屏、息屏或全局）的时长与消耗能量累加器。
+     * 维护目标物理时长（默认 7 天 = 168 小时），并在超出时执行精确的物理等比裁剪。
+     *
+     * @property targetDurationMs 目标累积物理时长上限（单位：毫秒）
+     */
+    internal class MetricAccumulator(
+        private val targetDurationMs: Long = SEVEN_DAYS_MS
+    ) {
+        /**
+         * 当前已累积的实际物理时长（单位：毫秒）。
+         */
+        var accumulatedDurationMs: Long = 0L
+            private set
+
+        /**
+         * 当前已累积的真实消耗物理能量（单位：瓦时 Wh）。
+         */
+        var accumulatedEnergyWh: Double = 0.0
+            private set
+
+        /**
+         * 判断累加器是否已达到或超过目标统计物理时长上限。
+         *
+         * @return 若已达到或超过目标时长则返回 true，否则返回 false
+         */
+        fun isFull(): Boolean = accumulatedDurationMs >= targetDurationMs
+
+        /**
+         * 向累加器中按时间倒序追加一段物理放电记录数据。
+         * 若追加后超出目标时长上限，则对超出部分按剩余所需时长与本条时长的比例进行精确物理等比裁剪，
+         * 使得累加时长恰好等于目标时长，且该条记录的平均放电功率保持物理守恒。
+         *
+         * @param durationMs 追加的放电持续时长（单位：毫秒）
+         * @param energyWh 追加的消耗物理能量（单位：瓦时 Wh）
+         * @return 本次追加中实际被纳入累加器的比例（0.0 至 1.0 之间）
+         */
+        fun add(durationMs: Long, energyWh: Double): Double {
+            if (isFull() || durationMs <= 0L || energyWh <= 0.0) {
+                return 0.0
+            }
+            val remainMs = targetDurationMs - accumulatedDurationMs
+            return if (durationMs <= remainMs) {
+                accumulatedDurationMs += durationMs
+                accumulatedEnergyWh += energyWh
+                1.0
+            } else {
+                val ratio = remainMs.toDouble() / durationMs.toDouble()
+                accumulatedDurationMs += remainMs
+                accumulatedEnergyWh += energyWh * ratio
+                ratio
+            }
+        }
+    }
+
+    /**
+     * 倒序累加计算累积 7 天（168 小时）使用时间的亮屏、息屏与全局加权放电速度及充满电可用时长。
+     * 支持模式1（全局加权）与模式2（场景占空比融合）两套完整续航模型。
      *
      * @param context 应用程序上下文
      * @param currentOverview 当前正在进行的放电会话统计数据（可为空）
      * @param totalCapacityWh 电池标称总能量容量（单位：Wh）
      * @param baseTimestamp 统计基准时间戳（毫秒，默认当前系统时间）
-     * @return 过去 7 天统计计算结果实体 [SevenDaysDischargeStats]
+     * @return 累积 7 天使用时间统计计算结果实体 [SevenDaysDischargeStats]
      */
     fun calculateSevenDaysStats(
         context: Context,
@@ -37,77 +94,21 @@ object SevenDaysDischargeCalculator {
             return SevenDaysDischargeStats()
         }
 
-        val startTimeThreshold = baseTimestamp - SEVEN_DAYS_MS
-        val dbHelper = PowerUsageDbHelper.getInstance(context)
-        val allRecords = dbHelper.getAllRecords()
+        val onAcc = MetricAccumulator(SEVEN_DAYS_MS)
+        val offAcc = MetricAccumulator(SEVEN_DAYS_MS)
+        val globalAcc = MetricAccumulator(SEVEN_DAYS_MS)
 
-        // 筛选出在 7 天时间窗口内的有效放电记录（排除充电异常记录）
-        val recentRecords = allRecords.filter { record ->
-            !record.isCharging && record.id in startTimeThreshold..(baseTimestamp + 60_000L)
-        }
+        // 记录全局样本窗口内实际统计的亮屏与息屏时长，用于推算模式2日常场景占空比
+        var globalScopeOnDur = 0L
+        var globalScopeOffDur = 0L
 
-        var totalOnEnergyWh = 0.0
-        var totalOnDurationMs = 0L
-
-        var totalOffEnergyWh = 0.0
-        var totalOffDurationMs = 0L
-
-        var totalGlobalEnergyWh = 0.0
-        var totalGlobalDurationMs = 0L
-
-        // 1. 遍历历史归档记录进行加权累加
-        for (record in recentRecords) {
-            // 若历史记录中包含未完结的检查点草稿，且当前存在实时会话 currentOverview，则跳过旧草稿以当前最新数据为准
-            if (!record.isCompleted && currentOverview != null) {
-                continue
-            }
-
-            // 全局放电指标
-            val gDur = record.getDurationMs()
-            val gEnergy = if (record.totalEnergyWh > 0f) {
-                record.totalEnergyWh.toDouble()
-            } else if (record.avgPowerWatts > 0f && gDur > 0L) {
-                record.avgPowerWatts.toDouble() * (gDur / 3600000.0)
-            } else {
-                0.0
-            }
-            if (gDur > 0L && gEnergy > 0.0) {
-                totalGlobalDurationMs += gDur
-                totalGlobalEnergyWh += gEnergy
-            }
-
-            // 亮屏放电指标
-            val onDur = record.getScreenOnDurationMs()
-            val onEnergy = if (record.screenOnEnergyWh > 0f) {
-                record.screenOnEnergyWh.toDouble()
-            } else if (record.screenOnPowerWatts > 0f && onDur > 0L) {
-                record.screenOnPowerWatts.toDouble() * (onDur / 3600000.0)
-            } else {
-                0.0
-            }
-            if (onDur > 0L && onEnergy > 0.0) {
-                totalOnDurationMs += onDur
-                totalOnEnergyWh += onEnergy
-            }
-
-            // 息屏放电指标
-            val offDur = record.getScreenOffDurationMs()
-            val offEnergy = if (record.screenOffEnergyWh > 0f) {
-                record.screenOffEnergyWh.toDouble()
-            } else if (record.screenOffPowerWatts > 0f && offDur > 0L) {
-                record.screenOffPowerWatts.toDouble() * (offDur / 3600000.0)
-            } else {
-                0.0
-            }
-            if (offDur > 0L && offEnergy > 0.0) {
-                totalOffDurationMs += offDur
-                totalOffEnergyWh += offEnergy
-            }
-        }
-
-        // 2. 累加当前正在进行的活跃放电会话
+        // 1. 优先累加最新的、当前正在进行的活跃放电会话
         if (currentOverview != null) {
-            val curGDur = if (currentOverview.totalDurationMs > 0L) currentOverview.totalDurationMs else parseDurationTextToMs(currentOverview.totalDurationText)
+            val curGDur = if (currentOverview.totalDurationMs > 0L) {
+                currentOverview.totalDurationMs
+            } else {
+                parseDurationTextToMs(currentOverview.totalDurationText)
+            }
             val curGEnergy = if (currentOverview.totalEnergyWh > 0f) {
                 currentOverview.totalEnergyWh.toDouble()
             } else if (currentOverview.avgPowerWatts > 0f && curGDur > 0L) {
@@ -115,12 +116,13 @@ object SevenDaysDischargeCalculator {
             } else {
                 0.0
             }
-            if (curGDur > 0L && curGEnergy > 0.0) {
-                totalGlobalDurationMs += curGDur
-                totalGlobalEnergyWh += curGEnergy
-            }
+            val gRatio = globalAcc.add(curGDur, curGEnergy)
 
-            val curOnDur = if (currentOverview.screenOnDurationMs > 0L) currentOverview.screenOnDurationMs else parseDurationTextToMs(currentOverview.screenOnDurationText)
+            val curOnDur = if (currentOverview.screenOnDurationMs > 0L) {
+                currentOverview.screenOnDurationMs
+            } else {
+                parseDurationTextToMs(currentOverview.screenOnDurationText)
+            }
             val curOnEnergy = if (currentOverview.screenOnEnergyWh > 0f) {
                 currentOverview.screenOnEnergyWh.toDouble()
             } else if (currentOverview.screenOnPowerWatts > 0f && curOnDur > 0L) {
@@ -128,12 +130,13 @@ object SevenDaysDischargeCalculator {
             } else {
                 0.0
             }
-            if (curOnDur > 0L && curOnEnergy > 0.0) {
-                totalOnDurationMs += curOnDur
-                totalOnEnergyWh += curOnEnergy
-            }
+            onAcc.add(curOnDur, curOnEnergy)
 
-            val curOffDur = if (currentOverview.screenOffDurationMs > 0L) currentOverview.screenOffDurationMs else parseDurationTextToMs(currentOverview.screenOffDurationText)
+            val curOffDur = if (currentOverview.screenOffDurationMs > 0L) {
+                currentOverview.screenOffDurationMs
+            } else {
+                parseDurationTextToMs(currentOverview.screenOffDurationText)
+            }
             val curOffEnergy = if (currentOverview.screenOffEnergyWh > 0f) {
                 currentOverview.screenOffEnergyWh.toDouble()
             } else if (currentOverview.screenOffPowerWatts > 0f && curOffDur > 0L) {
@@ -141,25 +144,121 @@ object SevenDaysDischargeCalculator {
             } else {
                 0.0
             }
-            if (curOffDur > 0L && curOffEnergy > 0.0) {
-                totalOffDurationMs += curOffDur
-                totalOffEnergyWh += curOffEnergy
+            offAcc.add(curOffDur, curOffEnergy)
+
+            if (gRatio > 0.0) {
+                globalScopeOnDur += (curOnDur * gRatio).toLong()
+                globalScopeOffDur += (curOffDur * gRatio).toLong()
             }
         }
 
-        // 3. 计算 7 天加权平均放电速率（%/h）与充满电可用时长（毫秒）
-        val screenOnRate = computeRate(totalOnEnergyWh, totalOnDurationMs, totalCapacityWh)
-        val screenOffRate = computeRate(totalOffEnergyWh, totalOffDurationMs, totalCapacityWh)
-        val globalRate = computeRate(totalGlobalEnergyWh, totalGlobalDurationMs, totalCapacityWh)
+        // 2. 倒序加载历史归档记录（getAllRecords 已默认按 id DESC 倒序排序）
+        val dbHelper = PowerUsageDbHelper.getInstance(context)
+        val allRecords = dbHelper.getAllRecords()
 
+        // 筛选符合基准时间戳的历史记录（排除充电异常记录与未来时间戳记录）
+        val eligibleRecords = allRecords.filter { record ->
+            !record.isCharging && record.id <= (baseTimestamp + 60_000L)
+        }
+
+        for (record in eligibleRecords) {
+            // 若历史记录中包含未完结的检查点草稿，且当前存在实时会话 currentOverview，则跳过旧草稿以当前最新数据为准
+            if (!record.isCompleted && currentOverview != null) {
+                continue
+            }
+
+            // 若三个维度均已累积满 7 天（168 小时），提前终止遍历以提高性能
+            if (onAcc.isFull() && offAcc.isFull() && globalAcc.isFull()) {
+                break
+            }
+
+            val onDur = record.getScreenOnDurationMs()
+            val offDur = record.getScreenOffDurationMs()
+
+            // 全局放电指标倒序累加
+            if (!globalAcc.isFull()) {
+                val gDur = record.getDurationMs()
+                val gEnergy = if (record.totalEnergyWh > 0f) {
+                    record.totalEnergyWh.toDouble()
+                } else if (record.avgPowerWatts > 0f && gDur > 0L) {
+                    record.avgPowerWatts.toDouble() * (gDur / 3600000.0)
+                } else {
+                    0.0
+                }
+                val gRatio = globalAcc.add(gDur, gEnergy)
+                if (gRatio > 0.0) {
+                    globalScopeOnDur += (onDur * gRatio).toLong()
+                    globalScopeOffDur += (offDur * gRatio).toLong()
+                }
+            }
+
+            // 亮屏放电指标倒序累加
+            if (!onAcc.isFull()) {
+                val onEnergy = if (record.screenOnEnergyWh > 0f) {
+                    record.screenOnEnergyWh.toDouble()
+                } else if (record.screenOnPowerWatts > 0f && onDur > 0L) {
+                    record.screenOnPowerWatts.toDouble() * (onDur / 3600000.0)
+                } else {
+                    0.0
+                }
+                onAcc.add(onDur, onEnergy)
+            }
+
+            // 息屏放电指标倒序累加
+            if (!offAcc.isFull()) {
+                val offEnergy = if (record.screenOffEnergyWh > 0f) {
+                    record.screenOffEnergyWh.toDouble()
+                } else if (record.screenOffPowerWatts > 0f && offDur > 0L) {
+                    record.screenOffPowerWatts.toDouble() * (offDur / 3600000.0)
+                } else {
+                    0.0
+                }
+                offAcc.add(offDur, offEnergy)
+            }
+        }
+
+        // 3. 计算累积 7 天加权平均放电速率（%/h）与充满电可用理论时长（毫秒）
+        val screenOnRate = computeRate(onAcc.accumulatedEnergyWh, onAcc.accumulatedDurationMs, totalCapacityWh)
+        val screenOffRate = computeRate(offAcc.accumulatedEnergyWh, offAcc.accumulatedDurationMs, totalCapacityWh)
+        val globalRate = computeRate(globalAcc.accumulatedEnergyWh, globalAcc.accumulatedDurationMs, totalCapacityWh)
+
+        // 模式1：充满电理论可用时长（基于累积 7 天各维度加权平均功耗）
         val fullOnDuration = computeFullDurationMs(screenOnRate)
         val fullOffDuration = computeFullDurationMs(screenOffRate)
         val fullGlobalDuration = computeFullDurationMs(globalRate)
 
-        // 实际有效统计时长（有多少显示多少，最长不超过 7 天）
-        val actualOnDur = if (screenOnRate != null && totalOnDurationMs > 0L) totalOnDurationMs.coerceAtMost(SEVEN_DAYS_MS) else null
-        val actualOffDur = if (screenOffRate != null && totalOffDurationMs > 0L) totalOffDurationMs.coerceAtMost(SEVEN_DAYS_MS) else null
-        val actualGlobalDur = if (globalRate != null && totalGlobalDurationMs > 0L) totalGlobalDurationMs.coerceAtMost(SEVEN_DAYS_MS) else null
+        // 模式2：日常场景占空比融合推算（基于真实亮屏与息屏时间占比动态加权）
+        val totalScopeDur = globalScopeOnDur + globalScopeOffDur
+        val sceneRatio = if (totalScopeDur > 0L && globalScopeOnDur >= 0L) {
+            (globalScopeOnDur.toDouble() / totalScopeDur.toDouble()).toFloat()
+        } else {
+            null
+        }
+
+        val (sceneRate, sceneFullDuration) = if (sceneRatio != null && screenOnRate != null && screenOffRate != null) {
+            val compositeRate = (sceneRatio * screenOnRate) + ((1.0f - sceneRatio) * screenOffRate)
+            val compositeFullDur = computeFullDurationMs(compositeRate)
+            Pair(compositeRate, compositeFullDur)
+        } else {
+            Pair(null, null)
+        }
+
+        // 实际有效累积时长（数据不足时如实返回实际值，上限精确为 7 天使用时长 168 小时）
+        val actualOnDur = if (screenOnRate != null && onAcc.accumulatedDurationMs > 0L) {
+            onAcc.accumulatedDurationMs
+        } else {
+            null
+        }
+        val actualOffDur = if (screenOffRate != null && offAcc.accumulatedDurationMs > 0L) {
+            offAcc.accumulatedDurationMs
+        } else {
+            null
+        }
+        val actualGlobalDur = if (globalRate != null && globalAcc.accumulatedDurationMs > 0L) {
+            globalAcc.accumulatedDurationMs
+        } else {
+            null
+        }
 
         return SevenDaysDischargeStats(
             screenOnDischargeRatePercentPerHour = screenOnRate,
@@ -170,19 +269,22 @@ object SevenDaysDischargeCalculator {
             globalDurationMs = actualGlobalDur,
             fullChargeScreenOnDurationMs = fullOnDuration,
             fullChargeScreenOffDurationMs = fullOffDuration,
-            fullChargeGlobalDurationMs = fullGlobalDuration
+            fullChargeGlobalDurationMs = fullGlobalDuration,
+            sceneScreenOnRatio = sceneRatio,
+            sceneCompositeRatePercentPerHour = sceneRate,
+            fullChargeSceneCompositeDurationMs = sceneFullDuration
         )
     }
 
     /**
-     * 计算指定能耗与时长下的每小时放电百分比速率（%/h）。
+     * 计算指定能量与时长下的每小时放电百分比速率（%/h）。
      *
-     * @param totalEnergyWh 消耗总能量（单位：Wh）
-     * @param durationMs 对应总时长（单位：毫秒）
+     * @param totalEnergyWh 消耗总物理能量（单位：Wh）
+     * @param durationMs 对应总物理时长（单位：毫秒）
      * @param totalCapacityWh 电池标称总能量容量（单位：Wh）
      * @return 每小时放电速率百分比（%/h），无数据或无效时返回 null
      */
-    private fun computeRate(totalEnergyWh: Double, durationMs: Long, totalCapacityWh: Float): Float? {
+    fun computeRate(totalEnergyWh: Double, durationMs: Long, totalCapacityWh: Float): Float? {
         if (durationMs <= 0L || totalEnergyWh <= 0.0 || totalCapacityWh <= 0f) {
             return null
         }
@@ -193,27 +295,27 @@ object SevenDaysDischargeCalculator {
     }
 
     /**
-     * 根据放电速率严谨推算充满电（100%）理论可用物理时长（毫秒）。
+     * 根据放电速率严谨推算充满电（100%）理论可用物理时长（单位：毫秒）。
      *
-     * @param ratePercentPerHour 每小时放电百分比（%/h）
+     * @param ratePercentPerHour 每小时放电百分比速率（%/h）
      * @return 充满电理论续航物理毫秒数，速率缺失或无效时返回 null
      */
-    private fun computeFullDurationMs(ratePercentPerHour: Float?): Long? {
+    fun computeFullDurationMs(ratePercentPerHour: Float?): Long? {
         if (ratePercentPerHour == null || ratePercentPerHour <= 0f) {
             return null
         }
-        val fullHours = 100.0 / ratePercentPerHour
-        val fullMs = (fullHours * 3600.0 * 1000.0).toLong()
+        val fullHours = 100.0 / ratePercentPerHour.toDouble()
+        val fullMs = Math.round(fullHours * 3600.0 * 1000.0)
         return if (fullMs > 0L) fullMs else null
     }
 
     /**
      * 将紧凑时长字符串解析还原为物理毫秒数。
      *
-     * @param text 格式化时长字符串
+     * @param text 格式化时长字符串（如 "1d2h"、"3h20m"）
      * @return 解析得到的物理毫秒数
      */
-    private fun parseDurationTextToMs(text: String): Long {
+    fun parseDurationTextToMs(text: String): Long {
         if (text.isBlank() || text == "--") return 0L
         var totalMs = 0L
         val dMatch = Regex("(\\d+)d").find(text)

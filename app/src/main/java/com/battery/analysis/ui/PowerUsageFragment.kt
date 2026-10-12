@@ -1386,7 +1386,9 @@ class PowerUsageFragment : Fragment() {
             sevenDaysDurationMs = sevenDaysDurationMs,
             fullDurationMs = fullDurationMs,
             predictedCapacityWh = totalCapacityWh,
-            predictedCapacityMah = capacityMah
+            predictedCapacityMah = capacityMah,
+            sceneScreenOnRatio = if (rowType == ROW_GLOBAL) sevenDays?.sceneScreenOnRatio else null,
+            sceneFullDurationMs = if (rowType == ROW_GLOBAL) sevenDays?.fullChargeSceneCompositeDurationMs else null
         )
         if (message.isNotBlank()) {
             showBubbleTooltip(anchorView, message, autoDismissMs = 0L)

@@ -6097,6 +6097,148 @@ class PowerUsageCalculationTest {
         assertTrue("深度睡眠弹框文案包含深度睡眠率", message.contains("• 深度睡眠率："))
         assertTrue("深度睡眠弹框文案包含进入休眠", message.contains("• 进入休眠：1 次"))
     }
+
+    /**
+     * 验证跨刷新周期深度睡眠与唤醒能量的单调性保护机制：
+     * 针对用户实测从 06:21（息屏 6h42m，深睡 6h29m）演进到 07:28（息屏 7h47m，深睡 7h32m）时，
+     * 底层系统突然上报静态固化的 Device standby（320mAh / 1.232Wh）导致旧逻辑深睡能量逆向暴跌 0.94Wh、唤醒功耗跳变 5.65W 的缺陷。
+     * 验证在单调性护盾保护下，深睡能量严格只增不减，唤醒功耗合理平滑，且严格保持物理能量守恒。
+     */
+    @Test
+    fun testScreenOffDecomposedEnergyMonotonicityAcrossRefresh() {
+        // T1时刻（06:21）：息屏 6h42m，深睡 6h29m，唤醒 13m，息屏总能耗 2.254Wh
+        val t1ScreenOffMs = 24_120_000L
+        val t1DeepSleepMs = 23_340_000L
+        val t1AwakeMs = 780_000L
+        val t1OffEnergyWh = 2.254f
+
+        val t1Result = PowerUsageManager.calculateScreenOffAwakeAndDeepSleepEnergy(
+            offEnergyWh = t1OffEnergyWh,
+            screenOffMs = t1ScreenOffMs,
+            deepSleepMs = t1DeepSleepMs,
+            awakeMs = t1AwakeMs,
+            rawSleepDrainMah = 585.2f,
+            rawAwakeDrainMah = 0f,
+            nominalVoltageVolts = 3.85f
+        )
+
+        // 验证 T1 初始结算：深睡吸收大部分能量，唤醒合理分配
+        assertTrue("T1深睡能耗应大于 2.0Wh", t1Result.deepSleepEnergyWh > 2.0f)
+        assertEquals("T1能量严格守恒", t1OffEnergyWh, t1Result.deepSleepEnergyWh + t1Result.awakeEnergyWh, 0.001f)
+
+        // T2时刻（07:28）：息屏 7h47m，深睡 7h32m，唤醒 15m，息屏总能耗 2.720Wh
+        // 系统 dumpsys 此时给出了滞后的静态理论待机 Device standby 320.0mAh (1.232Wh)
+        val t2ScreenOffMs = 28_020_000L
+        val t2DeepSleepMs = 27_120_000L
+        val t2AwakeMs = 900_000L
+        val t2OffEnergyWh = 2.720f
+        val t2KernelStandbyMah = 320.0f // 静态理论参数
+
+        val t2Result = PowerUsageManager.calculateScreenOffAwakeAndDeepSleepEnergy(
+            offEnergyWh = t2OffEnergyWh,
+            screenOffMs = t2ScreenOffMs,
+            deepSleepMs = t2DeepSleepMs,
+            awakeMs = t2AwakeMs,
+            rawSleepDrainMah = t2KernelStandbyMah,
+            rawAwakeDrainMah = 0f,
+            confirmedDeepSleepEnergyWh = t1Result.deepSleepEnergyWh,
+            confirmedDeepSleepDurationMs = t1DeepSleepMs,
+            confirmedAwakeEnergyWh = t1Result.awakeEnergyWh,
+            confirmedAwakeDurationMs = t1AwakeMs
+        )
+
+        // 验证：
+        // 1. 深睡能耗在放电周期内只增不减（单调性保护），绝不从 2.17Wh 暴跌到 1.232Wh
+        assertTrue("深睡能量在持续待机放电中必须保持单调非递减", t2Result.deepSleepEnergyWh >= t1Result.deepSleepEnergyWh)
+        // 2. 唤醒功率绝不能跳变飙升到 5.65W
+        assertTrue("唤醒功率绝不能发生 5.65W 爆表跳变", t2Result.awakeWatts < 2.5f)
+        // 3. 严格能量守恒
+        assertEquals("深睡与唤醒能量之和严格守恒等于总息屏能耗", t2OffEnergyWh, t2Result.deepSleepEnergyWh + t2Result.awakeEnergyWh, 0.001f)
+    }
+
+    /**
+     * 验证极小唤醒比例伴随底层静态理论待机偏小时，小分母残差自适应平衡机制：
+     * 当深睡占比高达 97%（唤醒仅 15 分钟），若底层静态理论待机电量远低于实际整机息屏耗电，
+     * 杜绝将巨额未归因残差全部推给 15 分钟唤醒导致功率被放大数十倍（如 5.65W），
+     * 确保唤醒功耗合理处于真实息屏活跃区间，同时保持物理能量完全守恒。
+     */
+    @Test
+    fun testAwakePowerSurgeAvoidanceUnderSmallAwakeFractionWithStaleKernelDrain() {
+        val screenOffMs = 28_020_000L // 7h47m (7.783h)
+        val deepSleepMs = 27_120_000L // 7h32m
+        val awakeMs = 900_000L // 15m (0.25h)
+        val offEnergyWh = 2.720f // 实际息屏耗电 2.72Wh
+        val staleKernelSleepMah = 320f // 系统静态参数待机 1.232Wh (仅 0.158W)
+
+        val result = PowerUsageManager.calculateScreenOffAwakeAndDeepSleepEnergy(
+            offEnergyWh = offEnergyWh,
+            screenOffMs = screenOffMs,
+            deepSleepMs = deepSleepMs,
+            awakeMs = awakeMs,
+            rawSleepDrainMah = staleKernelSleepMah,
+            rawAwakeDrainMah = 0f,
+            nominalVoltageVolts = 3.85f
+        )
+
+        // 验证：
+        // 1. 唤醒功率被自适应平衡，绝不飙升至 5.65W 异常数值
+        assertTrue("唤醒功率绝不允许高达 5.65W，必须处于合理活跃待机区间", result.awakeWatts < 3.0f)
+        // 2. 深度睡眠功耗真实反映实际待机基底（大于 0.2W），避免被静态理论参数过度压低至 0.15W
+        assertTrue("深度睡眠功耗必须大于 0.2W", result.deepSleepWatts >= 0.2f)
+        // 3. 严格能量守恒
+        assertEquals("深睡与唤醒能量必须严格守恒等于息屏总能耗", offEnergyWh, result.deepSleepEnergyWh + result.awakeEnergyWh, 0.001f)
+    }
+
+    /**
+     * 验证当同时存在实测采样点与系统底层 dumpsys 时，算法优先采信实测物理采样点：
+     * 针对图 2（07:28）实测场景，息屏 7h47m 消耗 2.720Wh，唤醒仅 15 分钟。
+     * 此时系统 dumpsys 根据 power_profile.xml 静态常数机械给出了 320mAh（1.232Wh / 0.16W）理论待机；
+     * 而硬件库仑计在息屏阶段持续采得真实待机底噪（0.25W）与实测唤醒功率（1.2W、1.5W）。
+     * 验证算法优先采纳硬件实测物理采样点，唤醒功率严格对齐实测活跃功耗（杜绝 5.65W 爆表），
+     * 深睡功率真实反映整机待机放电，且严格满足能量守恒定律。
+     */
+    @Test
+    fun testScreenOffDecompositionPrioritizesRealtimeSamplesOverKernelDrain() {
+        val screenOffMs = 28_020_000L // 7h47m (7.7833h)
+        val deepSleepMs = 27_120_000L // 7h32m (7.5333h)
+        val awakeMs = 900_000L // 15m (0.25h)
+        val offEnergyWh = 2.720f // 息屏总耗电 2.720Wh
+        val staleKernelSleepMah = 320.0f // 系统静态参数待机 1.232Wh (仅 0.16W)
+
+        // 构造硬件实测瞬时放电采样点序列：包含实测静止底噪（0.25W）与实测唤醒活跃样本（1.2W、1.5W）
+        val samples = listOf(
+            PowerDischargePoint(1000L, 0f, 82, 3.85f, 30f, 0.25f, emptyList(), false),
+            PowerDischargePoint(2000L, 0f, 82, 3.85f, 30f, 0.25f, emptyList(), false),
+            PowerDischargePoint(3000L, 0f, 82, 3.85f, 30f, 0.25f, emptyList(), false),
+            PowerDischargePoint(4000L, 0f, 82, 3.85f, 30f, 1.20f, emptyList(), false), // 实测唤醒活跃
+            PowerDischargePoint(5000L, 0f, 82, 3.85f, 30f, 1.50f, emptyList(), false)  // 实测唤醒活跃
+        )
+
+        val result = PowerUsageManager.calculateScreenOffAwakeAndDeepSleepEnergy(
+            offEnergyWh = offEnergyWh,
+            screenOffMs = screenOffMs,
+            deepSleepMs = deepSleepMs,
+            awakeMs = awakeMs,
+            rawSleepDrainMah = staleKernelSleepMah, // 系统静态数据
+            rawAwakeDrainMah = 0f,
+            samples = samples, // 硬件实测数据
+            nominalVoltageVolts = 3.85f
+        )
+
+        // 验证：
+        // 1. 拆解有效可用
+        assertTrue("实测采样驱动拆解必须有效可用", result.isDecomposedAvailable)
+
+        // 2. 唤醒功率严格对齐硬件实测活跃范围，绝不允许飙升至 5.65W
+        assertTrue("唤醒功率必须合理反映实测活跃状态（< 2.5W），杜绝 5.65W 爆表", result.awakeWatts < 2.5f)
+        assertTrue("唤醒功率必须大于实测静止底噪", result.awakeWatts > result.deepSleepWatts)
+
+        // 3. 深度睡眠功耗基于实测待机底噪（>= 0.25W），绝不被系统静态 0.16W 盲从压低
+        assertTrue("深度睡眠功耗必须忠实反映实测底噪（>= 0.25W）", result.deepSleepWatts >= 0.24f)
+
+        // 4. 严格能量守恒
+        assertEquals("深睡与唤醒能量总和严格守恒等于息屏总能耗", offEnergyWh, result.deepSleepEnergyWh + result.awakeEnergyWh, 0.001f)
+    }
 }
 
 
