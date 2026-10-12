@@ -534,7 +534,7 @@
 
     <!-- 充电核心指标气泡注解说明 -->
     <string name="charging_annotation_battery_power">• 电池端充放电实时功率 (W)\n• 当前电芯两端的实时能量流动速率（当前电压 × 当前电流）。\n• 正值 (+) 表示电芯正在充入电量，负值 (-) 表示电芯正在对外放电。</string>
-    <string name="charging_annotation_usb_power" formatted="false">• 充电器输入端预估总功率 (W)\n• 充电器向手机端输入的总功率。基于电池实时功率与开关充电电路能效（约 88%~90%）物理折算。</string>
+    <string name="charging_annotation_usb_power" formatted="false">• 充电器 USB 接口输入总功率 (W)\n• 充电器向手机 Type-C 端口输入的实时物理功率。\n• 需底层内核与硬件传感器支持采集该接口节点。无法直接获取真实硬件传感器读数时展示为“--”，杜绝经验折算与虚假估算。</string>
     <string name="charging_annotation_avg_power">• 本次充电全程平均功率 (W)\n• 自连接充电器以来的时间加权平准充电功率，真实反映整段快充过程的综合能量供给效率与温控表现。</string>
     <string name="charging_annotation_max_power">• 本次充电最高瞬时功率 (W)\n• 记录本次充电会话期间录得的最大瞬时峰值，反映充电器与手机快充协议握手时的最大瞬时承载上限。</string>
     <string name="charging_annotation_temp">• 电池电芯实时温度 (℃)\n• 由电池内置 NTC 热敏电阻传感器实时采样，反映电芯当前热负荷。过高温度（>42℃）将触发系统保护机制以保障安全。</string>

@@ -246,6 +246,57 @@ object SysfsBatterySampler {
         "/sys/class/power_supply/qcom-battery/status"
     )
 
+    /** USB 输入端口电压传感器候选 sysfs 路径列表 */
+    private val USB_VOLTAGE_PATHS = listOf(
+        "/sys/class/power_supply/usb/voltage_now",
+        "/sys/class/power_supply/usb/voltage_max",
+        "/sys/class/power_supply/main/voltage_now",
+        "/sys/class/power_supply/charger/voltage_now",
+        "/sys/class/power_supply/tcpm-source-psy-0/voltage_now"
+    )
+
+    /** USB 输入端口电流传感器候选 sysfs 路径列表 */
+    private val USB_CURRENT_PATHS = listOf(
+        "/sys/class/power_supply/usb/current_now",
+        "/sys/class/power_supply/usb/input_current_now",
+        "/sys/class/power_supply/main/current_now",
+        "/sys/class/power_supply/charger/current_now",
+        "/sys/class/power_supply/tcpm-source-psy-0/current_now"
+    )
+
+    /**
+     * 尝试读取硬件 USB 充电输入端口的真实物理功率（单位：瓦特 W）。
+     * 依次探测常见 Linux 内核充电芯片暴露的 USB 供电硬件传感器节点（电压与输入电流），
+     * 仅当硬件真实暴露有效物理节点时如实计算并返回真实功率；
+     * 若未插入充电器、节点不存在或无法直接获取真实读数时，如实返回 null，严禁假数据或人工经验能效折算。
+     *
+     * @return 硬件 USB 端口真实物理输入功率（单位：W），无法直接获取时返回 null
+     */
+    fun getUsbInputPowerWatts(): Float? {
+        var volt: Float? = null
+        for (path in USB_VOLTAGE_PATHS) {
+            val v = tryReadVoltageFile(path)
+            if (v != null && v >= 4.0f) {
+                volt = v
+                break
+            }
+        }
+        if (volt == null) return null
+
+        var currentMa: Float? = null
+        for (path in USB_CURRENT_PATHS) {
+            val c = tryReadCurrentFile(path)
+            if (c != null && c > 0f) {
+                currentMa = c
+                break
+            }
+        }
+        if (currentMa == null) return null
+
+        val power = (volt * currentMa) / 1000f
+        return if (power > 0.05f) power else null
+    }
+
     /**
      * 已验证可用的状态 sysfs 节点路径缓存。
      */

@@ -1721,10 +1721,10 @@ class PowerUsageFragment : Fragment() {
         }
         chargingView.tvMetricBatteryPower.text = batteryPowerText
 
-        val usbPowerText = if (summary.isCharging && pWatts > 0.05f) {
-            // 开关降压充电电路常规转换效率约为 88%~90%，按物理转换能效折算输入端功率（取代粗暴硬编码 +1.8W）
-            val estimatedUsb = pWatts / 0.88f
-            String.format(Locale.getDefault(), "≈%.1fW", estimatedUsb)
+        // USB 输入功率：严格遵循方案 B，仅呈现底层真实硬件传感器物理采样，严禁任何人工经验折算（如除以 0.88f）
+        val usbRealWatts = com.battery.analysis.util.SysfsBatterySampler.getUsbInputPowerWatts()
+        val usbPowerText = if (usbRealWatts != null && usbRealWatts > 0.05f) {
+            String.format(Locale.getDefault(), "%.1fW", usbRealWatts)
         } else if (summary.isCharging) {
             "--"
         } else {
