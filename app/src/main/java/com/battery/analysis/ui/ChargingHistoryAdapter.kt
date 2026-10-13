@@ -242,7 +242,19 @@ class ChargingHistoryAdapter(
             oldItem: ChargingHistoryRecord,
             newItem: ChargingHistoryRecord
         ): Boolean {
-            return oldItem == newItem
+            return oldItem.id == newItem.id &&
+                oldItem.startTimestamp == newItem.startTimestamp &&
+                oldItem.endTimestamp == newItem.endTimestamp &&
+                oldItem.durationMs == newItem.durationMs &&
+                oldItem.startLevel == newItem.startLevel &&
+                oldItem.endLevel == newItem.endLevel &&
+                oldItem.levelGain == newItem.levelGain &&
+                oldItem.chargedEnergyWh == newItem.chargedEnergyWh &&
+                oldItem.avgPowerWatts == newItem.avgPowerWatts &&
+                oldItem.maxPowerWatts == newItem.maxPowerWatts &&
+                oldItem.maxTemperature == newItem.maxTemperature &&
+                oldItem.chargeType == newItem.chargeType &&
+                oldItem.recordTime == newItem.recordTime
         }
     }
 }

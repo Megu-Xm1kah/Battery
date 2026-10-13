@@ -478,6 +478,27 @@
     <string name="power_history_banner_format">📌 Viewing power snapshot: %s</string>
     <string name="power_history_loaded_toast">Power usage snapshot loaded</string>
     <string name="power_history_app_count_format">%d apps</string>
+    <string name="power_history_summary_title">Discharge Summary</string>
+    <string name="power_history_summary_screen_on">Screen On</string>
+    <string name="power_history_summary_screen_off">Screen Off</string>
+    <string name="power_history_summary_total">Total</string>
+    <string name="power_history_summary_screen_on_duration">Screen-on Time</string>
+    <string name="power_history_summary_screen_off_duration">Screen-off Time</string>
+    <string name="power_history_summary_total_duration">Total Time</string>
+    <string name="power_history_summary_avg_power">Avg Power</string>
+    <string name="power_history_summary_composite_power">Total Avg Power</string>
+    <string name="power_history_summary_drain_rate">Drain Rate</string>
+    <string name="power_history_summary_total_drain_rate">Total Drain Rate</string>
+    <string name="power_history_summary_sub_format">%1$d records · %2$.1f Wh</string>
+    <string name="power_history_summary_sub_no_energy_format">%1$d records</string>
+    <string name="power_history_summary_dialog_title">Power Usage Summary Details</string>
+
+    <!-- Charging History Summary Board & Dialog -->
+    <string name="charging_history_summary_title">Charging Summary</string>
+    <string name="charging_history_summary_screen_on">Screen On</string>
+    <string name="charging_history_summary_screen_off">Screen Off</string>
+    <string name="charging_history_summary_total">Total</string>
+    <string name="charging_history_summary_dialog_title">Charging History Summary Details</string>
 
     <!-- Charging Statistics & Smart Detection -->
     <string name="tab_power_usage">Power Usage</string>
@@ -632,6 +653,8 @@
     <string name="settings_daemon_btn_adb">ADB Guide</string>
     <string name="dialog_daemon_adb_title">Privileged Daemon Guide</string>
     <string name="dialog_daemon_adb_content">The privileged daemon is spawned directly by app_process under Linux init (PID 1) with OOM -1000 immunity, completely unaffected by task killer or vendor battery managers.\n\n[PC ADB Method]:\n1. Connect phone to PC and enable USB Debugging;\n2. Click the button below to copy the ADB launch command;\n3. Paste and run in terminal (cmd / PowerShell / Terminal) to start in background.\n\n[Root / Shizuku]:\nIf device is rooted or Shizuku is authorized, simply click the button to launch directly.</string>
+    <string name="dialog_daemon_adb_start_cmd_title">ADB Launch Command:</string>
+    <string name="dialog_daemon_adb_stop_cmd_title">ADB Stop Command:</string>
     <string name="btn_copy_adb_cmd">Copy ADB Start Command</string>
     <string name="btn_copy_adb_stop_cmd">Copy ADB Stop Command</string>
     <string name="toast_daemon_started">Privileged daemon started</string>

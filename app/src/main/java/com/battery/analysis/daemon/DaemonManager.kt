@@ -132,7 +132,7 @@ object DaemonManager {
      * @return 停止守护进程的 adb shell 命令
      */
     fun getAdbStopCommand(): String {
-        return "adb shell \"touch /data/local/tmp/battery_daemon.stop && pkill -f com.battery.analysis.daemon.BatteryDaemonServer; rm -f /data/local/tmp/battery_daemon.status /data/local/tmp/battery_daemon.stop /data/local/tmp/battery_daemon.lock\""
+        return "adb shell \"touch /data/local/tmp/battery_daemon.stop && pkill -f '[c]om.battery.analysis.daemon.BatteryDaemonServer'; rm -f /data/local/tmp/battery_daemon.status /data/local/tmp/battery_daemon.stop /data/local/tmp/battery_daemon.lock\""
     }
 
     /**

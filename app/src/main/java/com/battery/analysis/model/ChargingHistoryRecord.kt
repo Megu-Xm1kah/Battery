@@ -116,6 +116,18 @@ data class ChargingHistoryRecord(
     }
 
     /**
+     * 本地缓存的起止时间范围文本（通过 lazy 懒加载仅计算一次，消除列表滑动复用时的重复计算与 GC 开销）。
+     */
+    @delegate:Transient
+    private val cachedFormattedTimeRange: String by lazy { computeFormattedTimeRange() }
+
+    /**
+     * 本地缓存的时长及电量增量摘要文本（通过 lazy 懒加载仅计算一次）。
+     */
+    @delegate:Transient
+    private val cachedFormattedDurationAndGain: String by lazy { computeFormattedDurationAndGain() }
+
+    /**
      * 解析并获取本次充电记录的起止时间范围文本（包含开始时间与结束时间）。
      * 若起止为同一天则显示为 "yyyy/MM/dd HH:mm~HH:mm"；
      * 若起止为同年跨天则显示为 "yyyy/MM/dd HH:mm~MM/dd HH:mm"（去掉结束时间年份）；
@@ -124,24 +136,33 @@ data class ChargingHistoryRecord(
      * @return 格式化后的起止时间范围字符串
      */
     fun getFormattedTimeRange(): String {
-        val dateFormat = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
-        val timeOnlyFormat = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
-        val dayOnlyFormat = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.getDefault())
-        val yearOnlyFormat = java.text.SimpleDateFormat("yyyy", java.util.Locale.getDefault())
-        val monthDayTimeFormat = java.text.SimpleDateFormat("MM/dd HH:mm", java.util.Locale.getDefault())
+        return cachedFormattedTimeRange
+    }
 
+    /**
+     * 实际计算起止时间范围文本的内部高效推导方法。
+     *
+     * @return 格式化后的起止时间范围字符串
+     */
+    private fun computeFormattedTimeRange(): String {
         val startTs = if (startTimestamp > 0L) startTimestamp else (endTimestamp - durationMs).coerceAtLeast(0L)
         val endTs = if (endTimestamp > 0L) endTimestamp else id
 
         val startDate = java.util.Date(startTs)
         val endDate = java.util.Date(endTs)
 
-        return if (dayOnlyFormat.format(startDate) == dayOnlyFormat.format(endDate)) {
-            "${dateFormat.format(startDate)}~${timeOnlyFormat.format(endDate)}"
-        } else if (yearOnlyFormat.format(startDate) == yearOnlyFormat.format(endDate)) {
-            "${dateFormat.format(startDate)}~${monthDayTimeFormat.format(endDate)}"
+        val dayFmt = DATE_FORMAT_DAY_ONLY.get() ?: java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.getDefault())
+        val yearFmt = DATE_FORMAT_YEAR_ONLY.get() ?: java.text.SimpleDateFormat("yyyy", java.util.Locale.getDefault())
+        val fullFmt = DATE_FORMAT_FULL.get() ?: java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
+        val timeFmt = DATE_FORMAT_TIME_ONLY.get() ?: java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+        val monthDayFmt = DATE_FORMAT_MONTH_DAY.get() ?: java.text.SimpleDateFormat("MM/dd HH:mm", java.util.Locale.getDefault())
+
+        return if (dayFmt.format(startDate) == dayFmt.format(endDate)) {
+            "${fullFmt.format(startDate)}~${timeFmt.format(endDate)}"
+        } else if (yearFmt.format(startDate) == yearFmt.format(endDate)) {
+            "${fullFmt.format(startDate)}~${monthDayFmt.format(endDate)}"
         } else {
-            "${dateFormat.format(startDate)}~${dateFormat.format(endDate)}"
+            "${fullFmt.format(startDate)}~${fullFmt.format(endDate)}"
         }
     }
 
@@ -151,6 +172,15 @@ data class ChargingHistoryRecord(
      * @return 格式化后的时长与电量变化字符串
      */
     fun getFormattedDurationAndGain(): String {
+        return cachedFormattedDurationAndGain
+    }
+
+    /**
+     * 实际计算时长及电量增量摘要文本的内部方法。
+     *
+     * @return 格式化后的时长与电量变化字符串
+     */
+    private fun computeFormattedDurationAndGain(): String {
         val totalSec = (durationMs / 1000L).coerceAtLeast(0L)
         val hours = totalSec / 3600L
         val minutes = (totalSec % 3600L) / 60L
@@ -205,6 +235,22 @@ data class ChargingHistoryRecord(
     }
 
     companion object {
+        private val DATE_FORMAT_FULL = ThreadLocal.withInitial {
+            java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
+        }
+        private val DATE_FORMAT_TIME_ONLY = ThreadLocal.withInitial {
+            java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+        }
+        private val DATE_FORMAT_DAY_ONLY = ThreadLocal.withInitial {
+            java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.getDefault())
+        }
+        private val DATE_FORMAT_YEAR_ONLY = ThreadLocal.withInitial {
+            java.text.SimpleDateFormat("yyyy", java.util.Locale.getDefault())
+        }
+        private val DATE_FORMAT_MONTH_DAY = ThreadLocal.withInitial {
+            java.text.SimpleDateFormat("MM/dd HH:mm", java.util.Locale.getDefault())
+        }
+
         /**
          * 将内存中的充电采样物理点列表序列化压缩为 JSON 字符串以持久化存储。
          * 若采样点数量较多，将进行均匀等距抽样（最多保留 200 个最具代表性节点），兼顾存储能耗与折线精细度。

@@ -1,0 +1,518 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_dialog_surface"
+    android:clipToOutline="true"
+    android:gravity="center_horizontal"
+    android:orientation="vertical"
+    android:paddingHorizontal="6dp"
+    android:paddingVertical="16dp">
+
+    <!-- 顶部圆形统计图标 -->
+    <FrameLayout
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:background="@drawable/bg_filter_capsule_selected">
+
+        <ImageView
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_charging_history"
+            app:tint="#8AB4F8" />
+    </FrameLayout>
+
+    <!-- 弹窗标题 -->
+    <TextView
+        android:id="@+id/tv_dialog_summary_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="@string/charging_history_summary_dialog_title"
+        android:textColor="?android:attr/textColorPrimary"
+        android:textSize="17sp"
+        android:textStyle="bold" />
+
+    <!-- 范围与累计充入电量副标题 -->
+    <TextView
+        android:id="@+id/tv_dialog_summary_subtitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:gravity="center"
+        android:textColor="?android:attr/textColorSecondary"
+        android:textSize="12.5sp"
+        tools:text="📊 统计范围：共 26 条充电记录 · 累计充入 +480%" />
+
+    <!-- 核心表格对比卡片容器（4列均分对称结构，单位前置于指标栏统一标注） -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/bg_dialog_card"
+        android:orientation="vertical"
+        android:paddingHorizontal="4dp"
+        android:paddingVertical="8dp">
+
+        <!-- 表头：指标 | 亮屏 | 息屏 | 总计 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingVertical="6dp"
+            android:weightSum="4.0">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:gravity="center"
+                android:text="指标"
+                android:textColor="?android:attr/textColorSecondary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:gravity="center"
+                android:text="@string/charging_history_summary_screen_on"
+                android:textColor="#FFA726"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:gravity="center"
+                android:text="@string/charging_history_summary_screen_off"
+                android:textColor="#81C784"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:gravity="center"
+                android:text="@string/charging_history_summary_total"
+                android:textColor="#64B5F6"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#1A888888" />
+
+        <!-- 第 1 行：⏱️ 时 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingVertical="8dp"
+            android:weightSum="4.0">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:gravity="center"
+                android:text="⏱️ 时"
+                android:textColor="?android:attr/textColorSecondary"
+                android:textSize="12.5sp" />
+
+            <!-- 亮屏充电时长及占比 -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:gravity="center"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tv_dialog_screen_on_dur"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:textColor="?android:attr/textColorPrimary"
+                    android:textSize="13.5sp"
+                    android:textStyle="bold"
+                    tools:text="01h25m" />
+
+                <TextView
+                    android:id="@+id/tv_dialog_screen_on_dur_pct"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="10.5sp"
+                    tools:text="(27.9%)" />
+            </LinearLayout>
+
+            <!-- 息屏充电时长及占比 -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:gravity="center"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tv_dialog_screen_off_dur"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:textColor="?android:attr/textColorPrimary"
+                    android:textSize="13.5sp"
+                    android:textStyle="bold"
+                    tools:text="03h40m" />
+
+                <TextView
+                    android:id="@+id/tv_dialog_screen_off_dur_pct"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="10.5sp"
+                    tools:text="(72.1%)" />
+            </LinearLayout>
+
+            <!-- 总充电时长 -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:gravity="center"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tv_dialog_total_dur"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:textColor="?android:attr/textColorPrimary"
+                    android:textSize="13.5sp"
+                    android:textStyle="bold"
+                    tools:text="05h05m" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:text=" "
+                    android:textSize="10.5sp" />
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#14888888" />
+
+        <!-- 第 2 行：⚡ 能 (Wh) (mAh) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingVertical="8dp"
+            android:weightSum="4.0">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:gravity="center"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="⚡ 能(Wh)"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:text="(mAh)"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="10.5sp" />
+            </LinearLayout>
+
+            <!-- 亮屏充入能量数值 -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:gravity="center"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tv_dialog_screen_on_energy"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:textColor="?android:attr/textColorPrimary"
+                    android:textSize="13.5sp"
+                    android:textStyle="bold"
+                    tools:text="40.38" />
+
+                <TextView
+                    android:id="@+id/tv_dialog_screen_on_energy_mah"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="10.5sp"
+                    tools:text="(10488)" />
+            </LinearLayout>
+
+            <!-- 息屏充入能量数值 -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:gravity="center"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tv_dialog_screen_off_energy"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:textColor="?android:attr/textColorPrimary"
+                    android:textSize="13.5sp"
+                    android:textStyle="bold"
+                    tools:text="165.73" />
+
+                <TextView
+                    android:id="@+id/tv_dialog_screen_off_energy_mah"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="10.5sp"
+                    tools:text="(43047)" />
+            </LinearLayout>
+
+            <!-- 总计充入能量数值 -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:gravity="center"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tv_dialog_total_energy"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:textColor="?android:attr/textColorPrimary"
+                    android:textSize="13.5sp"
+                    android:textStyle="bold"
+                    tools:text="206.11" />
+
+                <TextView
+                    android:id="@+id/tv_dialog_total_energy_mah"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="10.5sp"
+                    tools:text="(53535)" />
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#14888888" />
+
+        <!-- 第 3 行：💡 功 (W) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingVertical="9dp"
+            android:weightSum="4.0">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:gravity="center"
+                android:text="💡 功(W)"
+                android:textColor="?android:attr/textColorSecondary"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/tv_dialog_screen_on_power"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:ellipsize="end"
+                android:gravity="center"
+                android:singleLine="true"
+                android:textColor="?android:attr/textColorPrimary"
+                android:textSize="13.5sp"
+                android:textStyle="bold"
+                tools:text="28.50" />
+
+            <TextView
+                android:id="@+id/tv_dialog_screen_off_power"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:ellipsize="end"
+                android:gravity="center"
+                android:singleLine="true"
+                android:textColor="?android:attr/textColorPrimary"
+                android:textSize="13.5sp"
+                android:textStyle="bold"
+                tools:text="45.20" />
+
+            <TextView
+                android:id="@+id/tv_dialog_total_power"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:ellipsize="end"
+                android:gravity="center"
+                android:singleLine="true"
+                android:textColor="?android:attr/textColorPrimary"
+                android:textSize="13.5sp"
+                android:textStyle="bold"
+                tools:text="38.60" />
+
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#14888888" />
+
+        <!-- 第 4 行：📈 速 (%/h) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingVertical="9dp"
+            android:weightSum="4.0">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:gravity="center"
+                android:text="📈 速(%/h)"
+                android:textColor="?android:attr/textColorSecondary"
+                android:textSize="11.5sp" />
+
+            <TextView
+                android:id="@+id/tv_dialog_screen_on_speed"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:ellipsize="end"
+                android:gravity="center"
+                android:singleLine="true"
+                android:textColor="?android:attr/textColorPrimary"
+                android:textSize="13.5sp"
+                android:textStyle="bold"
+                tools:text="45.2" />
+
+            <TextView
+                android:id="@+id/tv_dialog_screen_off_speed"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:ellipsize="end"
+                android:gravity="center"
+                android:singleLine="true"
+                android:textColor="?android:attr/textColorPrimary"
+                android:textSize="13.5sp"
+                android:textStyle="bold"
+                tools:text="72.0" />
+
+            <TextView
+                android:id="@+id/tv_dialog_total_speed"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.0"
+                android:ellipsize="end"
+                android:gravity="center"
+                android:singleLine="true"
+                android:textColor="?android:attr/textColorPrimary"
+                android:textSize="13.5sp"
+                android:textStyle="bold"
+                tools:text="61.5" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- 底部补充参数与说明信息 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:orientation="vertical"
+        android:paddingHorizontal="4dp">
+
+        <TextView
+            android:id="@+id/tv_dialog_charging_peaks"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="?android:attr/textColorSecondary"
+            android:textSize="11.5sp"
+            tools:text="⚡ 历史最高功率：67.5 W · 电池最高温度：39.2 ℃" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:lineSpacingExtra="2dp"
+            android:text="📌 说明：所有指标严格基于底层真实硬件物理量与充电会话数据累加计算，忠实反映设备充电性能表现。"
+            android:textColor="?android:attr/textColorSecondary"
+            android:textSize="11.5sp" />
+    </LinearLayout>
+
+    <!-- 底部确认按钮 -->
+    <TextView
+        android:id="@+id/btn_dialog_summary_close"
+        android:layout_width="match_parent"
+        android:layout_height="42dp"
+        android:layout_marginTop="16dp"
+        android:background="@drawable/bg_filter_capsule_selected"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:text="@string/understood"
+        android:textColor="#8AB4F8"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+</LinearLayout>

@@ -407,6 +407,16 @@
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
+    <!-- 核心指标卡片：放电速度矩阵（亮屏 / 息屏 / 全局） -->
+    <include
+        android:id="@+id/layout_discharge_speed"
+        layout="@layout/item_power_discharge_speed" />
+
+    <!-- 核心指标卡片：息屏细分状态矩阵（息屏 / 唤醒 / 深度睡眠） -->
+    <include
+        android:id="@+id/layout_sleep_awake"
+        layout="@layout/item_power_sleep_awake_metrics" />
+
     <!-- 卡片 3：放电走势图 -->
     <com.google.android.material.card.MaterialCardView
         android:layout_width="match_parent"

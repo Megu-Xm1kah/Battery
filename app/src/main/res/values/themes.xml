@@ -46,6 +46,12 @@
         <item name="android:windowExitAnimation">@anim/anim_bubble_tooltip_below_exit</item>
     </style>
 
+    <!-- 居中卡片对话框的平滑弹出与收起缩放淡入淡出动画样式 -->
+    <style name="Animation.Dialog.CenterPop" parent="@android:style/Animation">
+        <item name="android:windowEnterAnimation">@anim/anim_dialog_center_enter</item>
+        <item name="android:windowExitAnimation">@anim/anim_dialog_center_exit</item>
+    </style>
+
     <style name="ShapeAppearance_SceneHeader" parent="">
         <item name="cornerFamily">rounded</item>
         <item name="cornerSizeTopLeft">14dp</item>

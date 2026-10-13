@@ -124,6 +124,39 @@ data class PowerUsageRecord(
             0f
         }
 
+        val onDurationMs = getScreenOnDurationMs()
+        val offDurationMs = getScreenOffDurationMs()
+        val totalDurationMs = getDurationMs()
+
+        val totalWh = batteryTotalEnergyWh?.takeIf { it > 0f }
+        val offPercent = if (totalWh != null && screenOffEnergyWh > 0f) (screenOffEnergyWh / totalWh) * 100f else 0f
+        val onPercent = if (totalWh != null && screenOnEnergyWh > 0f) (screenOnEnergyWh / totalWh) * 100f else 0f
+        val awakePercent = if (isScreenOffDecomposedAvailable && totalWh != null && screenOffAwakeEnergyWh > 0f) (screenOffAwakeEnergyWh / totalWh) * 100f else 0f
+        val deepSleepPercent = if (isScreenOffDecomposedAvailable && totalWh != null && screenOffDeepSleepEnergyWh > 0f) (screenOffDeepSleepEnergyWh / totalWh) * 100f else 0f
+
+        val offDrain = if (screenOffAwakeDrainMah > 0f || screenOffDeepSleepDrainMah > 0f) {
+            screenOffAwakeDrainMah + screenOffDeepSleepDrainMah
+        } else if (screenOffEnergyWh > 0f) {
+            (screenOffEnergyWh * 1000f) / com.battery.analysis.util.BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS
+        } else {
+            0f
+        }
+        val onDrain = if (screenOnEnergyWh > 0f) (screenOnEnergyWh * 1000f) / com.battery.analysis.util.BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS else 0f
+        val awakeDrain = if (screenOffAwakeDrainMah > 0f) {
+            screenOffAwakeDrainMah
+        } else if (screenOffAwakeEnergyWh > 0f) {
+            (screenOffAwakeEnergyWh * 1000f) / com.battery.analysis.util.BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS
+        } else {
+            0f
+        }
+        val deepSleepDrain = if (screenOffDeepSleepDrainMah > 0f) {
+            screenOffDeepSleepDrainMah
+        } else if (screenOffDeepSleepEnergyWh > 0f) {
+            (screenOffDeepSleepEnergyWh * 1000f) / com.battery.analysis.util.BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS
+        } else {
+            0f
+        }
+
         val overview = PowerOverviewStats(
             avgPowerWatts = avgPowerWatts,
             screenOnPowerWatts = screenOnPowerWatts,
@@ -143,15 +176,24 @@ data class PowerUsageRecord(
             backgroundEnergyWh = backgroundEnergyWh,
             usedDurationText = "$screenOnDurationText / $totalDurationText",
             remainingLifeText = remainingCompositeText,
+            screenOnDurationMs = onDurationMs,
+            screenOffDurationMs = offDurationMs,
+            totalDurationMs = totalDurationMs,
             screenOffAwakeEnergyWh = screenOffAwakeEnergyWh,
             screenOffDeepSleepEnergyWh = screenOffDeepSleepEnergyWh,
             screenOffAwakeDurationMs = screenOffAwakeDurationMs,
             screenOffDeepSleepDurationMs = screenOffDeepSleepDurationMs,
             screenOffAwakePowerWatts = awakeWatts,
             screenOffDeepSleepPowerWatts = deepSleepWatts,
-            screenOffAwakeDrainMah = screenOffAwakeDrainMah,
-            screenOffDeepSleepDrainMah = screenOffDeepSleepDrainMah,
+            screenOffAwakePercent = awakePercent,
+            screenOffDeepSleepPercent = deepSleepPercent,
+            screenOffPercent = offPercent,
+            screenOffDrainMah = offDrain,
+            screenOffAwakeDrainMah = awakeDrain,
+            screenOffDeepSleepDrainMah = deepSleepDrain,
             isScreenOffDecomposedAvailable = isScreenOffDecomposedAvailable,
+            screenOnPercent = onPercent,
+            screenOnDrainMah = onDrain,
             screenOffAwakeDurationText = if (screenOffAwakeDurationMs > 0L) com.battery.analysis.manager.PowerUsageManager.formatCompactDuration(screenOffAwakeDurationMs) else "",
             screenOffDeepSleepDurationText = if (screenOffDeepSleepDurationMs > 0L) com.battery.analysis.manager.PowerUsageManager.formatCompactDuration(screenOffDeepSleepDurationMs) else ""
         )
@@ -250,6 +292,48 @@ data class PowerUsageRecord(
     }
 
     /**
+     * 本地缓存的起止时间范围文本（通过 lazy 懒加载仅计算一次，消除列表滑动复用时的重复计算与 GC 开销）。
+     */
+    @delegate:Transient
+    private val cachedFormattedTimeRange: String by lazy { computeFormattedTimeRange() }
+
+    /**
+     * 本地缓存的时长及电量变化摘要文本（通过 lazy 懒加载仅计算一次）。
+     */
+    @delegate:Transient
+    private val cachedFormattedDurationAndLevel: String by lazy { computeFormattedDurationAndLevel() }
+
+    /**
+     * 本地缓存的展示亮屏时长文本（通过 lazy 懒加载仅计算一次）。
+     */
+    @delegate:Transient
+    private val cachedDisplayScreenOnDuration: String by lazy { computeDisplayScreenOnDuration() }
+
+    /**
+     * 本地缓存的总持续时长毫秒数（通过 lazy 懒加载仅计算一次）。
+     */
+    @delegate:Transient
+    private val cachedDurationMs: Long by lazy { parseDurationToMillis(totalDurationText) }
+
+    /**
+     * 本地缓存的亮屏持续时长毫秒数（通过 lazy 懒加载仅计算一次）。
+     */
+    @delegate:Transient
+    private val cachedScreenOnDurationMs: Long by lazy { computeScreenOnDurationMs() }
+
+    /**
+     * 本地缓存的息屏持续时长毫秒数（通过 lazy 懒加载仅计算一次）。
+     */
+    @delegate:Transient
+    private val cachedScreenOffDurationMs: Long by lazy { computeScreenOffDurationMs() }
+
+    /**
+     * 本地缓存的本次放电开始时刻初始电量百分比（通过 lazy 懒加载仅计算一次）。
+     */
+    @delegate:Transient
+    private val cachedStartBatteryLevel: Int by lazy { computeStartBatteryLevel() }
+
+    /**
      * 解析并获取本次耗电记录的起止时间范围文本（包含开始时间与结束时间）。
      * 若起止为同一天则显示为 "yyyy/MM/dd HH:mm~HH:mm"；
      * 若起止为同年跨天则显示为 "yyyy/MM/dd HH:mm~MM/dd HH:mm"（去掉结束时间年份）；
@@ -258,51 +342,54 @@ data class PowerUsageRecord(
      * @return 格式化后的起止时间范围字符串
      */
     fun getFormattedTimeRange(): String {
-        val dateFormat = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
-        val timeOnlyFormat = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
-        val dayOnlyFormat = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.getDefault())
-        val yearOnlyFormat = java.text.SimpleDateFormat("yyyy", java.util.Locale.getDefault())
-        val monthDayTimeFormat = java.text.SimpleDateFormat("MM/dd HH:mm", java.util.Locale.getDefault())
+        return cachedFormattedTimeRange
+    }
 
+    /**
+     * 实际计算起止时间范围文本的内部高效推导方法。
+     *
+     * @return 格式化后的起止时间范围字符串
+     */
+    private fun computeFormattedTimeRange(): String {
         var startTs = 0L
         var endTs = id
 
-        // 尝试从折线点提取起止时间戳
-        try {
-            val jsonArray = JSONArray(trendPointsJson)
-            if (jsonArray.length() > 0) {
-                val firstObj = jsonArray.getJSONObject(0)
-                startTs = firstObj.optLong("ts", 0L)
-                val lastObj = jsonArray.getJSONObject(jsonArray.length() - 1)
-                val lastTs = lastObj.optLong("ts", 0L)
-                if (lastTs > 0L) {
-                    endTs = lastTs
-                }
+        // 尝试从轻量扫描方法提取起止时间戳，避免全量反序列化庞大 JSON
+        val (fastStartTs, fastEndTs, _) = extractFirstAndLastTsAndLvl(trendPointsJson)
+        if (fastStartTs > 0L) {
+            startTs = fastStartTs
+            if (fastEndTs > 0L) {
+                endTs = fastEndTs
             }
-        } catch (_: Exception) {}
+        }
 
         // 若无法从点集获取开始时间，则尝试从 recordTime 及 totalDurationText 进行推算
         if (startTs <= 0L) {
             val endParsed = try {
-                val inputFormat = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
-                inputFormat.parse(recordTime)?.time ?: id
+                DATE_FORMAT_INPUT.get()?.parse(recordTime)?.time ?: id
             } catch (_: Exception) {
                 id
             }
             endTs = endParsed
-            val durMs = parseDurationToMillis(totalDurationText)
+            val durMs = getDurationMs()
             startTs = (endTs - durMs).coerceAtLeast(0L)
         }
 
         val startDate = java.util.Date(startTs)
         val endDate = java.util.Date(endTs)
 
-        return if (dayOnlyFormat.format(startDate) == dayOnlyFormat.format(endDate)) {
-            "${dateFormat.format(startDate)}~${timeOnlyFormat.format(endDate)}"
-        } else if (yearOnlyFormat.format(startDate) == yearOnlyFormat.format(endDate)) {
-            "${dateFormat.format(startDate)}~${monthDayTimeFormat.format(endDate)}"
+        val dayFmt = DATE_FORMAT_DAY_ONLY.get() ?: java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.getDefault())
+        val yearFmt = DATE_FORMAT_YEAR_ONLY.get() ?: java.text.SimpleDateFormat("yyyy", java.util.Locale.getDefault())
+        val fullFmt = DATE_FORMAT_FULL.get() ?: java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
+        val timeFmt = DATE_FORMAT_TIME_ONLY.get() ?: java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+        val monthDayFmt = DATE_FORMAT_MONTH_DAY.get() ?: java.text.SimpleDateFormat("MM/dd HH:mm", java.util.Locale.getDefault())
+
+        return if (dayFmt.format(startDate) == dayFmt.format(endDate)) {
+            "${fullFmt.format(startDate)}~${timeFmt.format(endDate)}"
+        } else if (yearFmt.format(startDate) == yearFmt.format(endDate)) {
+            "${fullFmt.format(startDate)}~${monthDayFmt.format(endDate)}"
         } else {
-            "${dateFormat.format(startDate)}~${dateFormat.format(endDate)}"
+            "${fullFmt.format(startDate)}~${fullFmt.format(endDate)}"
         }
     }
 
@@ -312,21 +399,42 @@ data class PowerUsageRecord(
      * @return 格式化后的时长与电量变化字符串
      */
     fun getFormattedDurationAndLevel(): String {
-        var startLevel = levelPercent
-        val endLevel = levelPercent
+        return cachedFormattedDurationAndLevel
+    }
 
-        try {
-            val jsonArray = JSONArray(trendPointsJson)
-            if (jsonArray.length() > 0) {
-                startLevel = jsonArray.getJSONObject(0).optInt("lvl", endLevel)
-            }
-        } catch (_: Exception) {}
+    /**
+     * 实际计算时长及电量变化摘要文本的内部方法。
+     *
+     * @return 格式化后的时长与电量变化字符串
+     */
+    private fun computeFormattedDurationAndLevel(): String {
+        val startLevel = getStartBatteryLevel()
+        val endLevel = levelPercent
 
         val diff = endLevel - startLevel
         val diffSign = if (diff >= 0) "+$diff%" else "$diff%"
         val durText = if (totalDurationText.isNotBlank()) totalDurationText else "--"
 
         return "$durText · $startLevel%~$endLevel%($diffSign)"
+    }
+
+    /**
+     * 获取本次放电记录的起始电池电量百分比（0~100）。
+     *
+     * @return 起始电量百分比
+     */
+    fun getStartBatteryLevel(): Int {
+        return cachedStartBatteryLevel
+    }
+
+    /**
+     * 实际提取起始电量百分比的内部计算方法。
+     *
+     * @return 起始电量百分比
+     */
+    private fun computeStartBatteryLevel(): Int {
+        val (_, _, fastStartLvl) = extractFirstAndLastTsAndLvl(trendPointsJson)
+        return fastStartLvl ?: levelPercent
     }
 
     /**
@@ -355,36 +463,47 @@ data class PowerUsageRecord(
      * @return 格式化后的亮屏时长文本（如 "1h55m"、"46m" 或 "--"）
      */
     fun getDisplayScreenOnDuration(): String {
+        return cachedDisplayScreenOnDuration
+    }
+
+    /**
+     * 实际计算亮屏时间展示文本的内部推导方法。
+     *
+     * @return 格式化后的亮屏时长文本
+     */
+    private fun computeDisplayScreenOnDuration(): String {
         if (screenOnDurationText.isNotBlank()) {
             return screenOnDurationText
         }
-        try {
-            val jsonArray = JSONArray(trendPointsJson)
-            if (jsonArray.length() > 1) {
-                var totalScreenOnMs = 0L
-                for (i in 0 until jsonArray.length() - 1) {
-                    val p1 = jsonArray.getJSONObject(i)
-                    val p2 = jsonArray.getJSONObject(i + 1)
-                    val isScreenOn = p1.optBoolean("screenOn", true)
-                    if (isScreenOn) {
-                        val dt = (p2.optLong("ts", 0L) - p1.optLong("ts", 0L)).coerceAtLeast(0L)
-                        totalScreenOnMs += dt
+        if (trendPointsJson.isNotEmpty()) {
+            try {
+                val jsonArray = JSONArray(trendPointsJson)
+                if (jsonArray.length() > 1) {
+                    var totalScreenOnMs = 0L
+                    for (i in 0 until jsonArray.length() - 1) {
+                        val p1 = jsonArray.getJSONObject(i)
+                        val p2 = jsonArray.getJSONObject(i + 1)
+                        val isScreenOn = p1.optBoolean("screenOn", true)
+                        if (isScreenOn) {
+                            val dt = (p2.optLong("ts", 0L) - p1.optLong("ts", 0L)).coerceAtLeast(0L)
+                            totalScreenOnMs += dt
+                        }
+                    }
+                    if (totalScreenOnMs > 0L) {
+                        val totalSec = totalScreenOnMs / 1000L
+                        val days = totalSec / 86400L
+                        val hours = (totalSec % 86400L) / 3600L
+                        val minutes = (totalSec % 3600L) / 60L
+                        val seconds = totalSec % 60L
+                        return when {
+                            days > 0L -> String.format(java.util.Locale.getDefault(), "%02dd%02dh", days, hours)
+                            hours > 0L -> String.format(java.util.Locale.getDefault(), "%02dh%02dm", hours, minutes)
+                            else -> String.format(java.util.Locale.getDefault(), "%02dm%02ds", minutes, seconds)
+                        }
                     }
                 }
-                if (totalScreenOnMs > 0L) {
-                    val totalSec = totalScreenOnMs / 1000L
-                    val days = totalSec / 86400L
-                    val hours = (totalSec % 86400L) / 3600L
-                    val minutes = (totalSec % 3600L) / 60L
-                    val seconds = totalSec % 60L
-                    return when {
-                        days > 0L -> String.format(java.util.Locale.getDefault(), "%02dd%02dh", days, hours)
-                        hours > 0L -> String.format(java.util.Locale.getDefault(), "%02dh%02dm", hours, minutes)
-                        else -> String.format(java.util.Locale.getDefault(), "%02dm%02ds", minutes, seconds)
-                    }
-                }
-            }
-        } catch (_: Exception) {}
+            } catch (_: Exception) {}
+        }
         return "--"
     }
 
@@ -394,7 +513,7 @@ data class PowerUsageRecord(
      * @return 转换后的总持续时长毫秒数
      */
     fun getDurationMs(): Long {
-        return parseDurationToMillis(totalDurationText)
+        return cachedDurationMs
     }
 
     /**
@@ -403,6 +522,15 @@ data class PowerUsageRecord(
      * @return 转换后的亮屏持续时长毫秒数
      */
     fun getScreenOnDurationMs(): Long {
+        return cachedScreenOnDurationMs
+    }
+
+    /**
+     * 实际计算亮屏持续物理毫秒数的内部方法。
+     *
+     * @return 转换后的亮屏持续物理毫秒数
+     */
+    private fun computeScreenOnDurationMs(): Long {
         val directMs = parseDurationToMillis(screenOnDurationText)
         if (directMs > 0L) return directMs
         val displayDur = getDisplayScreenOnDuration()
@@ -416,6 +544,15 @@ data class PowerUsageRecord(
      * @return 转换后的息屏持续物理时长毫秒数
      */
     fun getScreenOffDurationMs(): Long {
+        return cachedScreenOffDurationMs
+    }
+
+    /**
+     * 实际计算息屏持续物理毫秒数的内部方法。
+     *
+     * @return 转换后的息屏持续物理毫秒数
+     */
+    private fun computeScreenOffDurationMs(): Long {
         val directMs = parseDurationToMillis(screenOffDurationText)
         if (directMs > 0L) return directMs
         val decomposedMs = screenOffAwakeDurationMs + screenOffDeepSleepDurationMs
@@ -426,7 +563,7 @@ data class PowerUsageRecord(
     }
 
     /**
-     * 将时长文本解析还原为毫秒数。
+     * 将时长文本解析还原为毫秒数。使用高效匹配避免循环内重复构造正则。
      *
      * @param durationText 时长字符串（如 "1d2h"、"1h20m" 或 "46m30s"）
      * @return 对应的毫秒数
@@ -435,20 +572,16 @@ data class PowerUsageRecord(
         if (durationText.isBlank()) return 0L
         var totalMs = 0L
         try {
-            val dRegex = "(\\d+)d".toRegex()
-            val hRegex = "(\\d+)h".toRegex()
-            val mRegex = "(\\d+)m".toRegex()
-            val sRegex = "(\\d+)s".toRegex()
-            dRegex.find(durationText)?.groupValues?.get(1)?.toLongOrNull()?.let {
+            REGEX_DAYS.find(durationText)?.groupValues?.get(1)?.toLongOrNull()?.let {
                 totalMs += it * 86400000L
             }
-            hRegex.find(durationText)?.groupValues?.get(1)?.toLongOrNull()?.let {
+            REGEX_HOURS.find(durationText)?.groupValues?.get(1)?.toLongOrNull()?.let {
                 totalMs += it * 3600000L
             }
-            mRegex.find(durationText)?.groupValues?.get(1)?.toLongOrNull()?.let {
+            REGEX_MINUTES.find(durationText)?.groupValues?.get(1)?.toLongOrNull()?.let {
                 totalMs += it * 60000L
             }
-            sRegex.find(durationText)?.groupValues?.get(1)?.toLongOrNull()?.let {
+            REGEX_SECONDS.find(durationText)?.groupValues?.get(1)?.toLongOrNull()?.let {
                 totalMs += it * 1000L
             }
         } catch (_: Exception) {}
@@ -458,6 +591,94 @@ data class PowerUsageRecord(
 
 
     companion object {
+        private val REGEX_DAYS = "(\\d+)d".toRegex()
+        private val REGEX_HOURS = "(\\d+)h".toRegex()
+        private val REGEX_MINUTES = "(\\d+)m".toRegex()
+        private val REGEX_SECONDS = "(\\d+)s".toRegex()
+
+        private val DATE_FORMAT_FULL = ThreadLocal.withInitial {
+            java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
+        }
+        private val DATE_FORMAT_TIME_ONLY = ThreadLocal.withInitial {
+            java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+        }
+        private val DATE_FORMAT_DAY_ONLY = ThreadLocal.withInitial {
+            java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.getDefault())
+        }
+        private val DATE_FORMAT_YEAR_ONLY = ThreadLocal.withInitial {
+            java.text.SimpleDateFormat("yyyy", java.util.Locale.getDefault())
+        }
+        private val DATE_FORMAT_MONTH_DAY = ThreadLocal.withInitial {
+            java.text.SimpleDateFormat("MM/dd HH:mm", java.util.Locale.getDefault())
+        }
+        private val DATE_FORMAT_INPUT = ThreadLocal.withInitial {
+            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+        }
+
+        /**
+         * 从放电折线 JSON 字符串中以极高效率扫描首尾点的采样时间戳及初始电量。
+         * 避免在列表滑动与计算过程中把体积巨大的点集全量反序列化为树状结构，大幅降低 GC 压力。
+         *
+         * @param json 折线采样点 JSON 字符串
+         * @return 包含起止时间戳及初始电量的三元组 (startTs, endTs, startLevel)
+         */
+        private fun extractFirstAndLastTsAndLvl(json: String): Triple<Long, Long, Int?> {
+            if (json.isEmpty() || json.length < 10) return Triple(0L, 0L, null)
+            try {
+                // 1. 查找首个 "ts":
+                val firstTsIdx = json.indexOf("\"ts\":")
+                val startTs = if (firstTsIdx >= 0) {
+                    val start = firstTsIdx + 5
+                    var end = start
+                    while (end < json.length && (json[end] in '0'..'9' || json[end] == '-')) {
+                        end++
+                    }
+                    json.substring(start, end).toLongOrNull() ?: 0L
+                } else 0L
+
+                // 2. 查找首个 "lvl":
+                val firstLvlIdx = json.indexOf("\"lvl\":")
+                val startLvl = if (firstLvlIdx >= 0) {
+                    val start = firstLvlIdx + 6
+                    var end = start
+                    while (end < json.length && (json[end] in '0'..'9' || json[end] == '-')) {
+                        end++
+                    }
+                    json.substring(start, end).toIntOrNull()
+                } else null
+
+                // 3. 倒序查找末尾 "ts":
+                val lastTsIdx = json.lastIndexOf("\"ts\":")
+                val endTs = if (lastTsIdx >= 0) {
+                    val start = lastTsIdx + 5
+                    var end = start
+                    while (end < json.length && (json[end] in '0'..'9' || json[end] == '-')) {
+                        end++
+                    }
+                    json.substring(start, end).toLongOrNull() ?: 0L
+                } else 0L
+
+                if (startTs > 0L) {
+                    return Triple(startTs, endTs, startLvl)
+                }
+            } catch (_: Exception) {}
+
+            // 若轻量字符扫描异常，平滑回退至标准 JSONArray 解析，确保真实数据零遗漏
+            try {
+                val jsonArray = JSONArray(json)
+                if (jsonArray.length() > 0) {
+                    val first = jsonArray.getJSONObject(0)
+                    val last = jsonArray.getJSONObject(jsonArray.length() - 1)
+                    val sTs = first.optLong("ts", 0L)
+                    val eTs = last.optLong("ts", 0L)
+                    val sLvl = if (first.has("lvl")) first.optInt("lvl") else null
+                    return Triple(sTs, eTs, sLvl)
+                }
+            } catch (_: Exception) {}
+
+            return Triple(0L, 0L, null)
+        }
+
         /**
          * 从当前的 [FullPowerDataPackage] 耗电数据包装类构建持久化的 [PowerUsageRecord] 实体。
          *

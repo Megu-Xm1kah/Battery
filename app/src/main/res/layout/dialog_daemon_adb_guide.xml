@@ -3,13 +3,13 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
+    android:layout_height="match_parent"
     android:background="@drawable/bg_dialog_surface"
     android:clipToOutline="true"
     android:gravity="center_horizontal"
     android:orientation="vertical"
     android:paddingHorizontal="18dp"
-    android:paddingVertical="20dp">
+    android:paddingVertical="18dp">
 
     <!-- 顶部盾牌特权图标 -->
     <FrameLayout
@@ -29,55 +29,99 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="14dp"
+        android:layout_marginTop="12dp"
         android:text="@string/dialog_daemon_adb_title"
         android:textColor="?android:attr/textColorPrimary"
         android:textSize="17sp"
         android:textStyle="bold" />
 
-    <!-- 弹窗说明正文 -->
-    <TextView
+    <!-- 中间滚动内容区：承载正文及启动/停止命令行预览 -->
+    <androidx.core.widget.NestedScrollView
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:lineSpacingExtra="3dp"
-        android:text="@string/dialog_daemon_adb_content"
-        android:textColor="?android:attr/textColorSecondary"
-        android:textSize="13sp" />
+        android:layout_height="0dp"
+        android:layout_marginTop="10dp"
+        android:layout_weight="1"
+        android:fillViewport="true"
+        android:overScrollMode="never"
+        android:scrollbars="none">
 
-    <!-- ADB 启动命令展示与快速复制卡片 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- 弹窗说明正文 -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:lineSpacingExtra="3dp"
+                android:text="@string/dialog_daemon_adb_content"
+                android:textColor="?android:attr/textColorSecondary"
+                android:textSize="13sp" />
+
+            <!-- ADB 启动命令展示与快速复制卡片 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_setting_card_item"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/dialog_daemon_adb_start_cmd_title"
+                    android:textColor="@color/nav_item_selected"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_daemon_adb_cmd_preview"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:fontFamily="monospace"
+                    android:textColor="?android:attr/textColorPrimary"
+                    android:textSize="11.5sp"
+                    tools:text="adb shell &quot;nohup /system/bin/app_process...&quot;" />
+            </LinearLayout>
+
+            <!-- ADB 停止命令展示与快速复制卡片 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_setting_card_item"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/dialog_daemon_adb_stop_cmd_title"
+                    android:textColor="@color/nav_item_selected"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_daemon_adb_stop_cmd_preview"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:fontFamily="monospace"
+                    android:textColor="?android:attr/textColorPrimary"
+                    android:textSize="11.5sp"
+                    tools:text="adb shell &quot;touch /data/local/tmp/...&quot;" />
+            </LinearLayout>
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+
+    <!-- 底部按钮操作区：固定吸底，不放入滚动布局 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="12dp"
-        android:background="@drawable/bg_setting_card_item"
-        android:orientation="vertical"
-        android:padding="12dp">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="ADB 启动命令行："
-            android:textColor="@color/nav_item_selected"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/tv_daemon_adb_cmd_preview"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:fontFamily="monospace"
-            android:textColor="?android:attr/textColorPrimary"
-            android:textSize="11.5sp"
-            tools:text="adb shell &quot;nohup /system/bin/app_process...&quot;" />
-    </LinearLayout>
-
-    <!-- 按钮操作区 -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
         android:orientation="vertical">
 
         <!-- 复制启动命令按钮 -->

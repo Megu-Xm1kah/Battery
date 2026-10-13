@@ -479,6 +479,27 @@
     <string name="power_history_banner_format">📌 正在查看耗电历史快照：%s</string>
     <string name="power_history_loaded_toast">已加载该条耗电历史快照</string>
     <string name="power_history_app_count_format">%d款应用</string>
+    <string name="power_history_summary_title">耗电统计总结</string>
+    <string name="power_history_summary_screen_on">亮屏</string>
+    <string name="power_history_summary_screen_off">息屏</string>
+    <string name="power_history_summary_total">总计</string>
+    <string name="power_history_summary_screen_on_duration">亮屏时长</string>
+    <string name="power_history_summary_screen_off_duration">息屏时长</string>
+    <string name="power_history_summary_total_duration">总使用时长</string>
+    <string name="power_history_summary_avg_power">平均功耗</string>
+    <string name="power_history_summary_composite_power">综合平均功耗</string>
+    <string name="power_history_summary_drain_rate">放电速度</string>
+    <string name="power_history_summary_total_drain_rate">综合放电速度</string>
+    <string name="power_history_summary_sub_format">共 %1$d 条记录 · 消耗 %2$.1f Wh</string>
+    <string name="power_history_summary_sub_no_energy_format">共 %1$d 条记录</string>
+    <string name="power_history_summary_dialog_title">耗电历史统计总结明细</string>
+
+    <!-- 充电历史统计总结看板与弹窗明细 -->
+    <string name="charging_history_summary_title">充电统计总结</string>
+    <string name="charging_history_summary_screen_on">亮屏</string>
+    <string name="charging_history_summary_screen_off">息屏</string>
+    <string name="charging_history_summary_total">总计</string>
+    <string name="charging_history_summary_dialog_title">充电历史统计总结明细</string>
 
     <!-- 充电统计与双模智能切换 -->
     <string name="tab_power_usage">耗电统计</string>
@@ -644,6 +665,8 @@
     <string name="settings_daemon_btn_adb">ADB 指南</string>
     <string name="dialog_daemon_adb_title">特权独立守护进程启动指南</string>
     <string name="dialog_daemon_adb_content">特权守护进程通过 app_process 直接挂载于 Linux init (PID 1) 下，拥有最高 -1000 OOM 免疫级别，不受多任务划杀和厂商管家影响。\n\n【电脑 ADB 启动方法】：\n1. 手机连接电脑并开启“USB 调试”；\n2. 点击下方按钮复制 ADB 启动命令；\n3. 在电脑终端 (cmd / PowerShell / Terminal) 粘贴并执行即可后台常驻。\n\n【Root / Shizuku 启动】：\n若本机具备 Root 或 Shizuku 授权，可直接点击界面按钮一键静默拉起。</string>
+    <string name="dialog_daemon_adb_start_cmd_title">ADB 启动命令行：</string>
+    <string name="dialog_daemon_adb_stop_cmd_title">ADB 停止命令行：</string>
     <string name="btn_copy_adb_cmd">复制 ADB 启动命令</string>
     <string name="btn_copy_adb_stop_cmd">复制停止命令</string>
     <string name="toast_daemon_started">特权守护进程启动成功</string>

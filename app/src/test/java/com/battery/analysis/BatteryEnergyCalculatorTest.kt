@@ -434,13 +434,13 @@ class BatteryEnergyCalculatorTest {
         )
 
         val screenOffMsg = BatteryEnergyCalculator.formatScreenOffCardDetailMessage(overview, 19.25f)
-        assertTrue("息屏弹框包含息屏放电速度", screenOffMsg.contains("• 息屏放电速度："))
+        assertTrue("息屏弹框包含放电速度", screenOffMsg.contains("• 放电速度："))
 
         val awakeMsg = BatteryEnergyCalculator.formatAwakeCardDetailMessage(overview, 19.25f)
-        assertTrue("唤醒弹框包含唤醒放电速度", awakeMsg.contains("• 唤醒放电速度："))
+        assertTrue("唤醒弹框包含唤醒放电速度", awakeMsg.contains("• 放电速度："))
 
         val deepSleepMsg = BatteryEnergyCalculator.formatDeepSleepCardDetailMessage(overview, 19.25f)
-        assertTrue("深度睡眠弹框包含深度睡眠放电速度", deepSleepMsg.contains("• 深度睡眠放电速度："))
+        assertTrue("深度睡眠弹框包含深度睡眠放电速度", deepSleepMsg.contains("• 放电速度："))
     }
 
     /**

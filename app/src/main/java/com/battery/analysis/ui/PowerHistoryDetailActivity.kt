@@ -25,12 +25,16 @@ import com.battery.analysis.R
 import com.battery.analysis.databinding.ActivityPowerHistoryDetailBinding
 import com.battery.analysis.databinding.ItemHistoryDetailHeaderBinding
 import com.battery.analysis.db.PowerUsageDbHelper
+import com.battery.analysis.manager.PowerOverviewStats
 import com.battery.analysis.manager.PowerUsageManager
 import com.battery.analysis.model.PowerUsageRecord
+import com.battery.analysis.model.SevenDaysDischargeStats
 import com.battery.analysis.timeline.presentation.AppEnergyDetailBottomSheetDialog
 import com.battery.analysis.timeline.presentation.BatteryTimelineState
 import com.battery.analysis.util.BatteryEnergyCalculator
+import com.battery.analysis.util.BatteryTotalEnergyInfo
 import com.battery.analysis.util.BubbleTooltipHelper
+import com.battery.analysis.util.SevenDaysDischargeCalculator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -54,6 +58,26 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
     private var cachedTimelineState: BatteryTimelineState? = null
     private var cachedDisplayAppCount: Int = 0
     private var currentSortIndex: Int = 1
+
+    /**
+     * 当前快照对应的核心功耗指标概览数据实体缓存。
+     */
+    private var cachedOverviewStats: PowerOverviewStats? = null
+
+    /**
+     * 快照截止时刻前累积 7 天统计放电速度与充满电理论时长数据缓存。
+     */
+    private var cachedSevenDaysStats: SevenDaysDischargeStats? = null
+
+    /**
+     * 设备电池满电物理总能量缓存（单位：Wh）。
+     */
+    private var cachedTotalCapacityWh: Float? = null
+
+    /**
+     * 设备电池物理总能量及获取方式详情缓存。
+     */
+    private var cachedTotalEnergyInfo: BatteryTotalEnergyInfo? = null
 
     /**
      * 活跃对话框跟踪列表，防止退入后台或界面销毁时遗留悬挂 Window 导致内存泄漏。
@@ -565,7 +589,7 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
     }
 
     /**
-     * 将当前缓存的全部快照数据（时段状态、三维核心看板、走势折线图、列表操作栏与条目数量）完整绑定至头部视图。
+     * 将当前缓存的全部快照数据（时段状态、三维核心看板、6个放电与息屏指标卡片、走势折线图、列表操作栏与条目数量）完整绑定至头部视图。
      * 无论后台数据反序列化与 ViewHolder 创建的先后时序如何，均能确保所有卡片与折线图数据完整无遗漏地呈现。
      *
      * @param hBinding 头部组合视图绑定对象
@@ -573,6 +597,7 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
     private fun bindHeaderAll(hBinding: ItemHistoryDetailHeaderBinding) {
         val record = currentRecord ?: return
         renderHeaderDetails(record, hBinding)
+        bindMetricsCards(hBinding)
 
         cachedTimelineState?.let { state ->
             hBinding.batteryTimelineView.setState(state)
@@ -588,6 +613,158 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
     }
 
     /**
+     * 将放电速度矩阵（亮屏 / 息屏 / 全局）与息屏状态矩阵（息屏 / 唤醒 / 深度睡眠）这 6 个核心卡片数据绑定至头部视图，
+     * 并挂载轻触气泡弹窗交互监听。
+     *
+     * @param hBinding 头部组合视图绑定对象
+     */
+    private fun bindMetricsCards(hBinding: ItemHistoryDetailHeaderBinding) {
+        PowerDischargeMetricsViewBinder.bindDischargeSpeed(
+            binding = hBinding.layoutDischargeSpeed,
+            overview = cachedOverviewStats,
+            totalCapacityWh = cachedTotalCapacityWh,
+            sevenDaysStats = cachedSevenDaysStats,
+            onCardClick = { anchorView, rowType ->
+                showDischargeSpeedDetailBubble(anchorView, rowType)
+            }
+        )
+
+        PowerDischargeMetricsViewBinder.bindSleepAwakeMetrics(
+            binding = hBinding.layoutSleepAwake,
+            overview = cachedOverviewStats,
+            onCardClick = { anchorView, cardType ->
+                showSleepAwakeCardDetailBubble(anchorView, cardType)
+            }
+        )
+    }
+
+    /**
+     * 弹出放电速度卡片（亮屏、息屏、全局）的详细信息说明气泡弹框。
+     * 呈现当前放电速度、历史快照截止前 7 天统计放电速度与有效时长、满电可用时长以及对应原理说明；
+     * 并在亮屏卡片弹框中呈现电池真实总容量（Wh 与 mAh）。气泡弹窗不自动超时关闭，需用户手动轻触关闭。
+     *
+     * @param anchorView 触发气泡弹窗的目标锚点卡片视图
+     * @param rowType 行分类标识（[BatteryEnergyCalculator.ROW_SCREEN_ON] 为亮屏行，[BatteryEnergyCalculator.ROW_SCREEN_OFF] 为息屏行，[BatteryEnergyCalculator.ROW_GLOBAL] 为全局行）
+     */
+    private fun showDischargeSpeedDetailBubble(anchorView: View, rowType: Int) {
+        val overview = cachedOverviewStats
+        val powerMgr = PowerUsageManager.getInstance(this)
+        val totalEnergyInfo = cachedTotalEnergyInfo ?: powerMgr.getTotalEnergyInfo()
+        val totalCapacityWh = cachedTotalCapacityWh
+            ?: totalEnergyInfo?.totalWh
+            ?: powerMgr.getTotalEnergyWh()
+            ?: powerMgr.getEffectiveDeviceCapacityMah().takeIf { it > 0f }?.let {
+                BatteryEnergyCalculator.calculateTotalEnergyWh(it)
+            }
+        val capacityMah = totalEnergyInfo?.equivalentMah
+            ?: powerMgr.getEffectiveDeviceCapacityMah().takeIf { it > 0f }
+            ?: totalCapacityWh?.takeIf { it > 0f }?.let { (it * 1000f) / BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS }
+
+        val currentRate = if (overview != null) {
+            val totalDurationMs = if (overview.totalDurationMs > 0L) overview.totalDurationMs else parseDurationTextToMs(overview.totalDurationText)
+            val onDurationMs = if (overview.screenOnDurationMs > 0L) overview.screenOnDurationMs else parseDurationTextToMs(overview.screenOnDurationText)
+            val offDurationMs = if (overview.screenOffDurationMs > 0L) overview.screenOffDurationMs else parseDurationTextToMs(overview.screenOffDurationText)
+            when (rowType) {
+                BatteryEnergyCalculator.ROW_SCREEN_ON -> PowerDischargeMetricsViewBinder.calculateDischargeRatePercentPerHour(overview.screenOnPowerWatts, totalCapacityWh, onDurationMs)
+                BatteryEnergyCalculator.ROW_SCREEN_OFF -> PowerDischargeMetricsViewBinder.calculateDischargeRatePercentPerHour(overview.screenOffPowerWatts, totalCapacityWh, offDurationMs)
+                BatteryEnergyCalculator.ROW_GLOBAL -> PowerDischargeMetricsViewBinder.calculateDischargeRatePercentPerHour(overview.avgPowerWatts, totalCapacityWh, totalDurationMs)
+                else -> null
+            }
+        } else {
+            null
+        }
+
+        val sevenDays = cachedSevenDaysStats
+        val (sevenDaysRate, sevenDaysDurationMs, fullDurationMs) = when (rowType) {
+            BatteryEnergyCalculator.ROW_SCREEN_ON -> Triple(
+                sevenDays?.screenOnDischargeRatePercentPerHour,
+                sevenDays?.screenOnDurationMs,
+                sevenDays?.fullChargeScreenOnDurationMs
+            )
+            BatteryEnergyCalculator.ROW_SCREEN_OFF -> Triple(
+                sevenDays?.screenOffDischargeRatePercentPerHour,
+                sevenDays?.screenOffDurationMs,
+                sevenDays?.fullChargeScreenOffDurationMs
+            )
+            BatteryEnergyCalculator.ROW_GLOBAL -> Triple(
+                sevenDays?.globalDischargeRatePercentPerHour,
+                sevenDays?.globalDurationMs,
+                sevenDays?.fullChargeGlobalDurationMs
+            )
+            else -> Triple(null, null, null)
+        }
+
+        val message = BatteryEnergyCalculator.formatDischargeSpeedCardDetailMessage(
+            rowType = rowType,
+            currentRatePercentPerHour = currentRate,
+            sevenDaysRatePercentPerHour = sevenDaysRate,
+            sevenDaysDurationMs = sevenDaysDurationMs,
+            fullDurationMs = fullDurationMs,
+            predictedCapacityWh = totalCapacityWh,
+            predictedCapacityMah = capacityMah,
+            sceneScreenOnRatio = if (rowType == BatteryEnergyCalculator.ROW_GLOBAL) sevenDays?.sceneScreenOnRatio else null,
+            sceneFullDurationMs = if (rowType == BatteryEnergyCalculator.ROW_GLOBAL) sevenDays?.fullChargeSceneCompositeDurationMs else null
+        )
+        if (message.isNotBlank()) {
+            showBubbleTooltip(anchorView, message, autoDismissMs = 0L)
+        }
+    }
+
+    /**
+     * 弹出息屏、唤醒与深度睡眠三状态指标卡片的详细信息说明气泡弹框。
+     * 呈现息屏总耗电与各状态能耗占比、时长与能量、消耗电量（mAh）及平均放电功耗，
+     * 并详细阐述计算依据与系统底层物理休眠机制。气泡弹窗不自动超时关闭，需用户手动轻触关闭。
+     *
+     * @param anchorView 触发气泡弹窗的目标锚点卡片视图
+     * @param cardType 卡片分类标识（[PowerDischargeMetricsViewBinder.CARD_SCREEN_OFF] 为息屏卡片，[PowerDischargeMetricsViewBinder.CARD_AWAKE] 为唤醒卡片，[PowerDischargeMetricsViewBinder.CARD_DEEP_SLEEP] 为深度睡眠卡片）
+     */
+    private fun showSleepAwakeCardDetailBubble(anchorView: View, cardType: Int) {
+        val overview = cachedOverviewStats
+        if (overview == null) {
+            showBubbleTooltip(anchorView, getString(R.string.power_metric_no_record), autoDismissMs = 0L)
+            return
+        }
+
+        val powerMgr = PowerUsageManager.getInstance(this)
+        val totalEnergyInfo = cachedTotalEnergyInfo ?: powerMgr.getTotalEnergyInfo()
+        val totalCapacityWh = cachedTotalCapacityWh
+            ?: totalEnergyInfo?.totalWh
+            ?: powerMgr.getTotalEnergyWh()
+            ?: powerMgr.getEffectiveDeviceCapacityMah().takeIf { it > 0f }?.let {
+                BatteryEnergyCalculator.calculateTotalEnergyWh(it)
+            }
+        val nominalTotalWh = totalCapacityWh?.takeIf { it > 0f }
+        val nominalVoltage = BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS
+
+        val message = when (cardType) {
+            PowerDischargeMetricsViewBinder.CARD_SCREEN_OFF -> {
+                BatteryEnergyCalculator.formatScreenOffCardDetailMessage(
+                    overview = overview,
+                    nominalTotalWh = nominalTotalWh,
+                    nominalVoltageVolts = nominalVoltage
+                )
+            }
+            PowerDischargeMetricsViewBinder.CARD_AWAKE -> {
+                BatteryEnergyCalculator.formatAwakeCardDetailMessage(
+                    overview = overview,
+                    nominalTotalWh = nominalTotalWh,
+                    nominalVoltageVolts = nominalVoltage
+                )
+            }
+            PowerDischargeMetricsViewBinder.CARD_DEEP_SLEEP -> {
+                BatteryEnergyCalculator.formatDeepSleepCardDetailMessage(
+                    overview = overview,
+                    nominalTotalWh = nominalTotalWh,
+                    nominalVoltageVolts = nominalVoltage
+                )
+            }
+            else -> return
+        }
+
+        showBubbleTooltip(anchorView, message, autoDismissMs = 0L)
+    }
+
+    /**
      * 将解析后的完整耗电数据包绑定并渲染至卡片、图表与列表中。
      *
      * @param record 耗电历史快照数据实体
@@ -596,15 +773,33 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
         currentRecord = record
         headerBinding?.let { bindHeaderAll(it) }
 
-        // 反序列化全量数据包加载功耗时间轴与应用排行榜
+        // 反序列化全量数据包加载功耗时间轴、应用排行榜以及 7 天统计放电速度
         lifecycleScope.launch(Dispatchers.IO) {
             val fullPackage = record.toFullPowerPackage(this@PowerHistoryDetailActivity)
             val powerMgr = PowerUsageManager.getInstance(this@PowerHistoryDetailActivity)
+            val totalEnergyInfo = fullPackage.batterySnapshot?.totalEnergyInfo ?: powerMgr.getTotalEnergyInfo()
+            val totalCapacityWh = fullPackage.batterySnapshot?.totalEnergyWh
+                ?: totalEnergyInfo?.totalWh
+                ?: powerMgr.getTotalEnergyWh()
+                ?: powerMgr.getEffectiveDeviceCapacityMah().takeIf { it > 0f }?.let {
+                    BatteryEnergyCalculator.calculateTotalEnergyWh(it)
+                }
+            val sevenDaysStats = SevenDaysDischargeCalculator.calculateSevenDaysStats(
+                context = applicationContext,
+                currentOverview = null,
+                totalCapacityWh = totalCapacityWh,
+                baseTimestamp = record.id
+            )
             val selectedMetrics = headerBinding?.metricSelectorView?.getSelectedMetrics()
                 ?: cachedTimelineState?.selectedMetrics
                 ?: com.battery.analysis.timeline.presentation.TimelineMetric.entries.toSet()
             val timelineState = powerMgr.buildTimelineState(fullPackage, isHistoryRecord = true).copy(selectedMetrics = selectedMetrics)
+
             withContext(Dispatchers.Main) {
+                cachedOverviewStats = fullPackage.overviewStats
+                cachedSevenDaysStats = sevenDaysStats
+                cachedTotalCapacityWh = totalCapacityWh
+                cachedTotalEnergyInfo = totalEnergyInfo
                 cachedTimelineState = timelineState
                 appAdapter.submitList(fullPackage.appList)
                 cachedDisplayAppCount = appAdapter.getDisplayItemCount()

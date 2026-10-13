@@ -785,15 +785,22 @@ class SettingsFragment : Fragment() {
     }
 
     /**
-     * 为现代化美化弹窗统一应用 Window 样式，包括透明系统背景、92% 屏宽与居中布局。
+     * 为现代化美化弹窗统一应用 Window 样式，包括透明系统背景、92% 屏宽与居中布局，并支持指定弹窗高度屏幕占比。
      *
      * @param dialog 待配置样式的 [AlertDialog] 实例
+     * @param heightRatio 弹窗高度占屏幕高度比例（若为空则使用 WRAP_CONTENT）
      */
-    private fun applyDialogWindowStyle(dialog: AlertDialog) {
+    private fun applyDialogWindowStyle(dialog: AlertDialog, heightRatio: Float? = null) {
         dialog.window?.let { window ->
             window.setBackgroundDrawableResource(android.R.color.transparent)
-            val width = (resources.displayMetrics.widthPixels * 0.92).toInt()
-            window.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)
+            val displayMetrics = resources.displayMetrics
+            val width = (displayMetrics.widthPixels * 0.92).toInt()
+            val height = if (heightRatio != null && heightRatio > 0f) {
+                (displayMetrics.heightPixels * heightRatio).toInt()
+            } else {
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            }
+            window.setLayout(width, height)
             window.setGravity(android.view.Gravity.CENTER)
         }
     }
@@ -1157,13 +1164,14 @@ class SettingsFragment : Fragment() {
     }
 
     /**
-     * 弹出现代化 ADB 特权守护进程启动指南对话框，展示命令行并支持一键复制。
+     * 弹出现代化 ADB 特权守护进程启动指南对话框，展示启动与停止命令行，高度占比 90% 且底部操作栏吸底。
      */
     private fun showDaemonAdbGuideDialog() {
         val ctx = context ?: return
         val dialogView = layoutInflater.inflate(R.layout.dialog_daemon_adb_guide, null)
 
         val tvCmdPreview = dialogView.findViewById<TextView>(R.id.tv_daemon_adb_cmd_preview)
+        val tvStopCmdPreview = dialogView.findViewById<TextView>(R.id.tv_daemon_adb_stop_cmd_preview)
         val btnCopyCmd = dialogView.findViewById<TextView>(R.id.btn_copy_adb_cmd)
         val btnCopyStopCmd = dialogView.findViewById<TextView>(R.id.btn_copy_adb_stop_cmd)
         val btnClose = dialogView.findViewById<TextView>(R.id.btn_dialog_close)
@@ -1172,6 +1180,7 @@ class SettingsFragment : Fragment() {
         val adbStopCmd = DaemonManager.getAdbStopCommand()
 
         tvCmdPreview.text = adbLaunchCmd
+        tvStopCmdPreview?.text = adbStopCmd
 
         val dialog = AlertDialog.Builder(ctx)
             .setView(dialogView)
@@ -1192,7 +1201,13 @@ class SettingsFragment : Fragment() {
         }
 
         showAndTrackDialog(dialog)
-        applyDialogWindowStyle(dialog)
+        applyDialogWindowStyle(dialog, heightRatio = 0.90f)
+        val targetHeight = (resources.displayMetrics.heightPixels * 0.90).toInt()
+        dialogView.layoutParams = android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        )
+        dialogView.minimumHeight = targetHeight
     }
 
     /**

@@ -51,7 +51,14 @@ class PowerUsageDbHelper private constructor(context: Context) :
                 $COL_SCREEN_OFF_ENERGY_WH REAL DEFAULT 0,
                 $COL_BACKGROUND_ENERGY_WH REAL DEFAULT 0,
                 $COL_IS_COMPLETED INTEGER NOT NULL DEFAULT 1,
-                $COL_LAST_CHECKPOINT_TIME INTEGER DEFAULT 0
+                $COL_LAST_CHECKPOINT_TIME INTEGER DEFAULT 0,
+                $COL_SCREEN_OFF_AWAKE_ENERGY_WH REAL DEFAULT 0,
+                $COL_SCREEN_OFF_DEEP_SLEEP_ENERGY_WH REAL DEFAULT 0,
+                $COL_SCREEN_OFF_AWAKE_DURATION_MS INTEGER DEFAULT 0,
+                $COL_SCREEN_OFF_DEEP_SLEEP_DURATION_MS INTEGER DEFAULT 0,
+                $COL_SCREEN_OFF_AWAKE_DRAIN_MAH REAL DEFAULT 0,
+                $COL_SCREEN_OFF_DEEP_SLEEP_DRAIN_MAH REAL DEFAULT 0,
+                $COL_IS_SCREEN_OFF_DECOMPOSED INTEGER DEFAULT 1
             )
         """.trimIndent()
         db.execSQL(createSql)
@@ -83,6 +90,17 @@ class PowerUsageDbHelper private constructor(context: Context) :
                 try {
                     db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $COL_IS_COMPLETED INTEGER NOT NULL DEFAULT 1")
                     db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $COL_LAST_CHECKPOINT_TIME INTEGER DEFAULT 0")
+                } catch (_: Exception) {}
+            }
+            if (oldVersion < 4) {
+                try {
+                    db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $COL_SCREEN_OFF_AWAKE_ENERGY_WH REAL DEFAULT 0")
+                    db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $COL_SCREEN_OFF_DEEP_SLEEP_ENERGY_WH REAL DEFAULT 0")
+                    db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $COL_SCREEN_OFF_AWAKE_DURATION_MS INTEGER DEFAULT 0")
+                    db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $COL_SCREEN_OFF_DEEP_SLEEP_DURATION_MS INTEGER DEFAULT 0")
+                    db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $COL_SCREEN_OFF_AWAKE_DRAIN_MAH REAL DEFAULT 0")
+                    db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $COL_SCREEN_OFF_DEEP_SLEEP_DRAIN_MAH REAL DEFAULT 0")
+                    db.execSQL("ALTER TABLE $TABLE_NAME ADD COLUMN $COL_IS_SCREEN_OFF_DECOMPOSED INTEGER DEFAULT 1")
                 } catch (_: Exception) {}
             }
             db.setTransactionSuccessful()
@@ -181,6 +199,13 @@ class PowerUsageDbHelper private constructor(context: Context) :
             put(COL_BACKGROUND_ENERGY_WH, record.backgroundEnergyWh)
             put(COL_IS_COMPLETED, if (record.isCompleted) 1 else 0)
             put(COL_LAST_CHECKPOINT_TIME, record.lastCheckpointTime)
+            put(COL_SCREEN_OFF_AWAKE_ENERGY_WH, record.screenOffAwakeEnergyWh)
+            put(COL_SCREEN_OFF_DEEP_SLEEP_ENERGY_WH, record.screenOffDeepSleepEnergyWh)
+            put(COL_SCREEN_OFF_AWAKE_DURATION_MS, record.screenOffAwakeDurationMs)
+            put(COL_SCREEN_OFF_DEEP_SLEEP_DURATION_MS, record.screenOffDeepSleepDurationMs)
+            put(COL_SCREEN_OFF_AWAKE_DRAIN_MAH, record.screenOffAwakeDrainMah)
+            put(COL_SCREEN_OFF_DEEP_SLEEP_DRAIN_MAH, record.screenOffDeepSleepDrainMah)
+            put(COL_IS_SCREEN_OFF_DECOMPOSED, if (record.isScreenOffDecomposedAvailable) 1 else 0)
         }
     }
 
@@ -563,6 +588,13 @@ class PowerUsageDbHelper private constructor(context: Context) :
         val idxBgWh = c.getColumnIndex(COL_BACKGROUND_ENERGY_WH)
         val idxCompleted = c.getColumnIndex(COL_IS_COMPLETED)
         val idxCheckpoint = c.getColumnIndex(COL_LAST_CHECKPOINT_TIME)
+        val idxAwakeWh = c.getColumnIndex(COL_SCREEN_OFF_AWAKE_ENERGY_WH)
+        val idxSleepWh = c.getColumnIndex(COL_SCREEN_OFF_DEEP_SLEEP_ENERGY_WH)
+        val idxAwakeDur = c.getColumnIndex(COL_SCREEN_OFF_AWAKE_DURATION_MS)
+        val idxSleepDur = c.getColumnIndex(COL_SCREEN_OFF_DEEP_SLEEP_DURATION_MS)
+        val idxAwakeMah = c.getColumnIndex(COL_SCREEN_OFF_AWAKE_DRAIN_MAH)
+        val idxSleepMah = c.getColumnIndex(COL_SCREEN_OFF_DEEP_SLEEP_DRAIN_MAH)
+        val idxDecomposed = c.getColumnIndex(COL_IS_SCREEN_OFF_DECOMPOSED)
 
         return PowerUsageRecord(
             id = c.getLong(idxId),
@@ -593,7 +625,14 @@ class PowerUsageDbHelper private constructor(context: Context) :
             screenOffEnergyWh = if (idxOffWh >= 0) c.getFloat(idxOffWh) else 0f,
             backgroundEnergyWh = if (idxBgWh >= 0) c.getFloat(idxBgWh) else 0f,
             isCompleted = if (idxCompleted >= 0) c.getInt(idxCompleted) == 1 else true,
-            lastCheckpointTime = if (idxCheckpoint >= 0) c.getLong(idxCheckpoint) else 0L
+            lastCheckpointTime = if (idxCheckpoint >= 0) c.getLong(idxCheckpoint) else 0L,
+            screenOffAwakeEnergyWh = if (idxAwakeWh >= 0) c.getFloat(idxAwakeWh) else 0f,
+            screenOffDeepSleepEnergyWh = if (idxSleepWh >= 0) c.getFloat(idxSleepWh) else 0f,
+            screenOffAwakeDurationMs = if (idxAwakeDur >= 0) c.getLong(idxAwakeDur) else 0L,
+            screenOffDeepSleepDurationMs = if (idxSleepDur >= 0) c.getLong(idxSleepDur) else 0L,
+            screenOffAwakeDrainMah = if (idxAwakeMah >= 0) c.getFloat(idxAwakeMah) else 0f,
+            screenOffDeepSleepDrainMah = if (idxSleepMah >= 0) c.getFloat(idxSleepMah) else 0f,
+            isScreenOffDecomposedAvailable = if (idxDecomposed >= 0) c.getInt(idxDecomposed) == 1 else true
         )
     }
 
@@ -643,7 +682,7 @@ class PowerUsageDbHelper private constructor(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "power_usage_history.db"
-        private const val DATABASE_VERSION = 3
+        private const val DATABASE_VERSION = 4
         private const val TABLE_NAME = "power_usage_history"
 
         private const val COL_ID = "id"
@@ -675,6 +714,13 @@ class PowerUsageDbHelper private constructor(context: Context) :
         private const val COL_BACKGROUND_ENERGY_WH = "background_energy_wh"
         private const val COL_IS_COMPLETED = "is_completed"
         private const val COL_LAST_CHECKPOINT_TIME = "last_checkpoint_time"
+        private const val COL_SCREEN_OFF_AWAKE_ENERGY_WH = "screen_off_awake_energy_wh"
+        private const val COL_SCREEN_OFF_DEEP_SLEEP_ENERGY_WH = "screen_off_deep_sleep_energy_wh"
+        private const val COL_SCREEN_OFF_AWAKE_DURATION_MS = "screen_off_awake_duration_ms"
+        private const val COL_SCREEN_OFF_DEEP_SLEEP_DURATION_MS = "screen_off_deep_sleep_duration_ms"
+        private const val COL_SCREEN_OFF_AWAKE_DRAIN_MAH = "screen_off_awake_drain_mah"
+        private const val COL_SCREEN_OFF_DEEP_SLEEP_DRAIN_MAH = "screen_off_deep_sleep_drain_mah"
+        private const val COL_IS_SCREEN_OFF_DECOMPOSED = "is_screen_off_decomposed"
 
         @Volatile
         private var instance: PowerUsageDbHelper? = null

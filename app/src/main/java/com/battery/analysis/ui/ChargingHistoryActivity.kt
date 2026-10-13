@@ -15,11 +15,13 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.ConcatAdapter
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.battery.analysis.R
 import com.battery.analysis.databinding.ActivityChargingHistoryBinding
 import com.battery.analysis.db.ChargingHistoryDbHelper
 import com.battery.analysis.model.ChargingHistoryRecord
+import com.battery.analysis.model.ChargingHistorySummary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -33,6 +35,7 @@ class ChargingHistoryActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityChargingHistoryBinding
     private lateinit var adapter: ChargingHistoryAdapter
+    private lateinit var headerAdapter: ChargingHistoryHeaderAdapter
     private lateinit var dbHelper: ChargingHistoryDbHelper
 
     /**
@@ -101,11 +104,11 @@ class ChargingHistoryActivity : AppCompatActivity() {
     }
 
     /**
-     * 界面恢复生命周期回调，自动触发最新历史列表重载（保障从详情页返回时数据一致）。
+     * 界面恢复生命周期回调，自动触发最新历史列表重载（采用静默后台加载，避免打断界面初次渲染）。
      */
     override fun onResume() {
         super.onResume()
-        loadHistoryList()
+        loadHistoryList(isPullToRefresh = false)
     }
 
     /**
@@ -131,9 +134,16 @@ class ChargingHistoryActivity : AppCompatActivity() {
     }
 
     /**
-     * 初始化 RecyclerView 控件与数据适配器，绑定点击跳转详情、长按删除及选中状态变化回调。
+     * 初始化 RecyclerView 控件与数据适配器，通过 ConcatAdapter 挂载总结看板列表头，
+     * 绑定点击跳转详情、长按删除、头部点击明细及选中状态变化回调。
      */
     private fun setupRecyclerView() {
+        headerAdapter = ChargingHistoryHeaderAdapter(
+            onHeaderClick = { summary ->
+                showSummaryDetailDialog(summary)
+            }
+        )
+
         adapter = ChargingHistoryAdapter(
             onItemClick = { record ->
                 openChargingDetail(record)
@@ -147,8 +157,11 @@ class ChargingHistoryActivity : AppCompatActivity() {
             updateSelectionUI(selectedCount, totalCount)
         }
 
+        val concatAdapter = ConcatAdapter(headerAdapter, adapter)
         binding.rvChargingHistory.layoutManager = LinearLayoutManager(this)
-        binding.rvChargingHistory.adapter = adapter
+        binding.rvChargingHistory.adapter = concatAdapter
+        binding.rvChargingHistory.setHasFixedSize(true)
+        binding.rvChargingHistory.setItemViewCacheSize(20)
     }
 
     /**
@@ -209,7 +222,7 @@ class ChargingHistoryActivity : AppCompatActivity() {
         // 5. 下拉刷新
         binding.swipeRefresh.setColorSchemeResources(R.color.nav_item_selected)
         binding.swipeRefresh.setOnRefreshListener {
-            loadHistoryList()
+            loadHistoryList(isPullToRefresh = true)
         }
     }
 
@@ -282,16 +295,38 @@ class ChargingHistoryActivity : AppCompatActivity() {
     }
 
     /**
-     * 根据当前的筛选条件对全量数据进行过滤，并刷新 RecyclerView 与空状态展示。
+     * 根据当前的筛选条件对全量数据进行过滤，并在后台异步计算总结看板指标后刷新列表。
      */
     private fun applyFilterAndSubmit() {
         val filter = selectedGainFilter
-        val filteredList = if (filter == null) {
-            allRecordList
-        } else {
-            allRecordList.filter { filter.matches(it.levelGain) }
-        }
+        lifecycleScope.launch(Dispatchers.Default) {
+            val filteredList = if (filter == null) {
+                allRecordList
+            } else {
+                allRecordList.filter { filter.matches(it.levelGain) }
+            }
+            val summary = ChargingHistorySummary.calculate(filteredList, applicationContext)
 
+            // 后台线程预热展示文本，避免主线程滑动复用时耗时
+            for (record in filteredList) {
+                record.getFormattedTimeRange()
+                record.getFormattedDurationAndGain()
+            }
+
+            withContext(Dispatchers.Main) {
+                updateFilteredUI(filteredList, summary)
+            }
+        }
+    }
+
+    /**
+     * 仅在主线程轻量级更新筛选后的列表数据、总结看板及空状态提示。
+     *
+     * @param filteredList 经过条件过滤的充电记录实体列表
+     * @param summary 计算完成的充电汇总统计指标实体
+     */
+    private fun updateFilteredUI(filteredList: List<ChargingHistoryRecord>, summary: ChargingHistorySummary) {
+        val filter = selectedGainFilter
         if (filteredList.isEmpty()) {
             binding.rvChargingHistory.visibility = View.GONE
             binding.layoutEmptyHistory.visibility = View.VISIBLE
@@ -306,6 +341,8 @@ class ChargingHistoryActivity : AppCompatActivity() {
             binding.rvChargingHistory.visibility = View.VISIBLE
             binding.layoutEmptyHistory.visibility = View.GONE
         }
+
+        headerAdapter.updateSummary(summary)
 
         if (!adapter.isSelectionMode) {
             binding.tvTitle.text = "${getString(R.string.charging_history_title)}(${filteredList.size})"
@@ -356,15 +393,34 @@ class ChargingHistoryActivity : AppCompatActivity() {
 
     /**
      * 异步从本地数据库检索所有历史充电记录并刷新列表与空状态占位。
+     * 所有数据检索、条件过滤、Summary 统计及字段预热均在 IO 线程池并发完成，主线程零负担。
+     *
+     * @param isPullToRefresh 是否由用户主动下拉手势触发刷新（true 时展示旋转进度指示，false 时为初次或返回静默刷新）
      */
-    private fun loadHistoryList() {
-        binding.swipeRefresh.isRefreshing = true
+    private fun loadHistoryList(isPullToRefresh: Boolean = false) {
+        if (isPullToRefresh) {
+            binding.swipeRefresh.isRefreshing = true
+        }
         lifecycleScope.launch(Dispatchers.IO) {
             val list = dbHelper.getAllRecords()
+            val filter = selectedGainFilter
+            val filteredList = if (filter == null) {
+                list
+            } else {
+                list.filter { filter.matches(it.levelGain) }
+            }
+            val summary = ChargingHistorySummary.calculate(filteredList, applicationContext)
+
+            // 后台 IO 线程预热各条目的格式化显示文本，彻底消除主线程绘制与滑动绑定的任何开销
+            for (record in filteredList) {
+                record.getFormattedTimeRange()
+                record.getFormattedDurationAndGain()
+            }
+
             withContext(Dispatchers.Main) {
-                binding.swipeRefresh.isRefreshing = false
                 allRecordList = list
-                applyFilterAndSubmit()
+                updateFilteredUI(filteredList, summary)
+                binding.swipeRefresh.isRefreshing = false
             }
         }
     }
@@ -382,14 +438,16 @@ class ChargingHistoryActivity : AppCompatActivity() {
     }
 
     /**
-     * 为自定义对话框应用居中、半透明背景及适屏宽度的窗口样式。
+     * 为自定义对话框应用居中、平滑弹窗动效、半透明背景及适屏宽度的窗口样式。
      *
      * @param dialog 待配置样式的 [AlertDialog] 实例
+     * @param widthRatio 对话框宽度相对屏幕可用物理宽度的比例（默认 0.92）
      */
-    private fun applyDialogWindowStyle(dialog: AlertDialog) {
+    private fun applyDialogWindowStyle(dialog: AlertDialog, widthRatio: Double = 0.92) {
         dialog.window?.let { window ->
+            window.setWindowAnimations(R.style.Animation_Dialog_CenterPop)
             window.setBackgroundDrawableResource(android.R.color.transparent)
-            val width = (resources.displayMetrics.widthPixels * 0.92).toInt()
+            val width = (resources.displayMetrics.widthPixels * widthRatio).toInt()
             window.setLayout(width, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
             window.setGravity(android.view.Gravity.CENTER)
         }
@@ -472,6 +530,96 @@ class ChargingHistoryActivity : AppCompatActivity() {
 
         dialog.show()
         applyDialogWindowStyle(dialog)
+    }
+
+    /**
+     * 弹出充电历史统计总结的完整详细指标与物理推导依据说明对话框。
+     * 以结构化对比表格直观展示亮屏、息屏与总计三维度的时长（含占比）、能量（含等效 mAh）、平均充电功率及充电速度。
+     * 所有物理单位统一前置于左侧指标列，右侧数值列展示紧凑纯数字以避免内容截断。
+     *
+     * @param summary 当前计算的充电历史汇总实体对象 [ChargingHistorySummary]
+     */
+    private fun showSummaryDetailDialog(summary: ChargingHistorySummary) {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_charging_history_summary, null)
+        val tvTitle = dialogView.findViewById<TextView>(R.id.tv_dialog_summary_title)
+        val tvSubtitle = dialogView.findViewById<TextView>(R.id.tv_dialog_summary_subtitle)
+        val btnClose = dialogView.findViewById<TextView>(R.id.btn_dialog_summary_close)
+
+        tvTitle.text = getString(R.string.charging_history_summary_dialog_title)
+
+        // 1. 范围与累计充入电量百分比
+        val gainText = if (summary.totalLevelGainPercent > 0) " · 累计充入 +${summary.totalLevelGainPercent}%" else ""
+        tvSubtitle.text = "📊 统计范围：共 ${summary.recordCount} 条充电记录$gainText"
+
+        // 2. 时长行（纯数字时间简写与占比）
+        val onDurPct = if (summary.totalDurationMs > 0L) {
+            String.format(java.util.Locale.getDefault(), "(%.1f%%)", (summary.screenOnDurationMs.toDouble() / summary.totalDurationMs.toDouble()) * 100.0)
+        } else ""
+        val offDurPct = if (summary.totalDurationMs > 0L) {
+            String.format(java.util.Locale.getDefault(), "(%.1f%%)", (summary.screenOffDurationMs.toDouble() / summary.totalDurationMs.toDouble()) * 100.0)
+        } else ""
+        dialogView.findViewById<TextView>(R.id.tv_dialog_screen_on_dur).text = summary.getFormattedScreenOnDuration()
+        dialogView.findViewById<TextView>(R.id.tv_dialog_screen_on_dur_pct).text = onDurPct
+        dialogView.findViewById<TextView>(R.id.tv_dialog_screen_off_dur).text = summary.getFormattedScreenOffDuration()
+        dialogView.findViewById<TextView>(R.id.tv_dialog_screen_off_dur_pct).text = offDurPct
+        dialogView.findViewById<TextView>(R.id.tv_dialog_total_dur).text = summary.getFormattedTotalDuration()
+
+        // 3. 能量行（纯数值 Wh 与纯数值等效 mAh，单位已前置于左侧指标列）
+        val onMah = summary.convertEnergyWhToMah(summary.screenOnEnergyWh)
+        val offMah = summary.convertEnergyWhToMah(summary.screenOffEnergyWh)
+        val totalMah = summary.convertEnergyWhToMah(summary.totalEnergyWh)
+
+        dialogView.findViewById<TextView>(R.id.tv_dialog_screen_on_energy).text =
+            if (summary.screenOnEnergyWh > 0.0) String.format(java.util.Locale.getDefault(), "%.2f", summary.screenOnEnergyWh) else "--"
+        dialogView.findViewById<TextView>(R.id.tv_dialog_screen_on_energy_mah).text =
+            if (onMah > 0f) String.format(java.util.Locale.getDefault(), "(%.0f)", onMah) else "--"
+
+        dialogView.findViewById<TextView>(R.id.tv_dialog_screen_off_energy).text =
+            if (summary.screenOffEnergyWh > 0.0) String.format(java.util.Locale.getDefault(), "%.2f", summary.screenOffEnergyWh) else "--"
+        dialogView.findViewById<TextView>(R.id.tv_dialog_screen_off_energy_mah).text =
+            if (offMah > 0f) String.format(java.util.Locale.getDefault(), "(%.0f)", offMah) else "--"
+
+        dialogView.findViewById<TextView>(R.id.tv_dialog_total_energy).text =
+            if (summary.totalEnergyWh > 0.0) String.format(java.util.Locale.getDefault(), "%.2f", summary.totalEnergyWh) else "--"
+        dialogView.findViewById<TextView>(R.id.tv_dialog_total_energy_mah).text =
+            if (totalMah > 0f) String.format(java.util.Locale.getDefault(), "(%.0f)", totalMah) else "--"
+
+        // 4. 功率行（纯数值，单位 W 已前置于指标列）
+        dialogView.findViewById<TextView>(R.id.tv_dialog_screen_on_power).text =
+            summary.screenOnPowerWatts?.let { String.format(java.util.Locale.getDefault(), "%.2f", it) } ?: "--"
+        dialogView.findViewById<TextView>(R.id.tv_dialog_screen_off_power).text =
+            summary.screenOffPowerWatts?.let { String.format(java.util.Locale.getDefault(), "%.2f", it) } ?: "--"
+        dialogView.findViewById<TextView>(R.id.tv_dialog_total_power).text =
+            summary.avgPowerWatts?.let { String.format(java.util.Locale.getDefault(), "%.2f", it) } ?: "--"
+
+        // 5. 充电速度行（纯数值，单位 %/h 已前置于指标列）
+        dialogView.findViewById<TextView>(R.id.tv_dialog_screen_on_speed).text =
+            summary.screenOnChargingRate?.let { String.format(java.util.Locale.getDefault(), "%.1f", it) } ?: "--"
+        dialogView.findViewById<TextView>(R.id.tv_dialog_screen_off_speed).text =
+            summary.screenOffChargingRate?.let { String.format(java.util.Locale.getDefault(), "%.1f", it) } ?: "--"
+        dialogView.findViewById<TextView>(R.id.tv_dialog_total_speed).text =
+            summary.globalChargingRate?.let { String.format(java.util.Locale.getDefault(), "%.1f", it) } ?: "--"
+
+        // 6. 底部最高瞬时功率与最高温升说明
+        val tvPeaks = dialogView.findViewById<TextView>(R.id.tv_dialog_charging_peaks)
+        val peakParts = mutableListOf<String>()
+        summary.maxPowerWatts?.let { peakParts.add(String.format(java.util.Locale.getDefault(), "⚡ 最高充电功率：%.1f W", it)) }
+        summary.maxTemperature?.let { peakParts.add(String.format(java.util.Locale.getDefault(), "🌡️ 电池最高温度：%.1f ℃", it)) }
+        if (peakParts.isNotEmpty()) {
+            tvPeaks.text = peakParts.joinToString("  •  ")
+            tvPeaks.visibility = View.VISIBLE
+        } else {
+            tvPeaks.visibility = View.GONE
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogView)
+            .create()
+
+        btnClose.setOnClickListener { dialog.dismiss() }
+        dialog.show()
+        // 对话框卡片加宽至 95% 屏幕宽度，给予 4 列对比表格最舒展充裕的横向空间
+        applyDialogWindowStyle(dialog, widthRatio = 0.95)
     }
 }
 

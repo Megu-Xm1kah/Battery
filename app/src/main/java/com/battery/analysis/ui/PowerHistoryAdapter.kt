@@ -172,7 +172,8 @@ class PowerHistoryAdapter(
         fun bind(record: PowerUsageRecord) {
             // 1. 左上：起止时间范围（若处于进行中放电草稿状态，展示进行中前缀）
             val baseTimeRange = record.getFormattedTimeRange()
-            binding.tvHistoryTime.text = if (!record.isCompleted) "⚡ $baseTimeRange" else baseTimeRange
+//            binding.tvHistoryTime.text = if (!record.isCompleted) "⚡ $baseTimeRange" else baseTimeRange
+            binding.tvHistoryTime.text = if (!record.isCompleted) baseTimeRange else baseTimeRange
 
             // 2. 右上：功耗数值（如 "2.48 W"）
             binding.tvHistoryPowerValue.text = String.format(
@@ -238,7 +239,15 @@ class PowerHistoryAdapter(
          * @return 内容是否完全一致
          */
         override fun areContentsTheSame(oldItem: PowerUsageRecord, newItem: PowerUsageRecord): Boolean {
-            return oldItem == newItem
+            return oldItem.id == newItem.id &&
+                oldItem.isCompleted == newItem.isCompleted &&
+                oldItem.levelPercent == newItem.levelPercent &&
+                oldItem.avgPowerWatts == newItem.avgPowerWatts &&
+                oldItem.screenOnPowerWatts == newItem.screenOnPowerWatts &&
+                oldItem.screenOffPowerWatts == newItem.screenOffPowerWatts &&
+                oldItem.totalDurationText == newItem.totalDurationText &&
+                oldItem.screenOnDurationText == newItem.screenOnDurationText &&
+                oldItem.recordTime == newItem.recordTime
         }
     }
 }
