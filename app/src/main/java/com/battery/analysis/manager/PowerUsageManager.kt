@@ -95,6 +95,12 @@ class PowerUsageManager private constructor(private val context: Context) {
         /** 连续时序微积分单微元最大有效跨度门限（单位：毫秒，默认 2 分钟，杜绝息屏 Deep Sleep 断层插值放大） */
         const val MAX_INTEGRATION_INTERVAL_MS = 120_000L
 
+        /** 静态纯净待机底噪功率的合理上限物理门限（单位：瓦特 W，默认 0.25W，防止弱信号待机底噪被误弃，同时杜绝将关屏过渡尖峰与高负荷后台唤醒采样误当休眠底噪） */
+        const val MAX_QUIESCENT_STANDBY_WATTS = 0.25f
+
+        /** 息屏未结算时间窗待机功率补偿的合理性上限物理门限（单位：瓦特 W，默认 0.35W，超过此值判定基准账本异常回退默认待机功率） */
+        const val MAX_STANDBY_COMPENSATION_WATTS = 0.35f
+
         /** 最小 Checkpoint 检查点写入间隔阈值（单位：毫秒，默认 30 秒，避免短时间内连续写盘与硬件能耗开销） */
         const val MIN_CHECKPOINT_INTERVAL_MS = 30_000L
 
@@ -786,8 +792,8 @@ class PowerUsageManager private constructor(private val context: Context) {
                 if (pendingDeltaMs >= 5_000L) {
                     val deltaHours = pendingDeltaMs / 3600_000f
                     val effectiveStandbyWatts = when {
-                        baseWatts in 0.015f..0.35f -> baseWatts
-                        quiescentStandbyWatts != null && quiescentStandbyWatts in 0.015f..0.35f -> quiescentStandbyWatts
+                        baseWatts in 0.015f..MAX_STANDBY_COMPENSATION_WATTS -> baseWatts
+                        quiescentStandbyWatts != null && quiescentStandbyWatts in 0.015f..MAX_STANDBY_COMPENSATION_WATTS -> quiescentStandbyWatts
                         else -> ShizukuBatteryStatsParser.DEFAULT_STANDBY_BASE_WATTS
                     }
                     if (effectiveStandbyWatts > 0f) {
@@ -839,7 +845,7 @@ class PowerUsageManager private constructor(private val context: Context) {
         /**
          * 从时序放电物理采样点序列中提取纯净静态待机底噪功率（Quiescent Standby Watts）。
          * 排除活跃唤醒尖峰（如后台网络通信、数据同步），提取真实的硬件物理待机功耗基线（P10 分位数）。
-         * 允许合理的待机底噪门限范围（<= 0.35W），防止弱信号待机底噪被误弃，同时杜绝将高负荷后台唤醒采样误当休眠底噪。
+         * 允许合理的待机底噪门限范围（<= MAX_QUIESCENT_STANDBY_WATTS，默认 0.25W），防止弱信号待机底噪被误弃，同时杜绝将关屏过渡尖峰与高负荷后台唤醒采样误当休眠底噪。
          *
          * @param samples 时序瞬时放电物理采样点列表
          * @return 提取得到的纯净静态待机底噪功率（瓦特 W），若无有效息屏采样点或全为高功耗活跃样本则返回 null
@@ -851,16 +857,16 @@ class PowerUsageManager private constructor(private val context: Context) {
                 val sortedPowers = validOffSamples.map { it.powerWatts }.sorted()
                 val p10Index = (sortedPowers.size * 0.10).toInt().coerceIn(0, sortedPowers.size - 1)
                 val candidateWatts = sortedPowers[p10Index]
-                if (candidateWatts in 0.015f..0.25f) {
+                if (candidateWatts in 0.015f..MAX_QUIESCENT_STANDBY_WATTS) {
                     candidateWatts
                 } else if (candidateWatts < 0.015f) {
-                    sortedPowers.firstOrNull { it in 0.015f..0.25f } ?: (if (candidateWatts > 0f) candidateWatts else null)
+                    sortedPowers.firstOrNull { it in 0.015f..MAX_QUIESCENT_STANDBY_WATTS } ?: (if (candidateWatts > 0f) candidateWatts else null)
                 } else {
                     val minPower = sortedPowers.first()
-                    if (minPower <= 0.25f) minPower else null
+                    if (minPower <= MAX_QUIESCENT_STANDBY_WATTS) minPower else null
                 }
             } else {
-                val validPowers = validOffSamples.map { it.powerWatts }.filter { it <= 0.25f }
+                val validPowers = validOffSamples.map { it.powerWatts }.filter { it <= MAX_QUIESCENT_STANDBY_WATTS }
                 validPowers.minOrNull()
             }
         }

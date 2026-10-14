@@ -664,6 +664,9 @@ object BatteryEnergyCalculator {
             append("• 进入休眠：$sleepCountStr\n\n")
             append("💡 说明：\n")
             append("• 灭屏后 CPU 挂起仅留硬件底噪的极低功耗模式；\n")
+            if (sleepWatts > 0.20f) {
+                append("• 当前深睡功率偏高（> 0.20W），通常由双卡5G网络寻呼、弱信号基带发射、外设硬件漏电或后台静默拉起引起；\n")
+            }
             append("• 睡眠率越接近 100%，表明待机休眠越充分、耗电越平稳。")
         }
     }

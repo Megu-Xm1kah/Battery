@@ -22,9 +22,9 @@
 
 <div align="center">
 
-| 🔋 System API Detection | ⚡ Shizuku Privileged Reading | 📈 History Trend & Decay Stats | ⚙️ Settings & Backup |
-| :---: | :---: | :---: | :---: |
-| <img src="screenshots/01_detection_api.png" width="220" alt="System API Detection" /> | <img src="screenshots/02_detection_shizuku.png" width="220" alt="Shizuku Privileged Reading" /> | <img src="screenshots/03_history_trend.png" width="220" alt="History Trend & Decay Stats" /> | <img src="screenshots/04_settings.png" width="220" alt="Settings & Backup" /> |
+| 📊 Power Usage & Timeline | 🔋 System API Detection | ⚡ Shizuku Privileged Reading | 📈 History Trend & Decay Stats | ⚙️ Settings & Backup |
+| :---: | :---: | :---: | :---: | :---: |
+| <img src="screenshots/00_power_usage.png" width="180" alt="Power Usage & Timeline" /> | <img src="screenshots/01_detection_api.png" width="180" alt="System API Detection" /> | <img src="screenshots/02_detection_shizuku.png" width="180" alt="Shizuku Privileged Reading" /> | <img src="screenshots/03_history_trend.png" width="180" alt="History Trend & Decay Stats" /> | <img src="screenshots/04_settings.png" width="180" alt="Settings & Backup" /> |
 
 </div>
 
