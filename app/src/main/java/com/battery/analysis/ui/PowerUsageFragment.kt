@@ -113,6 +113,10 @@ class PowerUsageFragment : Fragment() {
     /** 上次应用至 CollapsingToolbarLayout 的 scrollFlags 缓存 */
     private var lastAppliedScrollFlags: Int = -1
 
+    /** 当前时间轴前缀和预计算索引缓存，支撑 120Hz 游标探查二分查询 */
+    private var currentPrefixData: com.battery.analysis.timeline.util.TimelinePrefixData? = null
+
+
     /** 当前执行中的数据异步加载协程任务，用于保证单任务并发安全 */
     private var loadDataJob: kotlinx.coroutines.Job? = null
 
@@ -273,6 +277,14 @@ class PowerUsageFragment : Fragment() {
         private val threadLocalTimeRangeFormatter = ThreadLocal.withInitial {
             SimpleDateFormat("HH:mm", Locale.getDefault())
         }
+
+        /**
+         * 游标滑动时刻格式化器（HH:mm:ss），采用 ThreadLocal 实现每线程单例复用，消除高频滑动 GC 压力。
+         */
+        private val threadLocalCursorTimeFormatter = ThreadLocal.withInitial {
+            SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+        }
+
 
         /**
          * 创建 PowerUsageFragment 实例的工厂方法。
@@ -798,6 +810,23 @@ class PowerUsageFragment : Fragment() {
         }
         adapter.onRestoreRealtimeClickedListener = {
             restoreLivePowerData()
+        }
+        adapter.onCursorInspectListener = object : com.battery.analysis.timeline.presentation.BatteryTimelineView.OnCursorInspectListener {
+            override fun onCursorMove(
+                timestamp: Long,
+                sample: com.battery.analysis.timeline.domain.BatterySample?,
+                activeApp: com.battery.analysis.timeline.domain.AppTimelineEvent?
+            ) {
+                val prefix = currentPrefixData ?: return
+                val subStats = com.battery.analysis.timeline.util.TimelinePrefixSumCalculator.querySubIntervalStats(prefix, timestamp)
+                updateCursorPowerMetrics(subStats)
+                adapter.updateCursorInspectionStats(subStats)
+            }
+
+            override fun onCursorDismiss() {
+                restoreNormalPowerMetrics()
+                adapter.restoreOverviewAndSleepStats()
+            }
         }
     }
 
@@ -2019,6 +2048,22 @@ class PowerUsageFragment : Fragment() {
             }
         val baseTotalEnergy = totalCapacityWh?.takeIf { it > 0f }
 
+        // 异步预计算时间轴前缀和索引数据，赋能 120Hz 游标探查零延迟无感联动
+        val capWh = totalCapacityWh
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Default) {
+            val prefix = com.battery.analysis.timeline.util.TimelinePrefixSumCalculator.buildPrefixData(
+                timelineState = timelineState,
+                overviewStats = overview,
+                totalCapacityWh = capWh
+            )
+            withContext(Dispatchers.Main) {
+                if (isAdded && _binding != null) {
+                    currentPrefixData = prefix
+                }
+            }
+        }
+
+
         val onEnergyRatioStr = if (baseTotalEnergy != null) {
             val ratio = (onEnergy / baseTotalEnergy * 100f)
             String.format(Locale.getDefault(), "%.1f%%", ratio)
@@ -2178,6 +2223,197 @@ class PowerUsageFragment : Fragment() {
             else -> String.format(Locale.getDefault(), "%02dm%02ds", minutes, seconds)
         }
     }
+
+    /**
+     * 响应时间轴游标滑动事件，以高能效方式实时联动刷新顶部核心功耗指标卡片。
+     * 展示从起始点至当前游标触控时刻的阶段累计数据，并动态同步标题状态。
+     *
+     * @param subStats 阶段子区间累计统计快照对象
+     */
+    private fun updateCursorPowerMetrics(subStats: com.battery.analysis.timeline.util.SubIntervalOverviewStats) {
+        if (_binding == null) return
+
+        val totalDurationMs = subStats.totalDurationMs
+        val onDurationMs = subStats.screenOnDurationMs
+        val offDurationMs = subStats.screenOffDurationMs
+
+        val onDurationRatioStr = if (totalDurationMs > 0L) {
+            val ratio = (onDurationMs.toDouble() / totalDurationMs.toDouble() * 100.0).coerceIn(0.0, 100.0)
+            String.format(Locale.getDefault(), "%.1f%%", ratio)
+        } else {
+            "0.0%"
+        }
+
+        val offDurationRatioStr = if (totalDurationMs > 0L) {
+            val ratio = (offDurationMs.toDouble() / totalDurationMs.toDouble() * 100.0).coerceIn(0.0, 100.0)
+            String.format(Locale.getDefault(), "%.1f%%", ratio)
+        } else {
+            "0.0%"
+        }
+
+        val onDurationStr = formatCardDuration(onDurationMs, "")
+        val offDurationStr = formatCardDuration(offDurationMs, "")
+        val totalDurationStr = formatCardDuration(totalDurationMs, "")
+
+        val baseTotalEnergy = currentPrefixData?.totalCapacityWh?.takeIf { it > 0f }
+            ?: lastRenderedPackage?.batterySnapshot?.totalEnergyWh?.takeIf { it > 0f }
+
+        val onEnergyRatioStr = if (baseTotalEnergy != null && baseTotalEnergy > 0f) {
+            val ratio = (subStats.screenOnEnergyWh / baseTotalEnergy * 100f)
+            String.format(Locale.getDefault(), "%.1f%%", ratio)
+        } else {
+            "--%"
+        }
+
+        val offEnergyRatioStr = if (baseTotalEnergy != null && baseTotalEnergy > 0f) {
+            val ratio = (subStats.screenOffEnergyWh / baseTotalEnergy * 100f)
+            String.format(Locale.getDefault(), "%.1f%%", ratio)
+        } else {
+            "--%"
+        }
+
+        val globalEnergyRatioStr = if (baseTotalEnergy != null && baseTotalEnergy > 0f) {
+            val ratio = (subStats.totalEnergyWh / baseTotalEnergy * 100f)
+            String.format(Locale.getDefault(), "%.1f%%", ratio)
+        } else {
+            "--%"
+        }
+
+        val onPowerStr = if (subStats.screenOnPowerWatts >= 0.05f) {
+            String.format(Locale.getDefault(), "%.2fW", subStats.screenOnPowerWatts)
+        } else {
+            "--"
+        }
+        val avgPowerStr = if (subStats.avgPowerWatts >= 0.05f) {
+            String.format(Locale.getDefault(), "%.2fW", subStats.avgPowerWatts)
+        } else {
+            "--"
+        }
+        val offPowerStr = if (subStats.screenOffPowerWatts >= 0.05f) {
+            String.format(Locale.getDefault(), "%.2fW", subStats.screenOffPowerWatts)
+        } else {
+            "--"
+        }
+
+        // 第一行：亮屏数据
+        binding.tvMetricScreenOnTime.text = formatValueWithSmallPercent(onDurationStr, onDurationRatioStr)
+        binding.tvMetricScreenOnEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", subStats.screenOnEnergyWh), onEnergyRatioStr)
+        binding.tvMetricScreenOnPower.text = onPowerStr
+        binding.tvMetricScreenOnRemaining.text = onDurationStr
+
+        // 第二行：息屏数据
+        binding.tvMetricScreenOffTime.text = formatValueWithSmallPercent(offDurationStr, offDurationRatioStr)
+        binding.tvMetricScreenOffEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", subStats.screenOffEnergyWh), offEnergyRatioStr)
+        binding.tvMetricScreenOffPower.text = offPowerStr
+        binding.tvMetricScreenOffRemaining.text = offDurationStr
+
+        // 第三行：全局数据
+        binding.tvMetricGlobalTime.text = formatValueWithSmallPercent(totalDurationStr, "100%")
+        binding.tvMetricGlobalEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", subStats.totalEnergyWh), globalEnergyRatioStr)
+        binding.tvMetricGlobalPower.text = avgPowerStr
+        binding.tvMetricGlobalRemaining.text = totalDurationStr
+
+        // 动态指示当前查看阶段的时间点
+        val timeStr = threadLocalCursorTimeFormatter.get()?.format(Date(subStats.targetTimestamp)) ?: ""
+        binding.tvPowerTitle.text = getString(R.string.power_stats_title) + " ($timeStr)"
+    }
+
+    /**
+     * 还原顶部核心功耗指标卡片至全周期静态统计数据，并重置标题文本。
+     */
+    private fun restoreNormalPowerMetrics() {
+        if (_binding == null) return
+        val pkg = lastRenderedPackage ?: return
+        val overview = pkg.overviewStats
+        val snapshot = pkg.batterySnapshot
+
+        val onEnergy = overview.screenOnEnergyWh
+        val offEnergy = overview.screenOffEnergyWh
+        val totalEnergy = overview.totalEnergyWh
+        val totalCapacityWh = snapshot.totalEnergyWh
+            ?: powerManager.getTotalEnergyWh()
+            ?: powerManager.getEffectiveDeviceCapacityMah().takeIf { it > 0f }?.let {
+                BatteryEnergyCalculator.calculateTotalEnergyWh(it)
+            }
+        val baseTotalEnergy = totalCapacityWh?.takeIf { it > 0f }
+
+        val onEnergyRatioStr = if (baseTotalEnergy != null) {
+            val ratio = (onEnergy / baseTotalEnergy * 100f)
+            String.format(Locale.getDefault(), "%.1f%%", ratio)
+        } else {
+            "--%"
+        }
+
+        val offEnergyRatioStr = if (baseTotalEnergy != null) {
+            val ratio = (offEnergy / baseTotalEnergy * 100f)
+            String.format(Locale.getDefault(), "%.1f%%", ratio)
+        } else {
+            "--%"
+        }
+
+        val globalEnergyRatioStr = if (baseTotalEnergy != null) {
+            val ratio = (totalEnergy / baseTotalEnergy * 100f)
+            String.format(Locale.getDefault(), "%.1f%%", ratio)
+        } else {
+            "--%"
+        }
+
+        val onDurationMs = if (overview.screenOnDurationMs > 0L) overview.screenOnDurationMs else parseDurationTextToMs(overview.screenOnDurationText)
+        val offDurationMs = if (overview.screenOffDurationMs > 0L) overview.screenOffDurationMs else parseDurationTextToMs(overview.screenOffDurationText)
+        val totalDurationMs = if (overview.totalDurationMs > 0L) overview.totalDurationMs else parseDurationTextToMs(overview.totalDurationText)
+
+        val onDurationRatioStr = if (totalDurationMs > 0L) {
+            val ratio = (onDurationMs.toDouble() / totalDurationMs.toDouble() * 100.0).coerceIn(0.0, 100.0)
+            String.format(Locale.getDefault(), "%.1f%%", ratio)
+        } else {
+            "0.0%"
+        }
+
+        val offDurationRatioStr = if (totalDurationMs > 0L) {
+            val ratio = (offDurationMs.toDouble() / totalDurationMs.toDouble() * 100.0).coerceIn(0.0, 100.0)
+            String.format(Locale.getDefault(), "%.1f%%", ratio)
+        } else {
+            "0.0%"
+        }
+
+        val onDurationStr = formatCardDuration(onDurationMs, overview.screenOnDurationText)
+        val offDurationStr = formatCardDuration(offDurationMs, overview.screenOffDurationText)
+        val totalDurationStr = formatCardDuration(totalDurationMs, overview.totalDurationText)
+
+        val onPowerStr = if (overview.screenOnPowerWatts >= 0.05f) {
+            String.format(Locale.getDefault(), "%.2fW", overview.screenOnPowerWatts)
+        } else {
+            "--"
+        }
+        val avgPowerStr = if (overview.avgPowerWatts >= 0.05f) {
+            String.format(Locale.getDefault(), "%.2fW", overview.avgPowerWatts)
+        } else {
+            "--"
+        }
+        val offPowerStr = if (overview.screenOffPowerWatts >= 0.05f) {
+            String.format(Locale.getDefault(), "%.2fW", overview.screenOffPowerWatts)
+        } else {
+            "--"
+        }
+
+        binding.tvMetricScreenOnTime.text = formatValueWithSmallPercent(onDurationStr, onDurationRatioStr)
+        binding.tvMetricScreenOnEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", onEnergy), onEnergyRatioStr)
+        binding.tvMetricScreenOnPower.text = onPowerStr
+        binding.tvMetricScreenOnRemaining.text = overview.remainingScreenOnText
+
+        binding.tvMetricScreenOffTime.text = formatValueWithSmallPercent(offDurationStr, offDurationRatioStr)
+        binding.tvMetricScreenOffEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", offEnergy), offEnergyRatioStr)
+        binding.tvMetricScreenOffPower.text = offPowerStr
+        binding.tvMetricScreenOffRemaining.text = overview.remainingScreenOffText
+
+        binding.tvMetricGlobalTime.text = formatValueWithSmallPercent(totalDurationStr, "100%")
+        binding.tvMetricGlobalEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", totalEnergy), globalEnergyRatioStr)
+        binding.tvMetricGlobalPower.text = avgPowerStr
+        binding.tvMetricGlobalRemaining.text = overview.remainingCompositeText
+
+        binding.tvPowerTitle.text = getString(R.string.power_stats_title)
+    }
+
 
     /**
      * 从历史快照等字符串中解析时长文本为物理毫秒值。

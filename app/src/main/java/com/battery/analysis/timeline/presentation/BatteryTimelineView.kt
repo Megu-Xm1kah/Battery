@@ -2526,13 +2526,18 @@ class BatteryTimelineView @JvmOverloads constructor(
 
     /**
      * 通知游标移动回调。
+     * 精确对齐图表可视内容左右边距（左侧 dp30 Y轴与右侧 dp16 边距），
+     * 确保向外部派发的时间戳与图表内部高亮游标指示看板 100% 像素级一致。
      *
      * @param x 游标当前 X 像素坐标
      */
     private fun notifyCursorMove(x: Float) {
-        val w = width.toFloat()
-        if (w <= 0f) return
-        val ts = TimelineScaleCalculator.xToTime(x, timelineState.visibleStartTimestamp, timelineState.visibleEndTimestamp, w)
+        val contentLeft = paddingLeft + dp30
+        val contentRight = width.toFloat() - paddingRight - dp16
+        val contentWidth = maxOf(0f, contentRight - contentLeft)
+        if (contentWidth <= 0f) return
+        val clampedX = x.coerceIn(contentLeft, contentRight)
+        val ts = TimelineScaleCalculator.xToTime(clampedX, timelineState.visibleStartTimestamp, timelineState.visibleEndTimestamp, contentWidth, contentLeft)
         val sample = timelineState.batterySamples.minByOrNull { abs(it.timestamp - ts) }
         val app = timelineState.appEvents.find { it.startTime <= ts && it.endTime >= ts }
         onCursorInspectListener?.onCursorMove(ts, sample, app)
