@@ -9,6 +9,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
 import android.os.Bundle
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -689,22 +690,15 @@ class HistoryFragment : Fragment() {
         }
 
         dialog.show()
+        applyDialogWindowStyle(dialog, heightRatio = 0.95f)
 
-        dialog.window?.let { window ->
-            window.setBackgroundDrawableResource(android.R.color.transparent)
-            val displayMetrics = resources.displayMetrics
-            val width = (displayMetrics.widthPixels * 0.92).toInt()
-            val height = (displayMetrics.heightPixels * 0.95).toInt()
-            window.setLayout(width, height)
-            window.setGravity(android.view.Gravity.CENTER)
-
-            // 使用符合 FrameLayout 父容器要求的 FrameLayout.LayoutParams (支持 MarginLayoutParams)，彻底杜绝 ClassCastException 并锁定高度
-            dialogView.layoutParams = android.widget.FrameLayout.LayoutParams(
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            dialogView.minimumHeight = height
-        }
+        val height = (resources.displayMetrics.heightPixels * 0.95).toInt()
+        // 使用符合 FrameLayout 父容器要求的 FrameLayout.LayoutParams (支持 MarginLayoutParams)，彻底杜绝 ClassCastException 并锁定高度
+        dialogView.layoutParams = android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        )
+        dialogView.minimumHeight = height
     }
 
     /**
@@ -803,13 +797,7 @@ class HistoryFragment : Fragment() {
         }
 
         dialog.show()
-
-        dialog.window?.let { window ->
-            window.setBackgroundDrawableResource(android.R.color.transparent)
-            val width = (resources.displayMetrics.widthPixels * 0.92).toInt()
-            window.setLayout(width, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
-            window.setGravity(android.view.Gravity.CENTER)
-        }
+        applyDialogWindowStyle(dialog)
     }
 
     /**
@@ -868,13 +856,7 @@ class HistoryFragment : Fragment() {
         }
 
         dialog.show()
-
-        dialog.window?.let { window ->
-            window.setBackgroundDrawableResource(android.R.color.transparent)
-            val width = (resources.displayMetrics.widthPixels * 0.92).toInt()
-            window.setLayout(width, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
-            window.setGravity(android.view.Gravity.CENTER)
-        }
+        applyDialogWindowStyle(dialog)
     }
 
     /**
@@ -911,12 +893,28 @@ class HistoryFragment : Fragment() {
         }
 
         dialog.show()
+        applyDialogWindowStyle(dialog)
+    }
 
+    /**
+     * 为现代化美化弹窗统一应用 Window 样式，包括系统级平滑弹出与收起动画、透明系统背景、92% 屏宽与居中布局，并支持指定弹窗高度屏幕占比。
+     *
+     * @param dialog 待配置样式的 [AlertDialog] 实例
+     * @param heightRatio 弹窗高度占屏幕高度比例（若为空则使用 WRAP_CONTENT）
+     */
+    private fun applyDialogWindowStyle(dialog: AlertDialog, heightRatio: Float? = null) {
         dialog.window?.let { window ->
+            window.setWindowAnimations(R.style.Animation_Dialog_CenterPop)
             window.setBackgroundDrawableResource(android.R.color.transparent)
-            val width = (resources.displayMetrics.widthPixels * 0.92).toInt()
-            window.setLayout(width, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
-            window.setGravity(android.view.Gravity.CENTER)
+            val displayMetrics = resources.displayMetrics
+            val width = (displayMetrics.widthPixels * 0.92).toInt()
+            val height = if (heightRatio != null && heightRatio > 0f) {
+                (displayMetrics.heightPixels * heightRatio).toInt()
+            } else {
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            }
+            window.setLayout(width, height)
+            window.setGravity(Gravity.CENTER)
         }
     }
 

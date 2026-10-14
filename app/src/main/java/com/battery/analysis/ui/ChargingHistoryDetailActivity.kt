@@ -211,12 +211,13 @@ class ChargingHistoryDetailActivity : AppCompatActivity() {
     }
 
     /**
-     * 为自定义对话框应用居中、半透明背景及适屏宽度的窗口样式。
+     * 为自定义对话框应用居中、半透明背景、适屏宽度及系统级平滑弹出与收起动画的窗口样式。
      *
      * @param dialog 待配置样式的 [AlertDialog] 实例
      */
     private fun applyDialogWindowStyle(dialog: AlertDialog) {
         dialog.window?.let { window ->
+            window.setWindowAnimations(R.style.Animation_Dialog_CenterPop)
             window.setBackgroundDrawableResource(android.R.color.transparent)
             val width = (resources.displayMetrics.widthPixels * 0.92).toInt()
             window.setLayout(width, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)

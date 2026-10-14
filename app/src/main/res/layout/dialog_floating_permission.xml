@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_dialog_surface"
+    android:clipToOutline="true"
+    android:gravity="center_horizontal"
+    android:orientation="vertical"
+    android:paddingHorizontal="18dp"
+    android:paddingVertical="20dp">
+
+    <!-- 顶部蓝色盾牌安全图标 -->
+    <FrameLayout
+        android:layout_width="52dp"
+        android:layout_height="52dp"
+        android:background="@drawable/bg_restore_icon_circle">
+
+        <ImageView
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_shield_check"
+            app:tint="#2196F3" />
+    </FrameLayout>
+
+    <!-- 弹窗标题 -->
+    <TextView
+        android:id="@+id/tv_dialog_permission_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:text="@string/floating_permission_dialog_title"
+        android:textColor="?android:attr/textColorPrimary"
+        android:textSize="17sp"
+        android:textStyle="bold" />
+
+    <!-- 弹窗主说明文案 -->
+    <TextView
+        android:id="@+id/tv_dialog_permission_desc"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:gravity="center"
+        android:lineSpacingExtra="3dp"
+        android:text="@string/floating_permission_dialog_desc"
+        android:textColor="?android:attr/textColorSecondary"
+        android:textSize="13.5sp" />
+
+    <!-- 权限功能介绍小卡片 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:background="@drawable/bg_dialog_card"
+        android:clipToOutline="true"
+        android:orientation="vertical"
+        android:padding="12dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/floating_permission_feature_title"
+            android:textColor="#2196F3"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:lineSpacingExtra="2dp"
+            android:text="@string/floating_permission_feature_desc"
+            android:textColor="?android:attr/textColorSecondary"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- 底部操作按钮 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:layout_marginTop="18dp"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/btn_dialog_permission_cancel"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginEnd="6dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_dialog_btn_cancel"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:text="@string/cancel"
+            android:textColor="?android:attr/textColorPrimary"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/btn_dialog_permission_grant"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_marginStart="6dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_dialog_btn_primary"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:text="@string/floating_permission_btn_grant"
+            android:textColor="@color/nav_item_selected"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+</LinearLayout>

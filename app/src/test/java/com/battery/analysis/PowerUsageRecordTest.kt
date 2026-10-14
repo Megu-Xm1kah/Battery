@@ -163,4 +163,53 @@ class PowerUsageRecordTest {
         assertEquals(original.trendPointsJson, restored.trendPointsJson)
         assertEquals(original.appListJson, restored.appListJson)
     }
+
+    /**
+     * 测试放电进行中草稿（isCompleted = false）在初始阶段即使平均放电功耗为零也不应被误判为无效脏记录。
+     * 验证守卫逻辑：仅在放电会话已完结结案（isCompleted = true）且时长大于等于 1 分钟时，零功耗才被判定为充电脏记录。
+     */
+    @Test
+    fun testRunningDischargeDraftWithZeroPowerNotTreatedAsInvalid() {
+        // 1. 刚刚拔电 15 秒且功耗尚未建立的草稿
+        val runningDraft15s = PowerUsageRecord(
+            id = 1790566000000L,
+            recordTime = "2026-10-14 10:00:15",
+            levelPercent = 100,
+            voltageVolts = 4.35f,
+            temperature = 28f,
+            energyWh = 18f,
+            isCharging = false,
+            avgPowerWatts = 0.00f,
+            screenOnPowerWatts = 0.00f,
+            screenOffPowerWatts = 0.00f,
+            screenOnDurationText = "15s",
+            screenOffDurationText = "0s",
+            totalDurationText = "15s",
+            remainingScreenOnText = "--",
+            remainingCompositeText = "--",
+            remainingScreenOffText = "--",
+            isShizukuRealData = false,
+            appCount = 0,
+            trendPointsJson = "[]",
+            appListJson = "[]",
+            isCompleted = false
+        )
+        val isDraft15sInvalid = runningDraft15s.isCompleted && runningDraft15s.avgPowerWatts <= 0.001f && runningDraft15s.getDurationMs() >= 60_000L
+        assertEquals("放电短时间草稿绝不能被判定为无效脏数据", false, isDraft15sInvalid)
+
+        // 2. 拔电 2 分钟但由于刚息屏功耗微积分尚未成型的草稿（isCompleted = false）
+        val runningDraft2m = runningDraft15s.copy(
+            totalDurationText = "2m",
+            isCompleted = false
+        )
+        val isDraft2mInvalid = runningDraft2m.isCompleted && runningDraft2m.avgPowerWatts <= 0.001f && runningDraft2m.getDurationMs() >= 60_000L
+        assertEquals("放电中草稿即使时长超 1 分钟且功耗为零也不可判定为无效脏数据", false, isDraft2mInvalid)
+
+        // 3. 只有已完结结案（isCompleted = true）且时长超 1 分钟的零功耗记录，才被判定为充电脏记录
+        val completedZeroPower = runningDraft2m.copy(
+            isCompleted = true
+        )
+        val isCompletedInvalid = completedZeroPower.isCompleted && completedZeroPower.avgPowerWatts <= 0.001f && completedZeroPower.getDurationMs() >= 60_000L
+        assertEquals("已完结结案且零功耗超1分钟的记录必须判定为异常记录", true, isCompletedInvalid)
+    }
 }

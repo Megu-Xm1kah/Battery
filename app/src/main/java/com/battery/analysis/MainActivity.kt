@@ -418,6 +418,10 @@ class MainActivity : AppCompatActivity() {
             val isCharging = com.battery.analysis.manager.ChargingStatsManager.getInstance(this).isCharging()
             updateBottomNavPowerTab(isCharging)
         }
+        if (com.battery.analysis.manager.FloatingWindowManager.isFloatingEnabled(this) &&
+            com.battery.analysis.manager.FloatingWindowManager.canDrawOverlays(this)) {
+            com.battery.analysis.manager.FloatingWindowManager.show(this)
+        }
     }
 
     /**

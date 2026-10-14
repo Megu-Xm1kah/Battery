@@ -38,6 +38,10 @@ import com.battery.analysis.util.SevenDaysDischargeCalculator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.battery.analysis.timeline.util.SubIntervalOverviewStats
+import com.battery.analysis.timeline.util.TimelinePrefixData
+import com.battery.analysis.timeline.util.TimelinePrefixSumCalculator
+import java.util.Date
 import java.util.Locale
 
 /**
@@ -78,6 +82,19 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
      * 设备电池物理总能量及获取方式详情缓存。
      */
     private var cachedTotalEnergyInfo: BatteryTotalEnergyInfo? = null
+
+    /**
+     * 当前时间轴前缀和预计算索引缓存，支撑 120Hz 游标探查二分查询。
+     */
+    private var currentPrefixData: com.battery.analysis.timeline.util.TimelinePrefixData? = null
+
+    /**
+     * 游标滑动时刻格式化器（HH:mm:ss），采用 ThreadLocal 实现每线程单例复用，消除高频滑动 GC 压力。
+     */
+    private val threadLocalCursorTimeFormatter = ThreadLocal.withInitial {
+        java.text.SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+    }
+
 
     /**
      * 活跃对话框跟踪列表，防止退入后台或界面销毁时遗留悬挂 Window 导致内存泄漏。
@@ -284,6 +301,32 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
         hBinding.batteryTimelineView.setOnEnergyClickListener { view, touchX, touchY ->
             showEnergyTooltip(view, touchX, touchY)
         }
+
+        hBinding.batteryTimelineView.setOnCursorInspectListener(object : com.battery.analysis.timeline.presentation.BatteryTimelineView.OnCursorInspectListener {
+            override fun onCursorMove(
+                timestamp: Long,
+                sample: com.battery.analysis.timeline.domain.BatterySample?,
+                activeApp: com.battery.analysis.timeline.domain.AppTimelineEvent?
+            ) {
+                val prefix = currentPrefixData ?: return
+                val subStats = com.battery.analysis.timeline.util.TimelinePrefixSumCalculator.querySubIntervalStats(prefix, timestamp)
+                this@PowerHistoryDetailActivity.updateCursorPowerMetrics(hBinding, subStats)
+                PowerDischargeMetricsViewBinder.updateCursorInspectionStats(
+                    speedBinding = hBinding.layoutDischargeSpeed,
+                    sleepBinding = hBinding.layoutSleepAwake,
+                    subStats = subStats
+                )
+            }
+
+            override fun onCursorDismiss() {
+                val record = currentRecord ?: return
+                renderHeaderDetails(record, hBinding)
+                bindMetricsCards(hBinding)
+                binding.tvTitle.text = getString(R.string.power_detail_title)
+                binding.tvCursorTime.text = ""
+                binding.tvCursorTime.visibility = View.GONE
+            }
+        })
     }
 
     /**
@@ -589,6 +632,108 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
     }
 
     /**
+     * 响应时间轴触摸点滑动，以零 GC、直接视图文本赋值方式实时刷新快照详情页核心三维功耗卡片与顶部标题。
+     *
+     * @param hBinding 头部视图绑定对象
+     * @param subStats 阶段累计统计快照
+     */
+    private fun updateCursorPowerMetrics(
+        hBinding: ItemHistoryDetailHeaderBinding,
+        subStats: SubIntervalOverviewStats
+    ) {
+        val totalDurationMs = subStats.totalDurationMs
+        val onDurationMs = subStats.screenOnDurationMs
+        val offDurationMs = subStats.screenOffDurationMs
+
+        val onDurationRatioStr = if (totalDurationMs > 0L) {
+            val ratio = (onDurationMs.toDouble() / totalDurationMs.toDouble() * 100.0).coerceIn(0.0, 100.0)
+            String.format(Locale.getDefault(), "%.1f%%", ratio)
+        } else {
+            "0.0%"
+        }
+
+        val offDurationRatioStr = if (totalDurationMs > 0L) {
+            val ratio = (offDurationMs.toDouble() / totalDurationMs.toDouble() * 100.0).coerceIn(0.0, 100.0)
+            String.format(Locale.getDefault(), "%.1f%%", ratio)
+        } else {
+            "0.0%"
+        }
+
+        val onDurationStr = formatCardDuration(onDurationMs, "")
+        val offDurationStr = formatCardDuration(offDurationMs, "")
+        val totalDurationStr = formatCardDuration(totalDurationMs, "")
+
+        val baseTotalEnergy = currentPrefixData?.totalCapacityWh?.takeIf { it > 0f }
+            ?: cachedTotalCapacityWh?.takeIf { it > 0f }
+
+        val onEnergyRatioStr = if (baseTotalEnergy != null && baseTotalEnergy > 0f) {
+            val ratio = (subStats.screenOnEnergyWh / baseTotalEnergy * 100f)
+            String.format(Locale.getDefault(), "%.1f%%", ratio)
+        } else {
+            "--%"
+        }
+
+        val offEnergyRatioStr = if (baseTotalEnergy != null && baseTotalEnergy > 0f) {
+            val ratio = (subStats.screenOffEnergyWh / baseTotalEnergy * 100f)
+            String.format(Locale.getDefault(), "%.1f%%", ratio)
+        } else {
+            "--%"
+        }
+
+        val globalEnergyRatioStr = if (baseTotalEnergy != null && baseTotalEnergy > 0f) {
+            val ratio = (subStats.totalEnergyWh / baseTotalEnergy * 100f)
+            String.format(Locale.getDefault(), "%.1f%%", ratio)
+        } else {
+            "--%"
+        }
+
+        val onPowerStr = if (subStats.screenOnPowerWatts >= 0.05f) {
+            String.format(Locale.getDefault(), "%.2fW", subStats.screenOnPowerWatts)
+        } else {
+            "--"
+        }
+        val avgPowerStr = if (subStats.avgPowerWatts >= 0.05f) {
+            String.format(Locale.getDefault(), "%.2fW", subStats.avgPowerWatts)
+        } else {
+            "--"
+        }
+        val offPowerStr = if (subStats.screenOffPowerWatts >= 0.05f) {
+            String.format(Locale.getDefault(), "%.2fW", subStats.screenOffPowerWatts)
+        } else {
+            "--"
+        }
+
+        // 第一行：亮屏数据（时长占比 / 能量占比 / 功耗 / 阶段时长）
+        hBinding.tvMetricScreenOnTime.text = formatValueWithSmallPercent(onDurationStr, onDurationRatioStr)
+        hBinding.tvMetricScreenOnEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", subStats.screenOnEnergyWh), onEnergyRatioStr)
+        hBinding.tvMetricScreenOnPower.text = onPowerStr
+        hBinding.tvMetricScreenOnRemaining.text = onDurationStr
+
+        // 第二行：息屏数据（时长占比 / 能量占比 / 功耗 / 阶段时长）
+        hBinding.tvMetricScreenOffTime.text = formatValueWithSmallPercent(offDurationStr, offDurationRatioStr)
+        hBinding.tvMetricScreenOffEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", subStats.screenOffEnergyWh), offEnergyRatioStr)
+        hBinding.tvMetricScreenOffPower.text = offPowerStr
+        hBinding.tvMetricScreenOffRemaining.text = offDurationStr
+
+        // 第三行：全局数据（时长占比 / 能量占比 / 功耗 / 阶段时长）
+        hBinding.tvMetricGlobalTime.text = formatValueWithSmallPercent(totalDurationStr, "100%")
+        hBinding.tvMetricGlobalEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", subStats.totalEnergyWh), globalEnergyRatioStr)
+        hBinding.tvMetricGlobalPower.text = avgPowerStr
+        hBinding.tvMetricGlobalRemaining.text = totalDurationStr
+
+        // 动态指示当前查看阶段的时间点，在耗电详情标题后方单行展示
+        val timeStr = threadLocalCursorTimeFormatter.get()?.format(Date(subStats.targetTimestamp)) ?: ""
+        binding.tvTitle.text = getString(R.string.power_detail_title)
+        if (timeStr.isNotEmpty()) {
+            binding.tvCursorTime.text = "($timeStr)"
+            binding.tvCursorTime.visibility = View.VISIBLE
+        } else {
+            binding.tvCursorTime.text = ""
+            binding.tvCursorTime.visibility = View.GONE
+        }
+    }
+
+    /**
      * 将当前缓存的全部快照数据（时段状态、三维核心看板、6个放电与息屏指标卡片、走势折线图、列表操作栏与条目数量）完整绑定至头部视图。
      * 无论后台数据反序列化与 ViewHolder 创建的先后时序如何，均能确保所有卡片与折线图数据完整无遗漏地呈现。
      *
@@ -794,8 +939,14 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
                 ?: cachedTimelineState?.selectedMetrics
                 ?: com.battery.analysis.timeline.presentation.TimelineMetric.entries.toSet()
             val timelineState = powerMgr.buildTimelineState(fullPackage, isHistoryRecord = true).copy(selectedMetrics = selectedMetrics)
+            val prefixData = TimelinePrefixSumCalculator.buildPrefixData(
+                timelineState = timelineState,
+                overviewStats = fullPackage.overviewStats,
+                totalCapacityWh = totalCapacityWh
+            )
 
             withContext(Dispatchers.Main) {
+                currentPrefixData = prefixData
                 cachedOverviewStats = fullPackage.overviewStats
                 cachedSevenDaysStats = sevenDaysStats
                 cachedTotalCapacityWh = totalCapacityWh
@@ -928,12 +1079,13 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
     }
 
     /**
-     * 为自定义对话框应用统一的居中、宽度与半透明背景窗口样式。
+     * 为自定义对话框应用统一的居中、宽度、半透明背景及系统级平滑弹出与收起动画的窗口样式。
      *
      * @param dialog 待配置样式的 [AlertDialog] 实例
      */
     private fun applyDialogWindowStyle(dialog: AlertDialog) {
         dialog.window?.let { window ->
+            window.setWindowAnimations(R.style.Animation_Dialog_CenterPop)
             window.setBackgroundDrawableResource(android.R.color.transparent)
             val width = (resources.displayMetrics.widthPixels * 0.88).toInt()
             window.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)

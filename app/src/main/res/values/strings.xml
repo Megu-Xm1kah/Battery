@@ -339,6 +339,42 @@
     <string name="setting_language">语言 (Language)</string>
     <string name="setting_follow_system_theme">跟随系统主题</string>
     <string name="setting_dark_mode">开启暗黑模式</string>
+    <string name="setting_floating_window">开启悬浮窗显示</string>
+    <string name="setting_floating_window_desc">在屏幕上方实时悬浮显示电池功率与温度</string>
+    <string name="setting_floating_show_power">实时功率显示</string>
+    <string name="setting_floating_show_power_desc">在悬浮窗中展示当前瞬时充放电功率 (W)</string>
+    <string name="setting_floating_show_temp">实时温度显示</string>
+    <string name="setting_floating_show_temp_desc">在悬浮窗中展示当前电池实时温度 (℃)</string>
+    <string name="setting_floating_position">悬浮窗位置与外观设置</string>
+    <string name="setting_floating_position_desc">调节水平、垂直、透明度及主题明暗</string>
+    <string name="dialog_floating_window_title">⚡ 悬浮窗位置与外观</string>
+    <string name="floating_align_status_bar">显示在状态栏上</string>
+    <string name="floating_align_status_bar_desc">允许悬浮窗放置于顶部状态栏区域内</string>
+    <string name="floating_vertical_pos">垂直位置 (Y)</string>
+    <string name="floating_vertical_pos_desc">垂直坐标偏移量，建议置于状态栏高度内</string>
+    <string name="floating_horizontal_pos">水平位置 (X)</string>
+    <string name="floating_horizontal_align_left">靠左</string>
+    <string name="floating_horizontal_align_center">居中</string>
+    <string name="floating_horizontal_align_right">靠右</string>
+    <string name="floating_opacity">透明度</string>
+    <string name="floating_opacity_format">%d%%</string>
+    <string name="floating_theme_mode">主题明暗对应</string>
+    <string name="floating_theme_follow_system">跟随系统</string>
+    <string name="floating_theme_dark">暗黑微透</string>
+    <string name="floating_theme_light">亮色微透</string>
+    <string name="floating_font_size">文字大小</string>
+    <string name="floating_font_size_desc">调节悬浮窗内功率与温度文字字号</string>
+    <string name="floating_step_minus">微调减小</string>
+    <string name="floating_step_plus">微调增大</string>
+    <string name="floating_permission_dialog_title">需要开启悬浮窗权限</string>
+    <string name="floating_permission_dialog_desc">开启悬浮窗需要在系统设置中授予“显示在其他应用上层”权限，是否前往设置？</string>
+    <string name="floating_permission_feature_title">⚡ 实时监测悬浮窗</string>
+    <string name="floating_permission_feature_desc">在屏幕顶层实时呈现充放电功率与电池温度，不影响日常操作</string>
+    <string name="floating_permission_btn_grant">前往授权</string>
+    <string name="toast_floating_window_enabled">已开启实时悬浮窗显示</string>
+    <string name="toast_floating_window_disabled">已关闭悬浮窗显示</string>
+    <string name="floating_drag_hint">💡 可在屏幕上直接拖拽悬浮窗，松手自动保存</string>
+
 
     <string name="settings_section_refresh">数据与刷新</string>
     <string name="setting_charge_discharge_stats">启用充、放电统计</string>
@@ -471,7 +507,7 @@
     <string name="toast_unplug_recorded">已记录断电快照</string>
 
     <!-- 耗电历史记录 -->
-    <string name="power_history_title">耗电记录历史</string>
+    <string name="power_history_title">耗电历史记录</string>
     <string name="power_history_empty_title">暂无耗电历史记录</string>
     <string name="power_history_empty_desc">每次拔掉充电电源时，系统将自动生成并保存当时的放电走势与应用耗电快照。</string>
     <string name="power_history_clear_title">清空耗电历史</string>
@@ -588,7 +624,7 @@
     <string name="charging_detail_screen_off_energy">息屏充入能量</string>
 
     <!-- 耗电快照详情 -->
-    <string name="power_detail_title">耗电快照详情</string>
+    <string name="power_detail_title">耗电详情</string>
     <string name="power_detail_btn_load">载入主页</string>
     <string name="power_detail_level">终止电量</string>
     <string name="power_detail_temp">电池温度</string>

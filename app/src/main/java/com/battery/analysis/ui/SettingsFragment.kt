@@ -1,5 +1,6 @@
 package com.battery.analysis.ui
 
+import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -9,9 +10,12 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.CheckBox
@@ -27,6 +31,7 @@ import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.transition.TransitionManager
 import com.battery.analysis.MainActivity
 import com.battery.analysis.R
 import com.battery.analysis.daemon.DaemonManager
@@ -64,6 +69,13 @@ class SettingsFragment : Fragment() {
      * 活跃气泡弹窗跟踪列表，防止退入后台或界面销毁时遗留悬挂 Window 导致内存泄漏。
      */
     private val activePopups = java.util.concurrent.CopyOnWriteArrayList<android.widget.PopupWindow>()
+
+    /**
+     * 桌面悬浮窗子设置项当前是否处于展示（展开或收缩）状态。
+     * 为 null 时表示使用默认策略（当悬浮窗已开启且有权限时默认展开展示，关闭时默认收缩）；
+     * 当用户点击“开启悬浮窗显示”这一整项 View 时，手动切换其展开与收缩状态。
+     */
+    private var isFloatingSubSettingsExpanded: Boolean? = null
 
     /**
      * 统一跟踪并显示对话框，在生命周期结束或退出前台时集中安全关闭以根除 Window 泄漏。
@@ -136,6 +148,22 @@ class SettingsFragment : Fragment() {
     }
 
     /**
+     * 申请系统悬浮窗权限结果回调 Launcher。
+     */
+    private val overlayPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        val ctx = context ?: return@registerForActivityResult
+        if (com.battery.analysis.manager.FloatingWindowManager.canDrawOverlays(ctx)) {
+            com.battery.analysis.manager.FloatingWindowManager.setFloatingEnabled(ctx, true)
+            isFloatingSubSettingsExpanded = true
+            updateFloatingWindowDisplay()
+            Toast.makeText(ctx, getString(R.string.toast_floating_window_enabled), Toast.LENGTH_SHORT).show()
+        } else {
+            isFloatingSubSettingsExpanded = false
+            updateFloatingWindowDisplay()
+        }
+    }
+
+    /**
      * 创建 Fragment 的视图层级。
      *
      * @param inflater 布局填充器
@@ -165,6 +193,7 @@ class SettingsFragment : Fragment() {
 
         setupLanguageSettings()
         setupThemeSettings()
+        setupFloatingWindowSettings()
         setupChargeDischargeStatsSettings()
         setupChargingKeepScreenOnSettings()
         setupPowerModeSettings()
@@ -242,6 +271,7 @@ class SettingsFragment : Fragment() {
         updateBatteryOptimizationDisplay()
         updateAccessibilityStatusDisplay()
         updateDaemonStatusDisplay()
+        updateFloatingWindowDisplay()
     }
 
     /**
@@ -486,7 +516,7 @@ class SettingsFragment : Fragment() {
             .setView(dialogView)
             .create()
 
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        applyDialogWindowStyle(dialog)
 
         btnCancel.setOnClickListener {
             dialog.dismiss()
@@ -645,6 +675,542 @@ class SettingsFragment : Fragment() {
     }
 
     /**
+     * 初始化桌面悬浮窗设置项与子设置项交互逻辑。
+     * 管理悬浮窗总开关（含系统权限检测与引导）、实时功率子开关、实时温度子开关以及位置与外观弹窗。
+     * 点击悬浮窗主设置条目时触发子设置项的展示与收缩，悬浮窗开关事件完全由右侧 Switch 按钮负责。
+     */
+    private fun setupFloatingWindowSettings() {
+        updateFloatingWindowDisplay()
+
+        binding.switchFloatingWindow.setOnCheckedChangeListener { _, isChecked ->
+            handleFloatingWindowSwitchChanged(isChecked)
+        }
+
+        binding.layoutFloatingWindowSetting.setOnClickListener {
+            toggleFloatingSubSettingsVisibility()
+        }
+
+        binding.switchFloatingShowPower.setOnCheckedChangeListener { _, isChecked ->
+            val ctx = requireContext()
+            com.battery.analysis.manager.FloatingWindowManager.setShowPower(ctx, isChecked)
+        }
+        binding.layoutFloatingShowPower.setOnClickListener {
+            binding.switchFloatingShowPower.isChecked = !binding.switchFloatingShowPower.isChecked
+        }
+
+        binding.switchFloatingShowTemp.setOnCheckedChangeListener { _, isChecked ->
+            val ctx = requireContext()
+            com.battery.analysis.manager.FloatingWindowManager.setShowTemp(ctx, isChecked)
+        }
+        binding.layoutFloatingShowTemp.setOnClickListener {
+            binding.switchFloatingShowTemp.isChecked = !binding.switchFloatingShowTemp.isChecked
+        }
+
+        binding.layoutFloatingPositionSetting.setOnClickListener {
+            showFloatingWindowSettingsDialog()
+        }
+    }
+
+    /**
+     * 处理桌面悬浮窗总开关状态变更事件。
+     * 校验系统“显示在其他应用上层”权限，更新悬浮窗启用状态并同步子设置项的展示状态。
+     *
+     * @param isChecked 开关当前的目标选中状态
+     */
+    private fun handleFloatingWindowSwitchChanged(isChecked: Boolean) {
+        val ctx = context ?: return
+        val currentEnabled = com.battery.analysis.manager.FloatingWindowManager.isFloatingEnabled(ctx) &&
+                com.battery.analysis.manager.FloatingWindowManager.canDrawOverlays(ctx)
+        if (isChecked == currentEnabled) return
+
+        if (isChecked) {
+            if (com.battery.analysis.manager.FloatingWindowManager.canDrawOverlays(ctx)) {
+                com.battery.analysis.manager.FloatingWindowManager.setFloatingEnabled(ctx, true)
+                isFloatingSubSettingsExpanded = true
+                updateFloatingWindowDisplay()
+                Toast.makeText(ctx, getString(R.string.toast_floating_window_enabled), Toast.LENGTH_SHORT).show()
+            } else {
+                binding.switchFloatingWindow.isChecked = false
+                showFloatingPermissionDialog()
+            }
+        } else {
+            com.battery.analysis.manager.FloatingWindowManager.setFloatingEnabled(ctx, false)
+            isFloatingSubSettingsExpanded = false
+            updateFloatingWindowDisplay()
+            Toast.makeText(ctx, getString(R.string.toast_floating_window_disabled), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 切换桌面悬浮窗子设置项区域的展示与收缩状态。
+     * 伴随平滑过渡动画，点击主设置条目时仅收起或展开子选项列表，不触碰悬浮窗启闭开关。
+     */
+    private fun toggleFloatingSubSettingsVisibility() {
+        val currentlyExpanded = isFloatingSubSettingsExpanded
+            ?: (binding.layoutFloatingSubSettings.visibility == View.VISIBLE)
+        val newExpanded = !currentlyExpanded
+        isFloatingSubSettingsExpanded = newExpanded
+
+        val parent = binding.layoutFloatingSubSettings.parent as? ViewGroup
+        if (parent != null) {
+            TransitionManager.beginDelayedTransition(parent)
+        }
+        binding.layoutFloatingSubSettings.visibility = if (newExpanded) View.VISIBLE else View.GONE
+    }
+
+    /**
+     * 同步刷新悬浮窗设置项与子设置项的 UI 呈现状态。
+     */
+    private fun updateFloatingWindowDisplay() {
+        val ctx = context ?: return
+        val isEnabled = com.battery.analysis.manager.FloatingWindowManager.isFloatingEnabled(ctx) &&
+                com.battery.analysis.manager.FloatingWindowManager.canDrawOverlays(ctx)
+
+        binding.switchFloatingWindow.setOnCheckedChangeListener(null)
+        binding.switchFloatingWindow.isChecked = isEnabled
+        binding.switchFloatingWindow.setOnCheckedChangeListener { _, isChecked ->
+            handleFloatingWindowSwitchChanged(isChecked)
+        }
+
+        val isExpanded = isFloatingSubSettingsExpanded ?: isEnabled
+        binding.layoutFloatingSubSettings.visibility = if (isExpanded) View.VISIBLE else View.GONE
+
+        binding.switchFloatingShowPower.setOnCheckedChangeListener(null)
+        binding.switchFloatingShowPower.isChecked = com.battery.analysis.manager.FloatingWindowManager.isShowPower(ctx)
+        binding.switchFloatingShowPower.setOnCheckedChangeListener { _, isChecked ->
+            com.battery.analysis.manager.FloatingWindowManager.setShowPower(ctx, isChecked)
+        }
+
+        binding.switchFloatingShowTemp.setOnCheckedChangeListener(null)
+        binding.switchFloatingShowTemp.isChecked = com.battery.analysis.manager.FloatingWindowManager.isShowTemp(ctx)
+        binding.switchFloatingShowTemp.setOnCheckedChangeListener { _, isChecked ->
+            com.battery.analysis.manager.FloatingWindowManager.setShowTemp(ctx, isChecked)
+        }
+
+        updateFloatingPositionSummary()
+    }
+
+    /**
+     * 刷新悬浮窗位置与外观副标题摘要文本。
+     */
+    private fun updateFloatingPositionSummary() {
+        val ctx = context ?: return
+        val isStatusBar = com.battery.analysis.manager.FloatingWindowManager.isAlignStatusBar(ctx)
+        val opacity = com.battery.analysis.manager.FloatingWindowManager.getOpacity(ctx)
+        val fontSize = com.battery.analysis.manager.FloatingWindowManager.getFontSize(ctx)
+        val currentY = com.battery.analysis.manager.FloatingWindowManager.getPosY(ctx)
+        val sbHeight = com.battery.analysis.manager.FloatingWindowManager.getStatusBarHeight(ctx)
+        val summary = buildString {
+            if (isStatusBar && currentY < sbHeight) {
+                append("状态栏位置")
+            } else {
+                append("自定义位置")
+            }
+            append(" · ").append(fontSize).append("sp字号")
+            append(" · ").append(opacity).append("%透明度")
+        }
+        binding.tvFloatingPositionSummary.text = summary
+    }
+
+    /**
+     * 弹出高颜值悬浮窗权限授予引导弹窗，引导用户前往系统设置开启“显示在其他应用上层”权限。
+     * 采用自定义现代化卡片设计与圆角风格，包含权限用途说明与确认取消交互。
+     */
+    private fun showFloatingPermissionDialog() {
+        val ctx = context ?: return
+        val dialogView = layoutInflater.inflate(R.layout.dialog_floating_permission, null)
+        val btnCancel = dialogView.findViewById<TextView>(R.id.btn_dialog_permission_cancel)
+        val btnGrant = dialogView.findViewById<TextView>(R.id.btn_dialog_permission_grant)
+
+        val dialog = AlertDialog.Builder(ctx)
+            .setView(dialogView)
+            .create()
+
+        btnCancel.setOnClickListener {
+            binding.switchFloatingWindow.isChecked = false
+            dialog.dismiss()
+        }
+
+        btnGrant.setOnClickListener {
+            dialog.dismiss()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                try {
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:${ctx.packageName}")
+                    )
+                    overlayPermissionLauncher.launch(intent)
+                } catch (_: Exception) {
+                    com.battery.analysis.manager.FloatingWindowManager.requestOverlayPermission(ctx)
+                }
+            }
+        }
+
+        dialog.setOnCancelListener {
+            binding.switchFloatingWindow.isChecked = false
+        }
+
+        showAndTrackDialog(dialog)
+        applyDialogWindowStyle(dialog)
+    }
+
+    /**
+     * 弹出高颜值悬浮窗位置与外观设置弹窗。
+     * 支持配置状态栏显示范围、垂直与水平精确滑块微调（带 +、- 步进按钮）、文字大小调整、透明度调节及明暗主题联动，
+     * 打开状态栏开关时允许显示于状态栏且不强制自动贴齐，关闭时限制不可位于状态栏上，
+     * 调节时与屏幕悬浮窗所见即所得实时响应。
+     */
+    private fun showFloatingWindowSettingsDialog() {
+        val ctx = context ?: return
+        val dialogView = layoutInflater.inflate(R.layout.dialog_floating_window_settings, null)
+
+        val switchStatusBar = dialogView.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.switch_align_status_bar)
+        val seekVertical = dialogView.findViewById<android.widget.SeekBar>(R.id.seekbar_vertical_pos)
+        val tvVerticalValue = dialogView.findViewById<TextView>(R.id.tv_vertical_pos_value)
+        val btnVerticalMinus = dialogView.findViewById<TextView>(R.id.btn_vertical_minus)
+        val btnVerticalPlus = dialogView.findViewById<TextView>(R.id.btn_vertical_plus)
+
+        val rbLeft = dialogView.findViewById<RadioButton>(R.id.rb_align_left)
+        val rbCenter = dialogView.findViewById<RadioButton>(R.id.rb_align_center)
+        val rbRight = dialogView.findViewById<RadioButton>(R.id.rb_align_right)
+        val seekHorizontal = dialogView.findViewById<android.widget.SeekBar>(R.id.seekbar_horizontal_pos)
+        val tvHorizontalValue = dialogView.findViewById<TextView>(R.id.tv_horizontal_pos_value)
+        val btnHorizontalMinus = dialogView.findViewById<TextView>(R.id.btn_horizontal_minus)
+        val btnHorizontalPlus = dialogView.findViewById<TextView>(R.id.btn_horizontal_plus)
+
+        val seekFontSize = dialogView.findViewById<android.widget.SeekBar>(R.id.seekbar_font_size)
+        val tvFontSizeValue = dialogView.findViewById<TextView>(R.id.tv_font_size_value)
+        val btnFontSizeMinus = dialogView.findViewById<TextView>(R.id.btn_font_size_minus)
+        val btnFontSizePlus = dialogView.findViewById<TextView>(R.id.btn_font_size_plus)
+
+        val seekOpacity = dialogView.findViewById<android.widget.SeekBar>(R.id.seekbar_opacity)
+        val tvOpacityValue = dialogView.findViewById<TextView>(R.id.tv_opacity_value)
+
+        val rbThemeFollow = dialogView.findViewById<RadioButton>(R.id.rb_theme_follow_system)
+        val rbThemeDark = dialogView.findViewById<RadioButton>(R.id.rb_theme_dark)
+        val rbThemeLight = dialogView.findViewById<RadioButton>(R.id.rb_theme_light)
+
+        val btnCancel = dialogView.findViewById<com.google.android.material.button.MaterialButton>(R.id.btn_floating_dialog_cancel)
+        val btnConfirm = dialogView.findViewById<com.google.android.material.button.MaterialButton>(R.id.btn_floating_dialog_confirm)
+
+        val (screenWidth, screenHeight) = com.battery.analysis.manager.FloatingWindowManager.getRealScreenSize(ctx)
+        val statusBarHeight = com.battery.analysis.manager.FloatingWindowManager.getStatusBarHeight(ctx)
+
+        // 记录打开弹框前的初始位置与外观配置，便于取消时完美恢复
+        val initialAlignStatusBar = com.battery.analysis.manager.FloatingWindowManager.isAlignStatusBar(ctx)
+        val initialRawY = com.battery.analysis.manager.FloatingWindowManager.getPosY(ctx)
+        val initialAlign = com.battery.analysis.manager.FloatingWindowManager.getHorizontalAlign(ctx)
+        val initialX = com.battery.analysis.manager.FloatingWindowManager.getPosX(ctx)
+        val initialFontSize = com.battery.analysis.manager.FloatingWindowManager.getFontSize(ctx)
+        val initialOpacity = com.battery.analysis.manager.FloatingWindowManager.getOpacity(ctx)
+        val initialThemeMode = com.battery.analysis.manager.FloatingWindowManager.getThemeMode(ctx)
+
+        val isAlignStatusBar = initialAlignStatusBar
+        switchStatusBar.isChecked = isAlignStatusBar
+        seekVertical.max = (screenHeight * 0.95f).toInt()
+        val currentY = initialRawY
+        val initialY = if (!isAlignStatusBar && currentY < statusBarHeight) {
+            statusBarHeight
+        } else {
+            currentY
+        }.coerceIn(0, seekVertical.max)
+        seekVertical.progress = initialY
+
+        val updateVerticalText = { y: Int ->
+            val inSb = y < statusBarHeight
+            tvVerticalValue.text = if (inSb) {
+                "Y: $y px (状态栏)"
+            } else {
+                "Y: $y px"
+            }
+        }
+        updateVerticalText(initialY)
+
+        val getMinY = { if (switchStatusBar.isChecked) 0 else statusBarHeight }
+
+        switchStatusBar.setOnCheckedChangeListener { _, isChecked ->
+            com.battery.analysis.manager.FloatingWindowManager.setAlignStatusBar(ctx, isChecked)
+            if (isChecked) {
+                // 开关打开时：代表可以显示在状态栏上，但是不要自动贴齐屏幕状态栏，保持当前位置
+                updateVerticalText(seekVertical.progress)
+            } else {
+                // 开关关闭时：不允许显示在状态栏位置上，若当前在状态栏高度内，则下移至状态栏下方边缘
+                if (seekVertical.progress < statusBarHeight) {
+                    seekVertical.progress = statusBarHeight
+                    com.battery.analysis.manager.FloatingWindowManager.setPosY(ctx, statusBarHeight)
+                }
+                updateVerticalText(seekVertical.progress)
+            }
+            com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
+        }
+
+        seekVertical.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    val minY = getMinY()
+                    val targetY = if (progress < minY) minY else progress
+                    if (targetY != progress) {
+                        seekBar?.progress = targetY
+                        return
+                    }
+                    com.battery.analysis.manager.FloatingWindowManager.setPosY(ctx, targetY)
+                    updateVerticalText(targetY)
+                    com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
+        })
+
+        // 垂直位置 - 微调按钮
+        setupRepeatClick(btnVerticalMinus) {
+            val minY = getMinY()
+            val targetY = (seekVertical.progress - 1).coerceAtLeast(minY)
+            if (targetY != seekVertical.progress) {
+                seekVertical.progress = targetY
+                com.battery.analysis.manager.FloatingWindowManager.setPosY(ctx, targetY)
+                updateVerticalText(targetY)
+                com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
+            }
+        }
+
+        // 垂直位置 + 微调按钮
+        setupRepeatClick(btnVerticalPlus) {
+            val targetY = (seekVertical.progress + 1).coerceAtMost(seekVertical.max)
+            if (targetY != seekVertical.progress) {
+                seekVertical.progress = targetY
+                com.battery.analysis.manager.FloatingWindowManager.setPosY(ctx, targetY)
+                updateVerticalText(targetY)
+                com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
+            }
+        }
+
+        seekHorizontal.max = screenWidth
+        val currentAlign = com.battery.analysis.manager.FloatingWindowManager.getHorizontalAlign(ctx)
+        val currentX = com.battery.analysis.manager.FloatingWindowManager.getPosX(ctx)
+        if (currentX >= 0) {
+            seekHorizontal.progress = currentX.coerceIn(0, screenWidth)
+        } else {
+            seekHorizontal.progress = screenWidth / 2
+        }
+
+        val updateHorizontalCapsules = { align: Int ->
+            rbLeft.isChecked = (align == com.battery.analysis.manager.FloatingWindowManager.ALIGN_LEFT)
+            rbCenter.isChecked = (align == com.battery.analysis.manager.FloatingWindowManager.ALIGN_CENTER)
+            rbRight.isChecked = (align == com.battery.analysis.manager.FloatingWindowManager.ALIGN_RIGHT)
+            tvHorizontalValue.text = when (align) {
+                com.battery.analysis.manager.FloatingWindowManager.ALIGN_LEFT -> "X: " + getString(R.string.floating_horizontal_align_left)
+                com.battery.analysis.manager.FloatingWindowManager.ALIGN_CENTER -> "X: " + getString(R.string.floating_horizontal_align_center)
+                com.battery.analysis.manager.FloatingWindowManager.ALIGN_RIGHT -> "X: " + getString(R.string.floating_horizontal_align_right)
+                else -> "X: ${seekHorizontal.progress} px"
+            }
+        }
+        updateHorizontalCapsules(currentAlign)
+
+        rbLeft.setOnClickListener {
+            com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, com.battery.analysis.manager.FloatingWindowManager.ALIGN_LEFT)
+            updateHorizontalCapsules(com.battery.analysis.manager.FloatingWindowManager.ALIGN_LEFT)
+            com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
+        }
+        rbCenter.setOnClickListener {
+            com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, com.battery.analysis.manager.FloatingWindowManager.ALIGN_CENTER)
+            updateHorizontalCapsules(com.battery.analysis.manager.FloatingWindowManager.ALIGN_CENTER)
+            com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
+        }
+        rbRight.setOnClickListener {
+            com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, com.battery.analysis.manager.FloatingWindowManager.ALIGN_RIGHT)
+            updateHorizontalCapsules(com.battery.analysis.manager.FloatingWindowManager.ALIGN_RIGHT)
+            com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
+        }
+
+        seekHorizontal.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    com.battery.analysis.manager.FloatingWindowManager.setPosX(ctx, progress)
+                    com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, com.battery.analysis.manager.FloatingWindowManager.ALIGN_CUSTOM)
+                    updateHorizontalCapsules(com.battery.analysis.manager.FloatingWindowManager.ALIGN_CUSTOM)
+                    com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
+        })
+
+        // 水平位置 - 微调按钮
+        setupRepeatClick(btnHorizontalMinus) {
+            val targetX = (seekHorizontal.progress - 1).coerceAtLeast(0)
+            if (targetX != seekHorizontal.progress) {
+                seekHorizontal.progress = targetX
+                com.battery.analysis.manager.FloatingWindowManager.setPosX(ctx, targetX)
+                com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, com.battery.analysis.manager.FloatingWindowManager.ALIGN_CUSTOM)
+                updateHorizontalCapsules(com.battery.analysis.manager.FloatingWindowManager.ALIGN_CUSTOM)
+                com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
+            }
+        }
+
+        // 水平位置 + 微调按钮
+        setupRepeatClick(btnHorizontalPlus) {
+            val targetX = (seekHorizontal.progress + 1).coerceAtMost(seekHorizontal.max)
+            if (targetX != seekHorizontal.progress) {
+                seekHorizontal.progress = targetX
+                com.battery.analysis.manager.FloatingWindowManager.setPosX(ctx, targetX)
+                com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, com.battery.analysis.manager.FloatingWindowManager.ALIGN_CUSTOM)
+                updateHorizontalCapsules(com.battery.analysis.manager.FloatingWindowManager.ALIGN_CUSTOM)
+                com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
+            }
+        }
+
+        // 文字大小调节 (范围 8sp 至 20sp, 偏移量 8)
+        val currentFontSize = com.battery.analysis.manager.FloatingWindowManager.getFontSize(ctx)
+        seekFontSize.progress = currentFontSize - 8
+        tvFontSizeValue.text = "${currentFontSize} sp"
+
+        seekFontSize.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                val sizeSp = progress + 8
+                tvFontSizeValue.text = "${sizeSp} sp"
+                if (fromUser) {
+                    com.battery.analysis.manager.FloatingWindowManager.setFontSize(ctx, sizeSp)
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
+        })
+
+        // 文字大小 - 微调按钮
+        setupRepeatClick(btnFontSizeMinus) {
+            val targetSize = (seekFontSize.progress + 8 - 1).coerceAtLeast(8)
+            val newProgress = targetSize - 8
+            if (newProgress != seekFontSize.progress) {
+                seekFontSize.progress = newProgress
+                tvFontSizeValue.text = "${targetSize} sp"
+                com.battery.analysis.manager.FloatingWindowManager.setFontSize(ctx, targetSize)
+            }
+        }
+
+        // 文字大小 + 微调按钮
+        setupRepeatClick(btnFontSizePlus) {
+            val targetSize = (seekFontSize.progress + 8 + 1).coerceAtMost(20)
+            val newProgress = targetSize - 8
+            if (newProgress != seekFontSize.progress) {
+                seekFontSize.progress = newProgress
+                tvFontSizeValue.text = "${targetSize} sp"
+                com.battery.analysis.manager.FloatingWindowManager.setFontSize(ctx, targetSize)
+            }
+        }
+
+        val currentOpacity = com.battery.analysis.manager.FloatingWindowManager.getOpacity(ctx)
+        seekOpacity.progress = currentOpacity
+        tvOpacityValue.text = "${currentOpacity}%"
+
+        seekOpacity.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                val validProgress = progress.coerceIn(20, 100)
+                tvOpacityValue.text = "${validProgress}%"
+                if (fromUser) {
+                    com.battery.analysis.manager.FloatingWindowManager.setOpacity(ctx, validProgress)
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
+        })
+
+        val updateThemeCapsules = { mode: Int ->
+            rbThemeFollow.isChecked = (mode == com.battery.analysis.manager.FloatingWindowManager.THEME_FOLLOW_SYSTEM)
+            rbThemeDark.isChecked = (mode == com.battery.analysis.manager.FloatingWindowManager.THEME_DARK)
+            rbThemeLight.isChecked = (mode == com.battery.analysis.manager.FloatingWindowManager.THEME_LIGHT)
+        }
+        val currentThemeMode = com.battery.analysis.manager.FloatingWindowManager.getThemeMode(ctx)
+        updateThemeCapsules(currentThemeMode)
+
+        rbThemeFollow.setOnClickListener {
+            com.battery.analysis.manager.FloatingWindowManager.setThemeMode(ctx, com.battery.analysis.manager.FloatingWindowManager.THEME_FOLLOW_SYSTEM)
+            updateThemeCapsules(com.battery.analysis.manager.FloatingWindowManager.THEME_FOLLOW_SYSTEM)
+            com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
+        }
+        rbThemeDark.setOnClickListener {
+            com.battery.analysis.manager.FloatingWindowManager.setThemeMode(ctx, com.battery.analysis.manager.FloatingWindowManager.THEME_DARK)
+            updateThemeCapsules(com.battery.analysis.manager.FloatingWindowManager.THEME_DARK)
+            com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
+        }
+        rbThemeLight.setOnClickListener {
+            com.battery.analysis.manager.FloatingWindowManager.setThemeMode(ctx, com.battery.analysis.manager.FloatingWindowManager.THEME_LIGHT)
+            updateThemeCapsules(com.battery.analysis.manager.FloatingWindowManager.THEME_LIGHT)
+            com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
+        }
+
+        val restoreInitialSettings = {
+            com.battery.analysis.manager.FloatingWindowManager.setAlignStatusBar(ctx, initialAlignStatusBar)
+            com.battery.analysis.manager.FloatingWindowManager.setPosY(ctx, initialRawY)
+            com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, initialAlign)
+            com.battery.analysis.manager.FloatingWindowManager.setPosX(ctx, initialX)
+            com.battery.analysis.manager.FloatingWindowManager.setFontSize(ctx, initialFontSize)
+            com.battery.analysis.manager.FloatingWindowManager.setOpacity(ctx, initialOpacity)
+            com.battery.analysis.manager.FloatingWindowManager.setThemeMode(ctx, initialThemeMode)
+            com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
+            updateFloatingPositionSummary()
+        }
+
+        val dialog = AlertDialog.Builder(ctx)
+            .setView(dialogView)
+            .create()
+
+        btnCancel.setOnClickListener {
+            restoreInitialSettings()
+            dialog.dismiss()
+        }
+
+        dialog.setOnCancelListener {
+            restoreInitialSettings()
+        }
+
+        btnConfirm.setOnClickListener {
+            updateFloatingPositionSummary()
+            dialog.dismiss()
+        }
+
+        showAndTrackDialog(dialog)
+        applyDialogWindowStyle(dialog)
+    }
+
+    /**
+     * 为按钮设置单击与长按自动连续触发动作监听。
+     *
+     * @param view 目标点击视图控件
+     * @param action 步进触发操作 Lambda
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupRepeatClick(view: View, action: () -> Unit) {
+        val handler = Handler(Looper.getMainLooper())
+        var isRepeating = false
+        val repeatRunnable = object : Runnable {
+            override fun run() {
+                if (isRepeating) {
+                    action()
+                    handler.postDelayed(this, 50L)
+                }
+            }
+        }
+
+        view.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    action()
+                    isRepeating = true
+                    handler.postDelayed(repeatRunnable, 350L)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    isRepeating = false
+                    handler.removeCallbacks(repeatRunnable)
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    /**
      * 初始化启用充、放电统计开关设置与联动控制。
      * 默认关闭，关闭时底部页签栏不显示充、耗电统计页签，且不开启充放电相关服务监测功能；
      * 打开后即时恢复页签显示并开启充放电相关服务监测。
@@ -785,13 +1351,14 @@ class SettingsFragment : Fragment() {
     }
 
     /**
-     * 为现代化美化弹窗统一应用 Window 样式，包括透明系统背景、92% 屏宽与居中布局，并支持指定弹窗高度屏幕占比。
+     * 为现代化美化弹窗统一应用 Window 样式，包括系统级平滑弹出与收起动画、透明系统背景、92% 屏宽与居中布局，并支持指定弹窗高度屏幕占比。
      *
      * @param dialog 待配置样式的 [AlertDialog] 实例
      * @param heightRatio 弹窗高度占屏幕高度比例（若为空则使用 WRAP_CONTENT）
      */
     private fun applyDialogWindowStyle(dialog: AlertDialog, heightRatio: Float? = null) {
         dialog.window?.let { window ->
+            window.setWindowAnimations(R.style.Animation_Dialog_CenterPop)
             window.setBackgroundDrawableResource(android.R.color.transparent)
             val displayMetrics = resources.displayMetrics
             val width = (displayMetrics.widthPixels * 0.92).toInt()

@@ -20,6 +20,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.battery.analysis.R
 import com.battery.analysis.databinding.ActivityPowerHistoryBinding
 import com.battery.analysis.db.PowerUsageDbHelper
+import com.battery.analysis.manager.PowerUsageManager
 import com.battery.analysis.model.PowerHistorySummary
 import com.battery.analysis.model.PowerUsageRecord
 import kotlinx.coroutines.Dispatchers
@@ -413,6 +414,17 @@ class PowerHistoryActivity : AppCompatActivity() {
             binding.swipeRefresh.isRefreshing = true
         }
         lifecycleScope.launch(Dispatchers.IO) {
+            // 若当前处于放电中，主动持久化当前最新的放电进度草稿，确保短时间刚拔电也能立即可见且数据最新
+            try {
+                val powerManager = PowerUsageManager.getInstance(applicationContext)
+                val status = powerManager.getCurrentBatteryStatus()
+                if (!status.isCharging && powerManager.getLastUnplugTime() > 0L) {
+                    powerManager.checkpointDischargeSession(isFinal = false)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
             val list = dbHelper.getAllRecords()
             val filter = selectedDurationFilter
             val filteredList = if (filter == null) {

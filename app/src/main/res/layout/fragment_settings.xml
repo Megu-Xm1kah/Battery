@@ -175,6 +175,238 @@
                     app:trackTint="@color/selector_switch_track" />
             </LinearLayout>
 
+            <!-- 条目 3: 开启悬浮窗显示 -->
+            <LinearLayout
+                android:id="@+id/layout_floating_window_setting"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="56dp"
+                android:layout_marginBottom="6dp"
+                android:background="@drawable/bg_setting_card_item"
+                android:clickable="true"
+                android:focusable="true"
+                android:clipToOutline="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="8dp">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:src="@drawable/ic_battery_power"
+                    app:tint="?android:attr/textColorPrimary" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/setting_floating_window"
+                        android:textColor="?android:attr/textColorPrimary"
+                        android:textSize="15sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="@string/setting_floating_window_desc"
+                        android:textColor="?android:attr/textColorSecondary"
+                        android:textSize="11.5sp" />
+                </LinearLayout>
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switch_floating_window"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:scaleX="0.82"
+                    android:scaleY="0.82"
+                    app:thumbTint="@color/selector_switch_thumb"
+                    app:trackDecorationTint="@color/selector_switch_track_outline"
+                    app:trackTint="@color/selector_switch_track" />
+            </LinearLayout>
+
+            <!-- 悬浮窗子设置项容器 (开启主项后动态展示) -->
+            <LinearLayout
+                android:id="@+id/layout_floating_sub_settings"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="14dp"
+                android:orientation="vertical"
+                android:visibility="gone"
+                tools:visibility="visible">
+
+                <!-- 子项 1: 实时功率显示 -->
+                <LinearLayout
+                    android:id="@+id/layout_floating_show_power"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="52dp"
+                    android:layout_marginBottom="6dp"
+                    android:background="@drawable/bg_setting_card_item"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:clipToOutline="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="8dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_bolt"
+                        app:tint="#10B981" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/setting_floating_show_power"
+                            android:textColor="?android:attr/textColorPrimary"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="1dp"
+                            android:text="@string/setting_floating_show_power_desc"
+                            android:textColor="?android:attr/textColorSecondary"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switch_floating_show_power"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:scaleX="0.80"
+                        android:scaleY="0.80"
+                        app:thumbTint="@color/selector_switch_thumb"
+                        app:trackDecorationTint="@color/selector_switch_track_outline"
+                        app:trackTint="@color/selector_switch_track" />
+                </LinearLayout>
+
+                <!-- 子项 2: 实时温度显示 -->
+                <LinearLayout
+                    android:id="@+id/layout_floating_show_temp"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="52dp"
+                    android:layout_marginBottom="6dp"
+                    android:background="@drawable/bg_setting_card_item"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:clipToOutline="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="8dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_thermometer"
+                        app:tint="#F59E0B" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/setting_floating_show_temp"
+                            android:textColor="?android:attr/textColorPrimary"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="1dp"
+                            android:text="@string/setting_floating_show_temp_desc"
+                            android:textColor="?android:attr/textColorSecondary"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switch_floating_show_temp"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:scaleX="0.80"
+                        android:scaleY="0.80"
+                        app:thumbTint="@color/selector_switch_thumb"
+                        app:trackDecorationTint="@color/selector_switch_track_outline"
+                        app:trackTint="@color/selector_switch_track" />
+                </LinearLayout>
+
+                <!-- 子项 3: 悬浮窗位置与外观设置 -->
+                <LinearLayout
+                    android:id="@+id/layout_floating_position_setting"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="52dp"
+                    android:layout_marginBottom="6dp"
+                    android:background="@drawable/bg_setting_card_item"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:clipToOutline="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="8dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_palette"
+                        app:tint="?android:attr/textColorPrimary" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/setting_floating_position"
+                            android:textColor="?android:attr/textColorPrimary"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:id="@+id/tv_floating_position_summary"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="1dp"
+                            android:text="@string/setting_floating_position_desc"
+                            android:textColor="?android:attr/textColorSecondary"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="?android:attr/textColorSecondary" />
+                </LinearLayout>
+            </LinearLayout>
+
             <!-- 2. 数据与刷新 分类 -->
             <TextView
                 android:layout_width="match_parent"

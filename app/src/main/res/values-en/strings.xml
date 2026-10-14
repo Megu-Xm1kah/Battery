@@ -339,6 +339,42 @@
     <string name="setting_language">Language</string>
     <string name="setting_follow_system_theme">Follow System Theme</string>
     <string name="setting_dark_mode">Dark Mode</string>
+    <string name="setting_floating_window">Floating Window</string>
+    <string name="setting_floating_window_desc">Show real-time battery power &amp; temperature on screen</string>
+    <string name="setting_floating_show_power">Real-Time Power</string>
+    <string name="setting_floating_show_power_desc">Display current charge/discharge power (W)</string>
+    <string name="setting_floating_show_temp">Real-Time Temperature</string>
+    <string name="setting_floating_show_temp_desc">Display current battery temperature (℃)</string>
+    <string name="setting_floating_position">Floating Window Appearance &amp; Position</string>
+    <string name="setting_floating_position_desc">Adjust position, status bar alignment, opacity, and theme</string>
+    <string name="dialog_floating_window_title">⚡ Floating Window Position &amp; Style</string>
+    <string name="floating_align_status_bar">Display on Status Bar</string>
+    <string name="floating_align_status_bar_desc">Allow placing floating window in status bar area</string>
+    <string name="floating_vertical_pos">Vertical Position (Y)</string>
+    <string name="floating_vertical_pos_desc">Vertical offset, recommended within status bar area</string>
+    <string name="floating_horizontal_pos">Horizontal Position (X)</string>
+    <string name="floating_horizontal_align_left">Left</string>
+    <string name="floating_horizontal_align_center">Center</string>
+    <string name="floating_horizontal_align_right">Right</string>
+    <string name="floating_opacity">Opacity</string>
+    <string name="floating_opacity_format">%d%%</string>
+    <string name="floating_theme_mode">Theme Appearance</string>
+    <string name="floating_theme_follow_system">Follow System</string>
+    <string name="floating_theme_dark">Dark Translucent</string>
+    <string name="floating_theme_light">Light Translucent</string>
+    <string name="floating_font_size">Font Size</string>
+    <string name="floating_font_size_desc">Adjust text size of power and temperature</string>
+    <string name="floating_step_minus">Step Decrease</string>
+    <string name="floating_step_plus">Step Increase</string>
+    <string name="floating_permission_dialog_title">Overlay Permission Required</string>
+    <string name="floating_permission_dialog_desc">Floating window requires the \"Display over other apps\" permission in system settings. Grant now?</string>
+    <string name="floating_permission_feature_title">⚡ Real-time Floating Overlay</string>
+    <string name="floating_permission_feature_desc">Display power and temperature on screen top without interrupting operations</string>
+    <string name="floating_permission_btn_grant">Grant Permission</string>
+    <string name="toast_floating_window_enabled">Floating window enabled</string>
+    <string name="toast_floating_window_disabled">Floating window disabled</string>
+    <string name="floating_drag_hint">💡 Drag window directly on screen; auto-saves on release</string>
+
 
     <string name="settings_section_refresh">Data &amp; Refresh</string>
     <string name="setting_charge_discharge_stats">Enable Charge/Discharge Stats</string>
@@ -576,7 +612,7 @@
     <string name="charging_detail_screen_off_energy">Screen-off Energy</string>
 
     <!-- Power Snapshot Details -->
-    <string name="power_detail_title">Power Snapshot Details</string>
+    <string name="power_detail_title">Power Details</string>
     <string name="power_detail_btn_load">Load into Main</string>
     <string name="power_detail_level">Final Level</string>
     <string name="power_detail_temp">Temperature</string>

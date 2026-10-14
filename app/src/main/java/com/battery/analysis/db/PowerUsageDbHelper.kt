@@ -142,8 +142,8 @@ class PowerUsageDbHelper private constructor(context: Context) :
             return -1L
         }
 
-        // 核心守卫：若记录平均放电功耗 <= 0 且时长大于 1 分钟，说明实际处于充电状态或无有效放电采样，严禁保存为耗电历史
-        if (record.avgPowerWatts <= 0.001f && record.getDurationMs() >= 60_000L) {
+        // 核心守卫：若记录已完结归档且平均放电功耗 <= 0 且时长大于 1 分钟，说明实际处于充电状态或无有效放电采样，严禁保存为耗电历史
+        if (record.isCompleted && record.avgPowerWatts <= 0.001f && record.getDurationMs() >= 60_000L) {
             return -1L
         }
 
@@ -217,7 +217,7 @@ class PowerUsageDbHelper private constructor(context: Context) :
      * @return 实际成功写入或更新的有效非充电记录条数
      */
     fun insertRecords(records: List<PowerUsageRecord>): Int {
-        val validRecords = records.filter { !it.isCharging && !(it.avgPowerWatts <= 0.001f && it.getDurationMs() >= 60_000L) }
+        val validRecords = records.filter { !it.isCharging && !(it.isCompleted && it.avgPowerWatts <= 0.001f && it.getDurationMs() >= 60_000L) }
         if (validRecords.isEmpty()) return 0
 
         val db = writableDatabase
@@ -252,7 +252,7 @@ class PowerUsageDbHelper private constructor(context: Context) :
      * @return 实际成功写入的有效非充电记录条数
      */
     fun replaceRecords(records: List<PowerUsageRecord>): Int {
-        val validRecords = records.filter { !it.isCharging && !(it.avgPowerWatts <= 0.001f && it.getDurationMs() >= 60_000L) }
+        val validRecords = records.filter { !it.isCharging && !(it.isCompleted && it.avgPowerWatts <= 0.001f && it.getDurationMs() >= 60_000L) }
         val db = writableDatabase
         var insertedCount = 0
         db.beginTransaction()
@@ -440,11 +440,12 @@ class PowerUsageDbHelper private constructor(context: Context) :
 
         // 自动清理历史累积遗留的充电异常脏记录，保证耗电历史绝对纯净：
         // 1. is_charging = 1 的记录
-        // 2. 平均放电功耗 <= 0 且时长大于 1 分钟的虚假耗电记录（实际在充电状态下误生成的记录）
+        // 2. 平均放电功耗 <= 0 且时长大于 1 分钟的已完结虚假耗电记录（实际在充电状态下误生成的记录）
+        // 严格保护：严禁误杀正在进行中（is_completed = 0）的放电草稿，草稿在放电初始阶段功耗尚未形成微积分采样属于正常物理过程
         try {
             db.delete(
                 TABLE_NAME,
-                "$COL_IS_CHARGING = 1 OR ($COL_AVG_POWER_WATTS <= 0.001 AND $COL_TOTAL_DURATION != '' AND $COL_TOTAL_DURATION != '0s' AND $COL_TOTAL_DURATION != '--')",
+                "$COL_IS_CHARGING = 1 OR ($COL_IS_COMPLETED = 1 AND $COL_AVG_POWER_WATTS <= 0.001 AND ($COL_TOTAL_DURATION LIKE '%m%' OR $COL_TOTAL_DURATION LIKE '%h%' OR $COL_TOTAL_DURATION LIKE '%d%'))",
                 null
             )
         } catch (_: Exception) {}
@@ -452,7 +453,7 @@ class PowerUsageDbHelper private constructor(context: Context) :
         val cursor = db.query(
             TABLE_NAME,
             null,
-            "$COL_IS_CHARGING = 0 AND NOT ($COL_AVG_POWER_WATTS <= 0.001 AND $COL_TOTAL_DURATION != '' AND $COL_TOTAL_DURATION != '0s' AND $COL_TOTAL_DURATION != '--')",
+            "$COL_IS_CHARGING = 0 AND NOT ($COL_IS_COMPLETED = 1 AND $COL_AVG_POWER_WATTS <= 0.001 AND ($COL_TOTAL_DURATION LIKE '%m%' OR $COL_TOTAL_DURATION LIKE '%h%' OR $COL_TOTAL_DURATION LIKE '%d%'))",
             null,
             null,
             null,
@@ -497,7 +498,7 @@ class PowerUsageDbHelper private constructor(context: Context) :
 
     /**
      * 查询当前最新的一条未完成（RUNNING 状态，即 is_completed = 0）的放电会话记录。
-     * 严格排除处于充电状态或平均放电功耗为零的异常记录。
+     * 严格排除处于充电状态的异常记录。
      *
      * @return 未完结且处于非充电状态的放电草稿实体 [PowerUsageRecord]，若不存在返回 null
      */
@@ -506,7 +507,7 @@ class PowerUsageDbHelper private constructor(context: Context) :
         val cursor = db.query(
             TABLE_NAME,
             null,
-            "$COL_IS_COMPLETED = 0 AND $COL_IS_CHARGING = 0 AND NOT ($COL_AVG_POWER_WATTS <= 0.001 AND $COL_TOTAL_DURATION != '' AND $COL_TOTAL_DURATION != '0s' AND $COL_TOTAL_DURATION != '--')",
+            "$COL_IS_COMPLETED = 0 AND $COL_IS_CHARGING = 0",
             null,
             null,
             null,

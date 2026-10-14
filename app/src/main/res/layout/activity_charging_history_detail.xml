@@ -13,7 +13,7 @@
         android:layout_height="56dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingHorizontal="16dp">
+        android:paddingHorizontal="0dp">
 
         <ImageView
             android:id="@+id/btn_back"
@@ -31,7 +31,7 @@
             android:id="@+id/tv_title"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
+            android:layout_marginStart="1dp"
             android:layout_weight="1"
             android:text="@string/charging_detail_title"
             android:textColor="?android:attr/textColorPrimary"
@@ -47,6 +47,7 @@
             android:contentDescription="@string/delete"
             android:focusable="true"
             android:padding="8dp"
+            android:layout_marginEnd="5dp"
             android:src="@drawable/ic_delete"
             app:tint="?android:attr/textColorPrimary" />
     </LinearLayout>

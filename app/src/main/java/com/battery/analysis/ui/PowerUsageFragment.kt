@@ -1456,6 +1456,8 @@ class PowerUsageFragment : Fragment() {
             binding.swipeRefreshLayout.isEnabled = false
             binding.swipeRefreshLayout.isRefreshing = false
             binding.tvPowerTitle.text = getString(R.string.charging_stats_title)
+            binding.tvPowerCursorTime.text = ""
+            binding.tvPowerCursorTime.visibility = View.GONE
             binding.cardPowerMetrics.visibility = View.GONE
 
             // 充电状态下完全禁用联动折叠：展开并锁定 AppBarLayout，恢复底部页签栏常驻展示
@@ -1487,6 +1489,8 @@ class PowerUsageFragment : Fragment() {
             binding.swipeRefreshLayout.isEnabled = true
             stopChargingPolling()
             binding.tvPowerTitle.text = getString(R.string.power_stats_title)
+            binding.tvPowerCursorTime.text = ""
+            binding.tvPowerCursorTime.visibility = View.GONE
             binding.cardPowerMetrics.visibility = View.VISIBLE
             binding.cardPowerMetrics.alpha = 1f
             binding.cardPowerMetrics.translationY = 0f
@@ -2226,7 +2230,7 @@ class PowerUsageFragment : Fragment() {
 
     /**
      * 响应时间轴游标滑动事件，以高能效方式实时联动刷新顶部核心功耗指标卡片。
-     * 展示从起始点至当前游标触控时刻的阶段累计数据，并动态同步标题状态。
+     * 展示从起始点至当前游标触控时刻的阶段累计数据，并在耗电统计主标题右侧以 12sp 规格动态呈现当前游标时间点。
      *
      * @param subStats 阶段子区间累计统计快照对象
      */
@@ -2313,13 +2317,20 @@ class PowerUsageFragment : Fragment() {
         binding.tvMetricGlobalPower.text = avgPowerStr
         binding.tvMetricGlobalRemaining.text = totalDurationStr
 
-        // 动态指示当前查看阶段的时间点
+        // 动态指示当前查看阶段的时间点，在主标题右侧以 12sp 规格呈现
         val timeStr = threadLocalCursorTimeFormatter.get()?.format(Date(subStats.targetTimestamp)) ?: ""
-        binding.tvPowerTitle.text = getString(R.string.power_stats_title) + " ($timeStr)"
+        binding.tvPowerTitle.text = getString(R.string.power_stats_title)
+        if (timeStr.isNotEmpty()) {
+            binding.tvPowerCursorTime.text = "($timeStr)"
+            binding.tvPowerCursorTime.visibility = View.VISIBLE
+        } else {
+            binding.tvPowerCursorTime.text = ""
+            binding.tvPowerCursorTime.visibility = View.GONE
+        }
     }
 
     /**
-     * 还原顶部核心功耗指标卡片至全周期静态统计数据，并重置标题文本。
+     * 还原顶部核心功耗指标卡片至全周期静态统计数据，并重置标题文本与清空隐藏游标时刻。
      */
     private fun restoreNormalPowerMetrics() {
         if (_binding == null) return
@@ -2412,6 +2423,8 @@ class PowerUsageFragment : Fragment() {
         binding.tvMetricGlobalRemaining.text = overview.remainingCompositeText
 
         binding.tvPowerTitle.text = getString(R.string.power_stats_title)
+        binding.tvPowerCursorTime.text = ""
+        binding.tvPowerCursorTime.visibility = View.GONE
     }
 
 
@@ -2541,6 +2554,17 @@ class PowerUsageFragment : Fragment() {
 
         fun reloadHistoryList() {
             viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+                // 若当前处于放电中，主动持久化当前最新的放电进度草稿，确保短时间刚拔电也能立即可见且数据最新
+                try {
+                    val powerManager = com.battery.analysis.manager.PowerUsageManager.getInstance(requireContext())
+                    val status = powerManager.getCurrentBatteryStatus()
+                    if (!status.isCharging && powerManager.getLastUnplugTime() > 0L) {
+                        powerManager.checkpointDischargeSession(isFinal = false)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
                 val list = historyDb.getAllRecords()
                 withContext(Dispatchers.Main) {
                     tvDialogTitle?.text = "${getString(R.string.power_history_title)}(${list.size})"
@@ -2635,13 +2659,7 @@ class PowerUsageFragment : Fragment() {
 
         reloadHistoryList()
         showAndTrackDialog(dialog)
-
-        dialog.window?.let { window ->
-            window.setBackgroundDrawableResource(android.R.color.transparent)
-            val width = (resources.displayMetrics.widthPixels * 0.92).toInt()
-            window.setLayout(width, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
-            window.setGravity(android.view.Gravity.CENTER)
-        }
+        applyDialogWindowStyle(dialog)
     }
 
     /**
@@ -2695,6 +2713,7 @@ class PowerUsageFragment : Fragment() {
                     .setPositiveButton(getString(R.string.understood), null)
                     .create()
                 showAndTrackDialog(detailDialog)
+                applyDialogWindowStyle(detailDialog)
             },
             onDeleteClick = { record ->
                 val deleteView = layoutInflater.inflate(R.layout.dialog_custom_delete_confirm, null)
@@ -2771,13 +2790,7 @@ class PowerUsageFragment : Fragment() {
 
         reloadChargingHistory()
         showAndTrackDialog(dialog)
-
-        dialog.window?.let { window ->
-            window.setBackgroundDrawableResource(android.R.color.transparent)
-            val width = (resources.displayMetrics.widthPixels * 0.92).toInt()
-            window.setLayout(width, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
-            window.setGravity(android.view.Gravity.CENTER)
-        }
+        applyDialogWindowStyle(dialog)
     }
 
     /**
@@ -2825,12 +2838,13 @@ class PowerUsageFragment : Fragment() {
     }
 
     /**
-     * 为自定义对话框应用统一的居中、宽度与半透明背景窗口样式。
+     * 为自定义对话框应用统一的居中、宽度、半透明背景及系统级平滑弹出与取消动画窗口样式。
      *
      * @param dialog 待配置样式的 [AlertDialog] 实例
      */
     private fun applyDialogWindowStyle(dialog: AlertDialog) {
         dialog.window?.let { window ->
+            window.setWindowAnimations(R.style.Animation_Dialog_CenterPop)
             window.setBackgroundDrawableResource(android.R.color.transparent)
             val width = (resources.displayMetrics.widthPixels * 0.92).toInt()
             window.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -3022,6 +3036,7 @@ class PowerUsageFragment : Fragment() {
             .setPositiveButton(getString(R.string.understood), null)
             .create()
         showAndTrackDialog(dialog)
+        applyDialogWindowStyle(dialog)
     }
 }
 

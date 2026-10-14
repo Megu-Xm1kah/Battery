@@ -521,6 +521,11 @@ class BatteryMonitorService : Service() {
         try {
             com.battery.analysis.util.AppIconCacheManager.warmUpInstalledAppsAsync(this)
         } catch (_: Exception) {}
+
+        if (com.battery.analysis.manager.FloatingWindowManager.isFloatingEnabled(this) &&
+            com.battery.analysis.manager.FloatingWindowManager.canDrawOverlays(this)) {
+            com.battery.analysis.manager.FloatingWindowManager.show(this)
+        }
     }
 
     /**
@@ -741,6 +746,14 @@ class BatteryMonitorService : Service() {
                     try {
                         if (isCharging) {
                             chargingManager.sampleCurrentPoint()
+                            val curPower = chargingManager.getSamplePoints().lastOrNull()?.powerWatts
+                            if (com.battery.analysis.manager.FloatingWindowManager.isFloatingEnabled(this@BatteryMonitorService)) {
+                                com.battery.analysis.manager.FloatingWindowManager.updateData(
+                                    this@BatteryMonitorService,
+                                    curPower,
+                                    cachedTemperature
+                                )
+                            }
                         } else {
                             val hwSample = SysfsBatterySampler.sampleHardwareDischarge(
                                 context = this@BatteryMonitorService,
@@ -763,6 +776,14 @@ class BatteryMonitorService : Service() {
                                     cachedScreenOffDischargePowerWatts = pWatts
                                 }
                                 cachedDischargePowerWatts = pWatts
+                            }
+
+                            if (com.battery.analysis.manager.FloatingWindowManager.isFloatingEnabled(this@BatteryMonitorService)) {
+                                com.battery.analysis.manager.FloatingWindowManager.updateData(
+                                    this@BatteryMonitorService,
+                                    pWatts,
+                                    currentTemp
+                                )
                             }
 
                             powerManager.recordDischargeRealtimeSample(
