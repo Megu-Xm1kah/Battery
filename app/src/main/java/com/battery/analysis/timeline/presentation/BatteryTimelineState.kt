@@ -1,5 +1,6 @@
 package com.battery.analysis.timeline.presentation
 
+import com.battery.analysis.model.PowerDisplayUnit
 import com.battery.analysis.timeline.domain.AppTimelineEvent
 import com.battery.analysis.timeline.domain.BatterySample
 import com.battery.analysis.timeline.domain.ScreenEvent
@@ -51,6 +52,7 @@ enum class TimelineMetric {
  * @property selectedMetrics 当前选中的指标集合（支持多选与反选叠加展示）
  * @property selectedApp 当前被点击选中的 App 事件（若有）
  * @property totalEnergyWh 电池总能量基准（单位：瓦时 Wh，用于能量计算，若无则为 null）
+ * @property displayUnit 当前电量呈现单位（[PowerDisplayUnit.WH] 或 [PowerDisplayUnit.MAH]）
  */
 data class BatteryTimelineState(
     val startTimestamp: Long = 0L,
@@ -65,7 +67,8 @@ data class BatteryTimelineState(
     val selectedMetric: TimelineMetric = TimelineMetric.POWER,
     val selectedMetrics: Set<TimelineMetric> = setOf(TimelineMetric.POWER, TimelineMetric.APP),
     val selectedApp: AppTimelineEvent? = null,
-    val totalEnergyWh: Float? = null
+    val totalEnergyWh: Float? = null,
+    val displayUnit: PowerDisplayUnit = PowerDisplayUnit.WH
 ) {
     /**
      * 获取数据全集的总时间跨度（毫秒）。

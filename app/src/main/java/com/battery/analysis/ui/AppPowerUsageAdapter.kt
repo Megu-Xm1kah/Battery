@@ -97,12 +97,16 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     /**
      * 更新全局电量呈现单位，并在单位变更时触发当前可见列表项的全量重新绑定与安全刷新。
+     * 同步更新常驻图表看板与核心指标卡片的显示单位。
      *
      * @param newUnit 最新目标电量显示单位 [PowerDisplayUnit]
      */
     fun updateDisplayUnit(newUnit: PowerDisplayUnit) {
         if (currentDisplayUnit != newUnit) {
             currentDisplayUnit = newUnit
+            overviewHolder?.binding?.batteryTimelineView?.setDisplayUnit(newUnit)
+            sleepAwakeHolder?.let { bindSleepAwakeMetrics(it) }
+            dischargeSpeedHolder?.let { bindDischargeSpeed(it) }
             safeNotifyDataSetChanged()
         }
     }
@@ -525,328 +529,33 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
      * @param holder 放电速度概览卡片 ViewHolder
      */
     private fun bindDischargeSpeed(holder: DischargeSpeedViewHolder) {
-        val overview = cachedOverviewStats
-        val sevenDays = cachedSevenDaysStats
-        val context = holder.binding.root.context
-        with(holder.binding) {
-            // --- 1. 第一行：当前放电速度百分比速率 ---
-            if (overview == null) {
-                tvScreenOnSpeed.text = "--"
-                tvScreenOffSpeed.text = "--"
-                tvGlobalSpeed.text = "--"
-            } else {
-                val totalDurationMs = if (overview.totalDurationMs > 0L) overview.totalDurationMs else parseDurationTextToMs(overview.totalDurationText)
-                val onDurationMs = if (overview.screenOnDurationMs > 0L) overview.screenOnDurationMs else parseDurationTextToMs(overview.screenOnDurationText)
-                val offDurationMs = if (overview.screenOffDurationMs > 0L) overview.screenOffDurationMs else parseDurationTextToMs(overview.screenOffDurationText)
-
-                // 核心指标计算：每小时放电占比百分比（%/h），以硬件微积分真值真实换算
-                val onRate = calculateDischargeRatePercentPerHour(overview.screenOnPowerWatts, cachedTotalEnergyWh, onDurationMs)
-                val offRate = calculateDischargeRatePercentPerHour(overview.screenOffPowerWatts, cachedTotalEnergyWh, offDurationMs)
-                val globalRate = calculateDischargeRatePercentPerHour(overview.avgPowerWatts, cachedTotalEnergyWh, totalDurationMs)
-
-                // 卡片 1：亮屏放电速度
-                tvScreenOnSpeed.text = formatDischargeRateSpannable(onRate)
-
-                // 卡片 2：息屏放电速度
-                tvScreenOffSpeed.text = formatDischargeRateSpannable(offRate)
-
-                // 卡片 3：全局放电速度
-                tvGlobalSpeed.text = formatDischargeRateSpannable(globalRate)
+        PowerDischargeMetricsViewBinder.bindDischargeSpeed(
+            binding = holder.binding,
+            overview = cachedOverviewStats,
+            totalCapacityWh = cachedTotalEnergyWh,
+            sevenDaysStats = cachedSevenDaysStats,
+            onCardClick = { anchorView, rowType ->
+                onMetricModuleClickedListener?.invoke(anchorView, rowType)
             }
-
-            // --- 2. 第二行：实际统计放电速度与时长（百分比在前，实际统计时长在后） ---
-            tvScreenOn7daysSpeed.text = formatSecondaryDischargeRateSpannable(
-                context = context,
-                rate = sevenDays?.screenOnDischargeRatePercentPerHour,
-                durationMs = sevenDays?.screenOnDurationMs
-            )
-            tvScreenOff7daysSpeed.text = formatSecondaryDischargeRateSpannable(
-                context = context,
-                rate = sevenDays?.screenOffDischargeRatePercentPerHour,
-                durationMs = sevenDays?.screenOffDurationMs
-            )
-            tvGlobal7daysSpeed.text = formatSecondaryDischargeRateSpannable(
-                context = context,
-                rate = sevenDays?.globalDischargeRatePercentPerHour,
-                durationMs = sevenDays?.globalDurationMs
-            )
-
-            // --- 3. 第三行：充满电使用时间（时长在前，满电标签在后） ---
-            tvScreenOnFullDuration.text = formatFullDurationTextWithSuffix(
-                context = context,
-                ms = sevenDays?.fullChargeScreenOnDurationMs
-            )
-            tvScreenOffFullDuration.text = formatFullDurationTextWithSuffix(
-                context = context,
-                ms = sevenDays?.fullChargeScreenOffDurationMs
-            )
-            tvGlobalFullDuration.text = formatFullDurationTextWithSuffix(
-                context = context,
-                ms = sevenDays?.fullChargeGlobalDurationMs
-            )
-
-            // 卡片点击事件监听
-            cardScreenOnSpeed.setOnClickListener {
-                onMetricModuleClickedListener?.invoke(cardScreenOnSpeed, PowerUsageFragment.ROW_SCREEN_ON)
-            }
-            cardScreenOffSpeed.setOnClickListener {
-                onMetricModuleClickedListener?.invoke(cardScreenOffSpeed, PowerUsageFragment.ROW_SCREEN_OFF)
-            }
-            cardGlobalSpeed.setOnClickListener {
-                onMetricModuleClickedListener?.invoke(cardGlobalSpeed, PowerUsageFragment.ROW_GLOBAL)
-            }
-        }
+        )
     }
 
     /**
      * 绑定息屏、唤醒与深度睡眠三状态指标卡片数据。
-     * 包含息屏总耗电、息屏唤醒活跃耗电与深度睡眠挂起耗电三个等宽紧凑卡片，
-     * 展示放电占比、时长与能量、以及消耗电荷量（mAh）与对应平均放电功耗（W）。
-     * 严格遵循物理能量守恒定律，采用 4m10s 紧凑时间格式与 16sp 粗体百分比对齐。
+     * 委托给 [PowerDischargeMetricsViewBinder.bindSleepAwakeMetrics]，
+     * 严格根据当前所选电量单位 [currentDisplayUnit] 动态调整第二行（时长与主指标）与第三行（对照副指标与功率）的主次排版与数值呈现。
      *
-     * @param holder 息屏、唤醒与深度睡眠卡片 ViewHolder
+     * @param holder 息屏细分状态卡片 ViewHolder
      */
     private fun bindSleepAwakeMetrics(holder: SleepAwakeViewHolder) {
-        val overview = cachedOverviewStats
-        with(holder.binding) {
-            val noRecordText = root.context.getString(R.string.power_metric_no_record)
-            if (overview == null) {
-                tvScreenOffPercent.text = "--"
-                tvScreenOffSubtitle.text = noRecordText
-                tvScreenOffMah.text = "--"
-                tvAwakePercent.text = "--"
-                tvAwakeSubtitle.text = noRecordText
-                tvAwakeMah.text = "--"
-                tvSleepPercent.text = "--"
-                tvSleepSubtitle.text = noRecordText
-                tvSleepMah.text = "--"
-                return
+        PowerDischargeMetricsViewBinder.bindSleepAwakeMetrics(
+            binding = holder.binding,
+            overview = cachedOverviewStats,
+            unit = currentDisplayUnit,
+            onCardClick = { anchorView, cardType ->
+                onSleepAwakeCardClickedListener?.invoke(anchorView, cardType)
             }
-
-            // 1. 息屏卡片
-            if (overview.screenOffDurationMs <= 0L && overview.screenOffEnergyWh <= 0f) {
-                tvScreenOffPercent.text = "--"
-                tvScreenOffSubtitle.text = noRecordText
-                tvScreenOffMah.text = "--"
-            } else {
-                val offPercent = if (overview.screenOffPercent > 0f) {
-                    overview.screenOffPercent
-                } else {
-                    overview.screenOffAwakePercent + overview.screenOffDeepSleepPercent
-                }
-                tvScreenOffPercent.text = if (offPercent > 0f) String.format(Locale.US, "%.1f%%", offPercent) else "--"
-
-                val durText = if (overview.screenOffDurationMs > 0L) {
-                    PowerUsageManager.formatCompactDuration(overview.screenOffDurationMs)
-                } else {
-                    overview.screenOffDurationText.ifBlank { "0s" }
-                }
-                val energyText = String.format(Locale.US, "%.3fWh", overview.screenOffEnergyWh)
-                tvScreenOffSubtitle.text = "$durText $energyText"
-
-                val offDrainMah = if (overview.screenOffDrainMah > 0f) {
-                    overview.screenOffDrainMah
-                } else if (overview.screenOffEnergyWh > 0f) {
-                    (overview.screenOffEnergyWh * 1000f) / BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS
-                } else {
-                    0f
-                }
-                val offPowerWatts = if (overview.screenOffPowerWatts > 0f) {
-                    overview.screenOffPowerWatts
-                } else if (overview.screenOffDurationMs > 0L && overview.screenOffEnergyWh > 0f) {
-                    (overview.screenOffEnergyWh / (overview.screenOffDurationMs.toDouble() / 3600000.0)).toFloat()
-                } else {
-                    0f
-                }
-                val offPowerText = if (overview.screenOffDurationMs > 0L || overview.screenOffEnergyWh > 0f) {
-                    formatCardPowerWatts(offPowerWatts)
-                } else {
-                    null
-                }
-                if (offDrainMah > 0f) {
-                    val mahStr = String.format(Locale.US, "%.1f mAh", offDrainMah)
-                    tvScreenOffMah.text = if (offPowerText != null) "$mahStr $offPowerText" else mahStr
-                } else if (overview.screenOffDurationMs > 0L) {
-                    val mahStr = "0.0 mAh"
-                    tvScreenOffMah.text = if (offPowerText != null) "$mahStr $offPowerText" else mahStr
-                } else {
-                    tvScreenOffMah.text = "--"
-                }
-            }
-
-            // 2. 唤醒卡片
-            if (overview.screenOffAwakeDurationMs <= 0L && overview.screenOffAwakeEnergyWh <= 0f) {
-                if (overview.screenOffDurationMs > 0L) {
-                    // 放电周期内经历过息屏，但唤醒时长与能耗均为 0（手机处于 100% 纯深度睡眠挂起状态）
-                    tvAwakePercent.text = "0.0%"
-                    val subtitleHtml = "<font color=\"#FFA4A4\">0s</font> <font color=\"#FFA4A4\">0.000Wh</font>"
-                    tvAwakeSubtitle.text = HtmlCompat.fromHtml(subtitleHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
-                    tvAwakeMah.text = HtmlCompat.fromHtml("<font color=\"#FFA4A4\">0.0 mAh 0.00W</font>", HtmlCompat.FROM_HTML_MODE_LEGACY)
-                } else {
-                    tvAwakePercent.text = "--"
-                    tvAwakeSubtitle.text = noRecordText
-                    tvAwakeMah.text = "--"
-                }
-            } else {
-                val awakePercentStr = if (overview.isScreenOffDecomposedAvailable && overview.screenOffAwakePercent > 0f) {
-                    String.format(Locale.US, "%.1f%%", overview.screenOffAwakePercent)
-                } else if (overview.isScreenOffDecomposedAvailable && overview.screenOffAwakeEnergyWh > 0f) {
-                    "<0.1%"
-                } else if (overview.screenOffAwakeDurationMs > 0L) {
-                    "0.0%"
-                } else {
-                    "--"
-                }
-                tvAwakePercent.text = awakePercentStr
-
-                val durText = if (overview.screenOffAwakeDurationMs > 0L) {
-                    PowerUsageManager.formatCompactDuration(overview.screenOffAwakeDurationMs)
-                } else {
-                    overview.screenOffAwakeDurationText.ifBlank { "0s" }
-                }
-                val energyText = if (overview.isScreenOffDecomposedAvailable && overview.screenOffAwakeEnergyWh >= 0.001f) {
-                    String.format(Locale.US, "%.3fWh", overview.screenOffAwakeEnergyWh)
-                } else if (overview.isScreenOffDecomposedAvailable && overview.screenOffAwakeEnergyWh > 0f) {
-                    "<0.001Wh"
-                } else if (overview.screenOffAwakeDurationMs > 0L) {
-                    "0.000Wh"
-                } else {
-                    "--"
-                }
-                val subtitleHtml = "<font color=\"#FFA4A4\">$durText</font> <font color=\"#FFA4A4\">$energyText</font>"
-                tvAwakeSubtitle.text = HtmlCompat.fromHtml(subtitleHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
-
-                val awakeDrainMah = if (overview.isScreenOffDecomposedAvailable && overview.screenOffAwakeDrainMah > 0f) {
-                    overview.screenOffAwakeDrainMah
-                } else if (overview.isScreenOffDecomposedAvailable && overview.screenOffAwakeEnergyWh > 0f) {
-                    (overview.screenOffAwakeEnergyWh * 1000f) / BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS
-                } else {
-                    0f
-                }
-                val awakePowerWatts = if (overview.screenOffAwakePowerWatts > 0f) {
-                    overview.screenOffAwakePowerWatts
-                } else if (overview.screenOffAwakeDurationMs > 0L && overview.screenOffAwakeEnergyWh > 0f) {
-                    (overview.screenOffAwakeEnergyWh / (overview.screenOffAwakeDurationMs.toDouble() / 3600000.0)).toFloat()
-                } else {
-                    0f
-                }
-                val awakePowerText = if (overview.screenOffAwakeDurationMs > 0L || overview.screenOffAwakeEnergyWh > 0f) {
-                    formatCardPowerWatts(awakePowerWatts)
-                } else {
-                    null
-                }
-                if (awakeDrainMah >= 0.1f) {
-                    val mahText = String.format(Locale.US, "%.1f mAh", awakeDrainMah)
-                    val fullText = if (awakePowerText != null) "$mahText $awakePowerText" else mahText
-                    val mahHtml = "<font color=\"#FFA4A4\">$fullText</font>"
-                    tvAwakeMah.text = HtmlCompat.fromHtml(mahHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
-                } else if (overview.screenOffAwakeDurationMs > 0L) {
-                    val fullText = if (awakePowerText != null) "0.0 mAh $awakePowerText" else "0.0 mAh"
-                    val mahHtml = "<font color=\"#FFA4A4\">$fullText</font>"
-                    tvAwakeMah.text = HtmlCompat.fromHtml(mahHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
-                } else {
-                    tvAwakeMah.text = "--"
-                }
-            }
-
-            // 3. 深度睡眠卡片
-            if (overview.screenOffDeepSleepDurationMs <= 0L && overview.screenOffDeepSleepEnergyWh <= 0f) {
-                if (overview.screenOffDurationMs > 0L) {
-                    // 放电周期内经历过息屏，但深度睡眠时长为 0（息屏期间 CPU 全程被持有唤醒锁活跃工作）
-                    tvSleepPercent.text = "0.0%"
-                    val subtitleHtml = "<font color=\"#B71C1C\">0s</font> <font color=\"#B71C1C\">0.000Wh</font>"
-                    tvSleepSubtitle.text = HtmlCompat.fromHtml(subtitleHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
-                    tvSleepMah.text = HtmlCompat.fromHtml("<font color=\"#B71C1C\">0.0 mAh 0.00W</font>", HtmlCompat.FROM_HTML_MODE_LEGACY)
-                } else {
-                    tvSleepPercent.text = "--"
-                    tvSleepSubtitle.text = noRecordText
-                    tvSleepMah.text = "--"
-                }
-            } else {
-                val sleepPercentStr = if (overview.isScreenOffDecomposedAvailable && overview.screenOffDeepSleepPercent > 0f) {
-                    String.format(Locale.US, "%.1f%%", overview.screenOffDeepSleepPercent)
-                } else {
-                    "--"
-                }
-                tvSleepPercent.text = sleepPercentStr
-
-                val durText = if (overview.screenOffDeepSleepDurationMs > 0L) {
-                    PowerUsageManager.formatCompactDuration(overview.screenOffDeepSleepDurationMs)
-                } else {
-                    overview.screenOffDeepSleepDurationText.ifBlank { "0s" }
-                }
-                val energyText = if (overview.isScreenOffDecomposedAvailable && overview.screenOffDeepSleepEnergyWh > 0f) {
-                    String.format(Locale.US, "%.3fWh", overview.screenOffDeepSleepEnergyWh)
-                } else {
-                    "--"
-                }
-                val subtitleHtml = "<font color=\"#B71C1C\">$durText</font> <font color=\"#B71C1C\">$energyText</font>"
-                tvSleepSubtitle.text = HtmlCompat.fromHtml(subtitleHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
-
-                val sleepDrainMah = if (overview.isScreenOffDecomposedAvailable && overview.screenOffDeepSleepDrainMah > 0f) {
-                    overview.screenOffDeepSleepDrainMah
-                } else if (overview.isScreenOffDecomposedAvailable && overview.screenOffDeepSleepEnergyWh > 0f) {
-                    (overview.screenOffDeepSleepEnergyWh * 1000f) / BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS
-                } else {
-                    0f
-                }
-                val deepSleepPowerWatts = if (overview.screenOffDeepSleepPowerWatts > 0f) {
-                    overview.screenOffDeepSleepPowerWatts
-                } else if (overview.screenOffDeepSleepDurationMs > 0L && overview.screenOffDeepSleepEnergyWh > 0f) {
-                    (overview.screenOffDeepSleepEnergyWh / (overview.screenOffDeepSleepDurationMs.toDouble() / 3600000.0)).toFloat()
-                } else {
-                    0f
-                }
-                val sleepPowerText = if (overview.screenOffDeepSleepDurationMs > 0L || overview.screenOffDeepSleepEnergyWh > 0f) {
-                    formatCardPowerWatts(deepSleepPowerWatts)
-                } else {
-                    null
-                }
-                if (sleepDrainMah > 0f) {
-                    val mahText = String.format(Locale.US, "%.1f mAh", sleepDrainMah)
-                    val fullText = if (sleepPowerText != null) "$mahText $sleepPowerText" else mahText
-                    val mahHtml = "<font color=\"#B71C1C\">$fullText</font>"
-                    tvSleepMah.text = HtmlCompat.fromHtml(mahHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
-                } else if (overview.screenOffDeepSleepDurationMs > 0L) {
-                    val fullText = if (sleepPowerText != null) "0.0 mAh $sleepPowerText" else "0.0 mAh"
-                    val mahHtml = "<font color=\"#B71C1C\">$fullText</font>"
-                    tvSleepMah.text = HtmlCompat.fromHtml(mahHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
-                } else {
-                    tvSleepMah.text = "--"
-                }
-            }
-
-            // 绑定息屏、唤醒与深度睡眠卡片点击事件监听
-            cardScreenOff.setOnClickListener {
-                onSleepAwakeCardClickedListener?.invoke(cardScreenOff, CARD_SCREEN_OFF)
-            }
-            cardAwake.setOnClickListener {
-                onSleepAwakeCardClickedListener?.invoke(cardAwake, CARD_AWAKE)
-            }
-            cardDeepSleep.setOnClickListener {
-                onSleepAwakeCardClickedListener?.invoke(cardDeepSleep, CARD_DEEP_SLEEP)
-            }
-        }
-    }
-
-    /**
-     * 格式化卡片平均放电功耗数值为紧凑单位文本。
-     * 遵循物理客观真值，当平均功耗大于等于 0.01W 时保留两位小数（如 "0.25W"、"2.05W"）；
-     * 当平均功耗在 (0W, 0.01W) 微弱区间时保留三位小数（如 "0.008W"），杜绝四舍五入为 0.00W；
-     * 当功耗等于 0W 时展示为 "0.00W"；数据缺失时返回 null。
-     *
-     * @param watts 物理实测或能量积分推导的平均放电功率（单位：W）
-     * @return 格式化后的紧凑功耗字符串（如 "0.25W"），数值无效时返回 null
-     */
-    private fun formatCardPowerWatts(watts: Float?): String? {
-        if (watts == null || watts < 0f || watts.isNaN()) return null
-        return if (watts >= 0.01f) {
-            String.format(Locale.US, "%.2fW", watts)
-        } else if (watts > 0f) {
-            String.format(Locale.US, "%.3fW", watts)
-        } else {
-            "0.00W"
-        }
+        )
     }
 
     /**
@@ -1117,10 +826,11 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     private fun bindUsageOverview(holder: UsageOverviewViewHolder) {
         overviewHolder = holder
         with(holder.binding) {
+            batteryTimelineView.setDisplayUnit(currentDisplayUnit)
             batteryTimelineView.setOnCursorInspectListener(onCursorInspectListener)
             val currentSelected = metricSelectorView.getSelectedMetrics()
             cachedTimelineState?.let { state ->
-                val syncState = state.copy(selectedMetrics = currentSelected)
+                val syncState = state.copy(selectedMetrics = currentSelected, displayUnit = currentDisplayUnit)
                 cachedTimelineState = syncState
                 batteryTimelineView.setState(syncState)
             }
@@ -1479,7 +1189,7 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
             val currentSelected = overviewHolder?.binding?.metricSelectorView?.getSelectedMetrics()
                 ?: cachedTimelineState?.selectedMetrics
                 ?: timelineState.selectedMetrics
-            cachedTimelineState = timelineState.copy(selectedMetrics = currentSelected)
+            cachedTimelineState = timelineState.copy(selectedMetrics = currentSelected, displayUnit = currentDisplayUnit)
         }
         overviewHolder?.let { bindUsageOverview(it) }
     }
@@ -1553,8 +1263,9 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         val currentSelected = overviewHolder?.binding?.metricSelectorView?.getSelectedMetrics()
             ?: cachedTimelineState?.selectedMetrics
             ?: timelineState.selectedMetrics
-        val syncState = timelineState.copy(selectedMetrics = currentSelected)
+        val syncState = timelineState.copy(selectedMetrics = currentSelected, displayUnit = currentDisplayUnit)
         cachedTimelineState = syncState
+        overviewHolder?.binding?.batteryTimelineView?.setDisplayUnit(currentDisplayUnit)
         overviewHolder?.binding?.batteryTimelineView?.setState(syncState)
     }
 

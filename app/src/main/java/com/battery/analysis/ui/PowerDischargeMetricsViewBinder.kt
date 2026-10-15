@@ -740,8 +740,10 @@ object PowerDischargeMetricsViewBinder {
                 val mahStr = String.format(Locale.US, "%.1f mAh", subStats.screenOffDrainMah)
 
                 if (isMahUnit) {
-                    tvScreenOffSubtitle.text = "$durText $mahStr"
-                    tvScreenOffMah.text = if (offPowerText != null) "$energyText $offPowerText" else energyText
+                    val mahSubtitle = if (subStats.screenOffDrainMah > 0f) String.format(Locale.US, "%.1fmAh", subStats.screenOffDrainMah) else "--"
+                    val energyDisplay = String.format(Locale.US, "%.3f Wh", subStats.screenOffEnergyWh)
+                    tvScreenOffSubtitle.text = "$durText $mahSubtitle"
+                    tvScreenOffMah.text = if (offPowerText != null) "$energyDisplay $offPowerText" else energyDisplay
                 } else {
                     tvScreenOffSubtitle.text = "$durText $energyText"
                     tvScreenOffMah.text = if (offPowerText != null) "$mahStr $offPowerText" else mahStr
@@ -753,9 +755,9 @@ object PowerDischargeMetricsViewBinder {
                 if (subStats.screenOffDurationMs > 0L) {
                     tvAwakePercent.text = "0.0%"
                     if (isMahUnit) {
-                        val subtitleHtml = "<font color=\"#FFA4A4\">0s</font> <font color=\"#FFA4A4\">0.0 mAh</font>"
+                        val subtitleHtml = "<font color=\"#FFA4A4\">0s</font> <font color=\"#FFA4A4\">0.0mAh</font>"
                         tvAwakeSubtitle.text = HtmlCompat.fromHtml(subtitleHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
-                        tvAwakeMah.text = HtmlCompat.fromHtml("<font color=\"#FFA4A4\">0.000Wh 0.00W</font>", HtmlCompat.FROM_HTML_MODE_LEGACY)
+                        tvAwakeMah.text = HtmlCompat.fromHtml("<font color=\"#FFA4A4\">0.000 Wh 0.00W</font>", HtmlCompat.FROM_HTML_MODE_LEGACY)
                     } else {
                         val subtitleHtml = "<font color=\"#FFA4A4\">0s</font> <font color=\"#FFA4A4\">0.000Wh</font>"
                         tvAwakeSubtitle.text = HtmlCompat.fromHtml(subtitleHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
@@ -789,9 +791,23 @@ object PowerDischargeMetricsViewBinder {
                 val mahStr = String.format(Locale.US, "%.1f mAh", subStats.screenOffAwakeDrainMah)
 
                 if (isMahUnit) {
-                    val subtitleHtml = "<font color=\"#FFA4A4\">$durText</font> <font color=\"#FFA4A4\">$mahStr</font>"
+                    val awakeMahSubtitle = if (subStats.isScreenOffDecomposedAvailable && subStats.screenOffAwakeDrainMah >= 0.1f) {
+                        String.format(Locale.US, "%.1fmAh", subStats.screenOffAwakeDrainMah)
+                    } else if (subStats.isScreenOffDecomposedAvailable && subStats.screenOffAwakeDrainMah > 0f) {
+                        "<0.1mAh"
+                    } else if (subStats.screenOffAwakeDurationMs > 0L) {
+                        "0.0mAh"
+                    } else "--"
+                    val energyDisplay = if (subStats.isScreenOffDecomposedAvailable && subStats.screenOffAwakeEnergyWh >= 0.001f) {
+                        String.format(Locale.US, "%.3f Wh", subStats.screenOffAwakeEnergyWh)
+                    } else if (subStats.isScreenOffDecomposedAvailable && subStats.screenOffAwakeEnergyWh > 0f) {
+                        "<0.001 Wh"
+                    } else if (subStats.screenOffAwakeDurationMs > 0L) {
+                        "0.000 Wh"
+                    } else "--"
+                    val subtitleHtml = "<font color=\"#FFA4A4\">$durText</font> <font color=\"#FFA4A4\">$awakeMahSubtitle</font>"
                     tvAwakeSubtitle.text = HtmlCompat.fromHtml(subtitleHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
-                    val fullText = if (awakePowerText != null) "$energyText $awakePowerText" else energyText
+                    val fullText = if (awakePowerText != null) "$energyDisplay $awakePowerText" else energyDisplay
                     val mahHtml = "<font color=\"#FFA4A4\">$fullText</font>"
                     tvAwakeMah.text = HtmlCompat.fromHtml(mahHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
                 } else {
@@ -808,9 +824,9 @@ object PowerDischargeMetricsViewBinder {
                 if (subStats.screenOffDurationMs > 0L) {
                     tvSleepPercent.text = "0.0%"
                     if (isMahUnit) {
-                        val subtitleHtml = "<font color=\"#B71C1C\">0s</font> <font color=\"#B71C1C\">0.0 mAh</font>"
+                        val subtitleHtml = "<font color=\"#B71C1C\">0s</font> <font color=\"#B71C1C\">0.0mAh</font>"
                         tvSleepSubtitle.text = HtmlCompat.fromHtml(subtitleHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
-                        tvSleepMah.text = HtmlCompat.fromHtml("<font color=\"#B71C1C\">0.000Wh 0.00W</font>", HtmlCompat.FROM_HTML_MODE_LEGACY)
+                        tvSleepMah.text = HtmlCompat.fromHtml("<font color=\"#B71C1C\">0.000 Wh 0.00W</font>", HtmlCompat.FROM_HTML_MODE_LEGACY)
                     } else {
                         val subtitleHtml = "<font color=\"#B71C1C\">0s</font> <font color=\"#B71C1C\">0.000Wh</font>"
                         tvSleepSubtitle.text = HtmlCompat.fromHtml(subtitleHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
@@ -838,9 +854,19 @@ object PowerDischargeMetricsViewBinder {
                 val mahStr = String.format(Locale.US, "%.1f mAh", subStats.screenOffDeepSleepDrainMah)
 
                 if (isMahUnit) {
-                    val subtitleHtml = "<font color=\"#B71C1C\">$durText</font> <font color=\"#B71C1C\">$mahStr</font>"
+                    val sleepMahSubtitle = if (subStats.isScreenOffDecomposedAvailable && subStats.screenOffDeepSleepDrainMah >= 0.1f) {
+                        String.format(Locale.US, "%.1fmAh", subStats.screenOffDeepSleepDrainMah)
+                    } else if (subStats.isScreenOffDecomposedAvailable && subStats.screenOffDeepSleepDrainMah > 0f) {
+                        "<0.1mAh"
+                    } else if (subStats.screenOffDeepSleepDurationMs > 0L) {
+                        "0.0mAh"
+                    } else "--"
+                    val energyDisplay = if (subStats.isScreenOffDecomposedAvailable && subStats.screenOffDeepSleepEnergyWh > 0f) {
+                        String.format(Locale.US, "%.3f Wh", subStats.screenOffDeepSleepEnergyWh)
+                    } else "--"
+                    val subtitleHtml = "<font color=\"#B71C1C\">$durText</font> <font color=\"#B71C1C\">$sleepMahSubtitle</font>"
                     tvSleepSubtitle.text = HtmlCompat.fromHtml(subtitleHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
-                    val fullText = if (sleepPowerText != null) "$energyText $sleepPowerText" else energyText
+                    val fullText = if (sleepPowerText != null) "$energyDisplay $sleepPowerText" else energyDisplay
                     val mahHtml = "<font color=\"#B71C1C\">$fullText</font>"
                     tvSleepMah.text = HtmlCompat.fromHtml(mahHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
                 } else {

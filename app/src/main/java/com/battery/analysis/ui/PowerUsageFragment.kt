@@ -873,10 +873,10 @@ class PowerUsageFragment : Fragment() {
                 (unplugWh - currentWh).toFloat()
             } else null)
 
-        val currentStr = currentWh?.let { String.format(Locale.getDefault(), "%.3fWh", it) } ?: "--"
-        val totalStr = totalWh?.let { String.format(Locale.getDefault(), "%.3fWh", it) } ?: "--"
-        val unplugStr = unplugWh?.let { String.format(Locale.getDefault(), "%.3fWh", it) } ?: "--"
-        val consumedStr = consumedWh?.let { String.format(Locale.getDefault(), "%.3fWh", it) } ?: "--"
+        val currentStr = currentWh?.let { BatteryEnergyCalculator.formatDisplayEnergy(it, currentDisplayUnit) } ?: "--"
+        val totalStr = totalWh?.let { BatteryEnergyCalculator.formatDisplayEnergy(it, currentDisplayUnit) } ?: "--"
+        val unplugStr = unplugWh?.let { BatteryEnergyCalculator.formatDisplayEnergy(it.toFloat(), currentDisplayUnit) } ?: "--"
+        val consumedStr = consumedWh?.let { BatteryEnergyCalculator.formatDisplayEnergy(it, currentDisplayUnit) } ?: "--"
 
         val message = getString(R.string.power_tooltip_energy, currentStr, totalStr, unplugStr, consumedStr)
         showBubbleTooltip(anchorView, message, touchX, touchY ?: 0f, autoDismissMs = 0L, forceAbove = true)
@@ -2053,7 +2053,7 @@ class PowerUsageFragment : Fragment() {
         // 构建并绑定功耗时间轴最新状态（多选模式，优先复用后台异步预构建的 timelineState 避免主线程卡顿）
         val selectedMetrics = adapter.getSelectedMetrics(requireContext())
         val baseState = prebuiltTimelineState ?: powerManager.buildTimelineState(fullPackage, isHistoryRecord = isViewingSnapshot)
-        val timelineState = baseState.copy(selectedMetrics = selectedMetrics)
+        val timelineState = baseState.copy(selectedMetrics = selectedMetrics, displayUnit = currentDisplayUnit)
         val lastUnplugWh = powerManager.getLastUnplugEnergyWh()
 
         adapter.updateOverviewMetrics(

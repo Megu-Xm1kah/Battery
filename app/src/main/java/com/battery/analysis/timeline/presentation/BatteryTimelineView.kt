@@ -20,6 +20,7 @@ import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewConfiguration
 
+import com.battery.analysis.model.PowerDisplayUnit
 import com.battery.analysis.timeline.domain.AppTimelineEvent
 import com.battery.analysis.timeline.domain.BatterySample
 import com.battery.analysis.timeline.domain.ScreenEvent
@@ -28,6 +29,7 @@ import com.battery.analysis.timeline.util.ChartDownsampler
 import com.battery.analysis.timeline.util.DrawableBitmapCache
 import com.battery.analysis.timeline.util.TimelineLayoutCalculator
 import com.battery.analysis.timeline.util.TimelineScaleCalculator
+import com.battery.analysis.util.BatteryEnergyCalculator
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -532,8 +534,40 @@ class BatteryTimelineView @JvmOverloads constructor(
         }
     })
 
+    /**
+     * 当前电量呈现单位（[PowerDisplayUnit.WH] 或 [PowerDisplayUnit.MAH]）。
+     */
+    private var displayUnit: PowerDisplayUnit = PowerDisplayUnit.WH
+
     init {
         setWillNotDraw(false)
+        try {
+            val prefs = context.getSharedPreferences(PowerDisplayUnit.PREFS_NAME, Context.MODE_PRIVATE)
+            displayUnit = PowerDisplayUnit.fromId(prefs.getInt(PowerDisplayUnit.PREF_KEY_POWER_DISPLAY_UNIT, PowerDisplayUnit.WH.id))
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * 设置当前电量呈现单位（Wh 或 mAh），并在单位变更时重新计算静态读数看板缓存并重绘。
+     *
+     * @param unit 目标电量显示单位 [PowerDisplayUnit]
+     */
+    fun setDisplayUnit(unit: PowerDisplayUnit) {
+        if (this.displayUnit != unit) {
+            this.displayUnit = unit
+            this.timelineState = this.timelineState.copy(displayUnit = unit)
+            updateDefaultHeaderCache()
+            invalidate()
+        }
+    }
+
+    /**
+     * 获取当前电量呈现单位。
+     *
+     * @return 当前 [PowerDisplayUnit]
+     */
+    fun getDisplayUnit(): PowerDisplayUnit {
+        return displayUnit
     }
 
     /**
@@ -550,6 +584,14 @@ class BatteryTimelineView @JvmOverloads constructor(
 
         val vStart = if (state.visibleStartTimestamp in 1 until end) state.visibleStartTimestamp else start
         val vEnd = if (state.visibleEndTimestamp > vStart) state.visibleEndTimestamp else end
+
+        val targetUnit = if (state.displayUnit != PowerDisplayUnit.WH) {
+            state.displayUnit
+        } else {
+            this.displayUnit
+        }
+        val unitChanged = (this.displayUnit != targetUnit)
+        this.displayUnit = targetUnit
 
         // 精准判断时序采样点数据是否实质一致（避免因外部集合浅拷贝引用不同而误判为数据变化）
         val samplesIdentical = this.timelineState.batterySamples === state.batterySamples || (
@@ -586,11 +628,12 @@ class BatteryTimelineView @JvmOverloads constructor(
             startTimestamp = start,
             endTimestamp = end,
             visibleStartTimestamp = vStart,
-            visibleEndTimestamp = vEnd
+            visibleEndTimestamp = vEnd,
+            displayUnit = targetUnit
         )
 
-        // 关键修复：当数据与视窗未变且既有曲线缓存有效时，直接复用既有渲染缓存，绝对不重复加载！
-        if (isIdentical && isCurveCacheValid) {
+        // 关键修复：当数据与视窗未变且既有曲线缓存有效且单位未变时，直接复用既有渲染缓存，绝对不重复加载！
+        if (isIdentical && isCurveCacheValid && !unitChanged) {
             val needLayoutApps = state.selectedMetrics.contains(TimelineMetric.APP) &&
                 state.appEvents.isNotEmpty() &&
                 cachedSlotItems.isEmpty()
@@ -1190,6 +1233,32 @@ class BatteryTimelineView @JvmOverloads constructor(
     }
 
     /**
+     * 格式化顶部读数看板的电量/能量文本。
+     * 当单位为 [PowerDisplayUnit.WH] 时格式化为 "10.2Wh"；
+     * 当单位为 [PowerDisplayUnit.MAH] 时严格折算为等效物理电荷量，格式化为 "2649mAh"（低于 100mAh 且大于 0mAh 时保留一位小数，如 "45.2mAh"）；
+     * 数据无效时返回 null。
+     *
+     * @param energyWh 物理剩余能量数值（单位：Wh）
+     * @param unit 当前电量呈现单位 [PowerDisplayUnit]
+     * @return 格式化后的带单位紧凑字符串，数据缺失时返回 null
+     */
+    private fun formatHeaderEnergy(energyWh: Double?, unit: PowerDisplayUnit): String? {
+        if (energyWh == null || energyWh.isNaN() || energyWh < 0.0) return null
+        return if (unit == PowerDisplayUnit.MAH) {
+            val mah = (energyWh * 1000.0) / BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS
+            if (mah >= 100.0) {
+                String.format(Locale.getDefault(), "%.0fmAh", mah)
+            } else if (mah > 0.0) {
+                String.format(Locale.getDefault(), "%.1fmAh", mah)
+            } else {
+                "0mAh"
+            }
+        } else {
+            String.format(Locale.getDefault(), "%.1fWh", energyWh)
+        }
+    }
+
+    /**
      * 预先计算并缓存非游标状态下的顶部常驻看板展示文本与应用图标，彻底杜绝列表滚动时每帧触发日期格式化与对象检索。
      */
     private fun updateDefaultHeaderCache() {
@@ -1198,10 +1267,10 @@ class BatteryTimelineView @JvmOverloads constructor(
         val timeStr = timeFormatterTooltip.format(Date(latestTs))
         val levelStr = lastSample?.let { "${it.batteryLevel}%" }
         val energyStr = lastSample?.let { s ->
-            s.energyWh?.let { String.format(Locale.getDefault(), "%.1fWh", it) }
-                ?: timelineState.totalEnergyWh?.takeIf { it > 0f }?.let {
-                    String.format(Locale.getDefault(), "%.1fWh", s.batteryLevel / 100f * it)
-                }
+            val wh = s.energyWh ?: timelineState.totalEnergyWh?.takeIf { it > 0f }?.let {
+                (s.batteryLevel / 100.0) * it
+            }
+            formatHeaderEnergy(wh, displayUnit)
         }
         val powerStr = lastSample?.let {
             val pWatts = it.getPowerWatts()
@@ -2069,10 +2138,10 @@ class BatteryTimelineView @JvmOverloads constructor(
             timeStr = timeFormatterTooltip.format(Date(curTs))
             levelStr = curSample?.let { "${it.batteryLevel}%" }
             energyStr = curSample?.let { s ->
-                s.energyWh?.let { String.format(Locale.getDefault(), "%.1fWh", it) }
-                    ?: timelineState.totalEnergyWh?.takeIf { it > 0f }?.let {
-                        String.format(Locale.getDefault(), "%.1fWh", s.batteryLevel / 100f * it)
-                    }
+                val wh = s.energyWh ?: timelineState.totalEnergyWh?.takeIf { it > 0f }?.let {
+                    (s.batteryLevel / 100.0) * it
+                }
+                formatHeaderEnergy(wh, displayUnit)
             }
             powerStr = curSample?.let {
                 val pWatts = it.getPowerWatts()
@@ -2126,45 +2195,73 @@ class BatteryTimelineView @JvmOverloads constructor(
             }
         }
 
-        // 2.3 中间 5 个指标（电量、能量、功耗、温度、电压）在时间与图标之间按比例等分居中排布（无分隔符）
+        // 2.3 中间 5 个指标（电量、能量、功耗、温度、电压）在时间与图标之间按比例自适应居中排布（无分隔符）
         val middleLeft = contentLeft + paddingH + timeWidth + dp6
         val middleRight = contentRight - paddingH - iconSize - dp6
         val middleWidth = maxOf(0f, middleRight - middleLeft)
-        val colWidth = middleWidth / 5f
+
+        val isMahUnit = (displayUnit == PowerDisplayUnit.MAH)
+        // 动态分配 5 列宽度权重：电量（3-4字符）分配较小比例；能量在 mAh 模式下由于数值位数较多（如 2649mAh）加大占比，避免拥挤截断
+        val wLevel = if (isMahUnit) 0.70f else 0.85f
+        val wEnergy = if (isMahUnit) 1.40f else 1.15f
+        val wPower = 1.00f
+        val wTemp = if (isMahUnit) 0.95f else 1.00f
+        val wVolt = if (isMahUnit) 0.95f else 1.00f
+        val totalWeight = wLevel + wEnergy + wPower + wTemp + wVolt
+
+        val colLevelWidth = middleWidth * (wLevel / totalWeight)
+        val colEnergyWidth = middleWidth * (wEnergy / totalWeight)
+        val colPowerWidth = middleWidth * (wPower / totalWeight)
+        val colTempWidth = middleWidth * (wTemp / totalWeight)
+        val colVoltWidth = middleWidth * (wVolt / totalWeight)
+
+        val colLevelLeft = middleLeft
+        val colLevelCenter = colLevelLeft + colLevelWidth * 0.5f
+
+        val colEnergyLeft = colLevelLeft + colLevelWidth
+        val colEnergyRight = colEnergyLeft + colEnergyWidth
+        val colEnergyCenter = colEnergyLeft + colEnergyWidth * 0.5f
+
+        val colPowerLeft = colEnergyRight
+        val colPowerCenter = colPowerLeft + colPowerWidth * 0.5f
+
+        val colTempLeft = colPowerLeft + colPowerWidth
+        val colTempCenter = colTempLeft + colTempWidth * 0.5f
+
+        val colVoltLeft = colTempLeft + colTempWidth
+        val colVoltCenter = colVoltLeft + colVoltWidth * 0.5f
 
         headerMetricValuePaint.textAlign = Paint.Align.CENTER
 
         // 绘制电量（深天蓝 #3A7FF0，第 1 列居中）
         if (levelStr != null) {
             headerMetricValuePaint.color = colorBattery
-            canvas.drawText(levelStr, middleLeft + colWidth * 0.5f, textY, headerMetricValuePaint)
+            canvas.drawText(levelStr, colLevelCenter, textY, headerMetricValuePaint)
         }
 
-        // 绘制能量（紧随电量之后，同深天蓝 #3A7FF0，第 2 列居中）
-        val energyColLeft = middleLeft + colWidth * 1.0f
-        val energyColRight = middleLeft + colWidth * 2.0f
-        energyTouchRect.set(energyColLeft, 0f, energyColRight, dp28)
+        // 绘制能量（紧随电量之后，同深天蓝 #3A7FF0，第 2 列居中，触摸检测区域动态同步）
+        energyTouchRect.set(colEnergyLeft, 0f, colEnergyRight, dp28)
         if (energyStr != null) {
             headerMetricValuePaint.color = colorBattery
-            canvas.drawText(energyStr, middleLeft + colWidth * 1.5f, textY, headerMetricValuePaint)
+            canvas.drawText(energyStr, colEnergyCenter, textY, headerMetricValuePaint)
         }
 
         // 绘制功耗（浅天蓝 #90CAF9，第 3 列居中）
         if (powerStr != null) {
             headerMetricValuePaint.color = colorPower
-            canvas.drawText(powerStr, middleLeft + colWidth * 2.5f, textY, headerMetricValuePaint)
+            canvas.drawText(powerStr, colPowerCenter, textY, headerMetricValuePaint)
         }
 
         // 绘制温度（红色 #FF5252，第 4 列居中）
         if (tempStr != null) {
             headerMetricValuePaint.color = colorTemp
-            canvas.drawText(tempStr, middleLeft + colWidth * 3.5f, textY, headerMetricValuePaint)
+            canvas.drawText(tempStr, colTempCenter, textY, headerMetricValuePaint)
         }
 
         // 绘制电压（金黄 #FFD54F，第 5 列居中）
         if (voltStr != null) {
             headerMetricValuePaint.color = colorVoltage
-            canvas.drawText(voltStr, middleLeft + colWidth * 4.5f, textY, headerMetricValuePaint)
+            canvas.drawText(voltStr, colVoltCenter, textY, headerMetricValuePaint)
         }
 
         // 3. 若处于触控活跃状态，绘制垂直虚线游标与各折线交点高亮点

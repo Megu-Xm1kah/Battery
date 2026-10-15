@@ -200,6 +200,7 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
         if (latestUnit != currentDisplayUnit) {
             currentDisplayUnit = latestUnit
             appAdapter.updateDisplayUnit(latestUnit)
+            headerBinding?.batteryTimelineView?.setDisplayUnit(latestUnit)
             val record = currentRecord
             val hBinding = headerBinding
             if (record != null && hBinding != null) {
@@ -397,10 +398,10 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
             null
         }
 
-        val currentStr = currentWh?.let { String.format(Locale.getDefault(), "%.3fWh", it) } ?: "--"
-        val totalStr = totalWh?.let { String.format(Locale.getDefault(), "%.3fWh", it) } ?: "--"
-        val unplugStr = unplugWh?.let { String.format(Locale.getDefault(), "%.3fWh", it) } ?: "--"
-        val consumedStr = consumedWh?.let { String.format(Locale.getDefault(), "%.3fWh", it) } ?: "--"
+        val currentStr = currentWh?.let { BatteryEnergyCalculator.formatDisplayEnergy(it, currentDisplayUnit) } ?: "--"
+        val totalStr = totalWh?.let { BatteryEnergyCalculator.formatDisplayEnergy(it, currentDisplayUnit) } ?: "--"
+        val unplugStr = unplugWh?.let { BatteryEnergyCalculator.formatDisplayEnergy(it.toFloat(), currentDisplayUnit) } ?: "--"
+        val consumedStr = consumedWh?.let { BatteryEnergyCalculator.formatDisplayEnergy(it, currentDisplayUnit) } ?: "--"
 
         val message = getString(R.string.power_tooltip_energy, currentStr, totalStr, unplugStr, consumedStr)
         showBubbleTooltip(anchorView, message, touchX, touchY ?: 0f, autoDismissMs = 0L, forceAbove = true)
@@ -460,10 +461,13 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
         popupWindow.isFocusable = true
         popupWindow.animationStyle = R.style.Animation_PopupTopRight
 
+        val tvSortEnergy = popupView.findViewById<TextView>(R.id.tv_sort_energy)
+        tvSortEnergy.text = if (currentDisplayUnit == PowerDisplayUnit.MAH) "按消耗电量 (mAh)" else "按消耗能量 (Wh)"
+
         val sortViews = listOf(
             popupView.findViewById<TextView>(R.id.tv_sort_duration),
             popupView.findViewById<TextView>(R.id.tv_sort_power),
-            popupView.findViewById<TextView>(R.id.tv_sort_energy),
+            tvSortEnergy,
             popupView.findViewById<TextView>(R.id.tv_sort_name)
         )
 
@@ -785,8 +789,9 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
         renderHeaderDetails(record, hBinding)
         bindMetricsCards(hBinding)
 
+        hBinding.batteryTimelineView.setDisplayUnit(currentDisplayUnit)
         cachedTimelineState?.let { state ->
-            hBinding.batteryTimelineView.setState(state)
+            hBinding.batteryTimelineView.setState(state.copy(displayUnit = currentDisplayUnit))
         }
 
         hBinding.layoutBackgroundStatsContainer.visibility =
@@ -980,7 +985,10 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
             val selectedMetrics = headerBinding?.metricSelectorView?.getSelectedMetrics()
                 ?: cachedTimelineState?.selectedMetrics
                 ?: com.battery.analysis.timeline.presentation.TimelineMetric.entries.toSet()
-            val timelineState = powerMgr.buildTimelineState(fullPackage, isHistoryRecord = true).copy(selectedMetrics = selectedMetrics)
+            val timelineState = powerMgr.buildTimelineState(fullPackage, isHistoryRecord = true).copy(
+                selectedMetrics = selectedMetrics,
+                displayUnit = currentDisplayUnit
+            )
             val prefixData = TimelinePrefixSumCalculator.buildPrefixData(
                 timelineState = timelineState,
                 overviewStats = fullPackage.overviewStats,

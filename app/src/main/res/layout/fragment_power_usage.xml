@@ -71,7 +71,7 @@
                             android:id="@+id/tv_power_cursor_time"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_marginStart="5dp"
+                            android:layout_marginStart="2dp"
                             android:ellipsize="end"
                             android:layout_gravity="center_vertical"
                             android:singleLine="true"
@@ -86,7 +86,7 @@
                     <LinearLayout
                         android:id="@+id/btn_power_unit_toggle"
                         android:layout_width="wrap_content"
-                        android:layout_height="28dp"
+                        android:layout_height="24dp"
                         android:layout_marginEnd="5dp"
                         android:background="@drawable/bg_power_unit_badge"
                         android:clickable="true"
@@ -97,8 +97,8 @@
                         android:paddingEnd="5dp">
 
                         <ImageView
-                            android:layout_width="10dp"
-                            android:layout_height="10dp"
+                            android:layout_width="7dp"
+                            android:layout_height="7dp"
                             android:src="@drawable/ic_swap_horiz"
                             app:tint="?android:attr/textColorPrimary" />
 
@@ -108,7 +108,7 @@
                             android:layout_height="wrap_content"
                             android:text="Wh"
                             android:textColor="?android:attr/textColorPrimary"
-                            android:textSize="8sp"
+                            android:textSize="7sp"
                             android:textStyle="bold" />
                     </LinearLayout>
 
