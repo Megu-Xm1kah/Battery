@@ -86,6 +86,9 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     // 当前经筛选与排序后供列表渲染呈现的应用数据集合
     private val displayAppItems = mutableListOf<AppPowerUsageItem>()
 
+    // 当前展示应用列表的有效前台总能量缓存（单位：Wh），用于极速计算单应用耗电百分比
+    private var cachedTotalAppEnergyWh: Float = 0f
+
     // 排序模式：0-按使用时长降序，1-按平均功耗升序，2-按消耗电量降序，3-按应用名称升序
     private var sortMode: Int = 0
 
@@ -924,15 +927,19 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
             } else {
                 "--"
             }
-            tvAvgInfo.text = "AVG: $pwrStr, $avgTempStr"
-
-            val energyStr = item.getFormattedDisplayEnergy(currentDisplayUnit)
             val maxTempStr = if (item.maxTemperature > 0f) {
-                String.format(Locale.getDefault(), "MAX: %.1f℃", item.maxTemperature)
+                String.format(Locale.getDefault(), "Max: %.1f℃", item.maxTemperature)
             } else {
-                "MAX: --"
+                "Max: --"
             }
-            tvAppEnergy.text = "$maxTempStr | $energyStr"
+            tvAvgInfo.text = "AVG: $pwrStr, $avgTempStr|$maxTempStr"
+
+            val effectiveTotalEnergy = if (cachedTotalAppEnergyWh > 0f) {
+                cachedTotalAppEnergyWh
+            } else {
+                displayAppItems.sumOf { it.getForegroundEnergyValue().toDouble() }.toFloat()
+            }
+            tvAppEnergy.text = formatAppEnergyWithPercentage(item, effectiveTotalEnergy, currentDisplayUnit)
 
             val hasFg = item.foregroundTimeMs > 0L
             val hasBg = showBackgroundStats && item.backgroundTimeMs > 0L
@@ -955,6 +962,38 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
             } else {
                 layoutBgDuration.visibility = View.GONE
             }
+        }
+    }
+
+    /**
+     * 格式化应用消耗能量与总能耗百分占比展示文本（如 "0.088Wh · 51.5%" 或 "--"）。
+     * 严格遵循物理守恒与真实数据原则，以中间点符号 " · " 分割，百分比精确到一位小数；
+     * 若应用无有效放电能量消耗或数据缺失，则诚实展示未知状态 "--"，绝不捏造虚假占位数据。
+     *
+     * @param item 待计算的目标应用程序实体 [AppPowerUsageItem]
+     * @param totalEnergyWh 当前所有展示应用的有效总放电能量（单位：Wh）
+     * @param displayUnit 目标电量显示单位 [PowerDisplayUnit]
+     * @return 格式化后的能量及百分比组合展示文本
+     */
+    fun formatAppEnergyWithPercentage(
+        item: AppPowerUsageItem,
+        totalEnergyWh: Float,
+        displayUnit: PowerDisplayUnit
+    ): String {
+        val energyStr = item.getFormattedDisplayEnergy(displayUnit)
+        val fgEnergy = item.getForegroundEnergyValue()
+        val percentText = if (fgEnergy > 0f && totalEnergyWh > 0f) {
+            val ratio = (fgEnergy / totalEnergyWh * 100f).coerceIn(0f, 100f)
+            String.format(Locale.getDefault(), "%.1f%%", ratio)
+        } else if (energyStr != "--") {
+            "0.0%"
+        } else {
+            null
+        }
+        return if (percentText != null) {
+            "$energyStr·$percentText"
+        } else {
+            "--"
         }
     }
 
@@ -992,11 +1031,15 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         if (rv != null && (rv.isComputingLayout || rv.isAnimating)) {
             rv.post {
                 if (attachedRecyclerView != null) {
-                    notifyDataSetChanged()
+                    try {
+                        notifyDataSetChanged()
+                    } catch (_: Exception) {}
                 }
             }
         } else {
-            notifyDataSetChanged()
+            try {
+                notifyDataSetChanged()
+            } catch (_: Exception) {}
         }
     }
 
@@ -1360,6 +1403,7 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         displayAppItems.clear()
         displayAppItems.addAll(fgList)
         displayAppItems.addAll(bgList)
+        cachedTotalAppEnergyWh = displayAppItems.sumOf { it.getForegroundEnergyValue().toDouble() }.toFloat()
         onListCountChangedListener?.invoke(displayAppItems.size)
     }
 

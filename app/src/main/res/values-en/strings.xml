@@ -61,7 +61,7 @@
     <string name="power_status_unplugged">Not charging</string>
     <string name="power_status_charging">Charging</string>
     <string name="power_avg_info_format">AVG: %1$.2fW, %2$d℃</string>
-    <string name="power_max_temp_format">MAX: %d℃</string>
+    <string name="power_max_temp_format">Max: %d℃</string>
     <string name="power_permission_title">Usage Access Required</string>
     <string name="power_permission_desc">To accurately analyze per-app power consumption and foreground duration, please enable "Usage Access" in system settings.</string>
     <string name="power_permission_btn">Grant Access</string>

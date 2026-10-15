@@ -41,7 +41,6 @@
             android:singleLine="true"
             android:textColor="#FFFFFF"
             android:textSize="11sp"
-            android:textStyle="bold"
             tools:text="-3.2W" />
     </LinearLayout>
 
@@ -50,7 +49,7 @@
         android:id="@+id/tv_floating_divider"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginHorizontal="3dp"
+        android:layout_marginHorizontal="1dp"
         android:includeFontPadding="false"
         android:text="·"
         android:textColor="#88FFFFFF"
@@ -82,7 +81,6 @@
             android:singleLine="true"
             android:textColor="#FFFFFF"
             android:textSize="11sp"
-            android:textStyle="bold"
             tools:text="32.5℃" />
     </LinearLayout>
 

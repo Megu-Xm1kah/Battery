@@ -580,11 +580,11 @@ class BatteryEnergyCalculatorTest {
     fun testFormatHistoryDetailOverviewEnergy() {
         // Wh 模式：保留 1 位小数
         val whStr = BatteryEnergyCalculator.formatHistoryDetailOverviewEnergy(14.23f, com.battery.analysis.model.PowerDisplayUnit.WH)
-        assertEquals("14.2 Wh", whStr)
+        assertEquals("14.2\u00A0Wh", whStr)
 
         // mAh 模式：14.23Wh / 3.85V * 1000 ≈ 3696.1 -> 3696 mAh
         val mahStr = BatteryEnergyCalculator.formatHistoryDetailOverviewEnergy(14.23f, com.battery.analysis.model.PowerDisplayUnit.MAH, 3.85f)
-        assertEquals("3696 mAh", mahStr)
+        assertEquals("3696\u00A0mAh", mahStr)
     }
 
     /**

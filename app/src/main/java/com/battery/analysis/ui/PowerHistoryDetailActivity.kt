@@ -197,9 +197,12 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
     private fun syncDisplayUnitFromPreferences() {
         val prefs = getSharedPreferences(PowerDisplayUnit.PREFS_NAME, Context.MODE_PRIVATE)
         val latestUnit = PowerDisplayUnit.fromId(prefs.getInt(PowerDisplayUnit.PREF_KEY_POWER_DISPLAY_UNIT, PowerDisplayUnit.WH.id))
-        if (latestUnit != currentDisplayUnit) {
-            currentDisplayUnit = latestUnit
+        val unitChanged = (latestUnit != currentDisplayUnit)
+        currentDisplayUnit = latestUnit
+        if (::appAdapter.isInitialized) {
             appAdapter.updateDisplayUnit(latestUnit)
+        }
+        if (unitChanged) {
             headerBinding?.batteryTimelineView?.setDisplayUnit(latestUnit)
             val record = currentRecord
             val hBinding = headerBinding
@@ -252,7 +255,7 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
         currentDisplayUnit = PowerDisplayUnit.fromId(prefs.getInt(PowerDisplayUnit.PREF_KEY_POWER_DISPLAY_UNIT, PowerDisplayUnit.WH.id))
         appAdapter = AppPowerUsageAdapter().apply {
             isPureAppListMode = true
-            updateDisplayUnit(currentDisplayUnit)
+            updateDisplayUnit(this@PowerHistoryDetailActivity.currentDisplayUnit)
         }
         appAdapter.onListCountChangedListener = { count ->
             updateUsageListTitle(count)
@@ -548,8 +551,8 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
         }
 
         hBinding.tvDetailLevel.text = "${record.levelPercent}%"
-        hBinding.tvDetailTemp.text = String.format(Locale.getDefault(), "%.1f ℃", record.temperature)
-        hBinding.tvDetailVoltage.text = String.format(Locale.getDefault(), "%.2f V", record.voltageVolts)
+        hBinding.tvDetailTemp.text = String.format(Locale.getDefault(), "%.1f\u00A0℃", record.temperature)
+        hBinding.tvDetailVoltage.text = String.format(Locale.getDefault(), "%.2f\u00A0V", record.voltageVolts)
         hBinding.tvDetailEnergy.text = BatteryEnergyCalculator.formatHistoryDetailOverviewEnergy(record.energyWh, currentDisplayUnit)
 
         // 2. 卡片 2：三维核心功耗与续航指标（按亮屏 / 息屏 / 全局三行呈现）
@@ -1002,6 +1005,7 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
                 cachedTotalCapacityWh = totalCapacityWh
                 cachedTotalEnergyInfo = totalEnergyInfo
                 cachedTimelineState = timelineState
+                appAdapter.updateDisplayUnit(currentDisplayUnit)
                 appAdapter.submitList(fullPackage.appList)
                 cachedDisplayAppCount = appAdapter.getDisplayItemCount()
                 headerBinding?.let { hBinding ->

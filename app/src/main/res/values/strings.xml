@@ -61,7 +61,7 @@
     <string name="power_status_unplugged">未充电</string>
     <string name="power_status_charging">充电中</string>
     <string name="power_avg_info_format">AVG: %1$.2fW, %2$d℃</string>
-    <string name="power_max_temp_format">MAX: %d℃</string>
+    <string name="power_max_temp_format">Max: %d℃</string>
     <string name="power_permission_title">需要使用情况访问权限</string>
     <string name="power_permission_desc">为了精确统计应用级耗电时长与场景分析，请在系统设置中授予“有权查看使用情况的应用”权限。</string>
     <string name="power_permission_btn">前往授权</string>

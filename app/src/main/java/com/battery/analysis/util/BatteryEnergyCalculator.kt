@@ -1033,11 +1033,12 @@ object BatteryEnergyCalculator {
 
     /**
      * 格式化历史详情页顶部大字总消耗能量/电量（如 "14.2 Wh" 或 "3688 mAh"）。
+     * 使用不换行空格 (\u00A0) 连接数值与单位，防止排版引擎在窄屏下将其换行折断。
      *
      * @param energyWh 消耗能量数值（单位：Wh）
      * @param unit 目标显示单位 [PowerDisplayUnit]
      * @param nominalVoltageVolts 折算采用的标称电压（单位：V，默认 3.85V）
-     * @return 格式化后的总能耗大字文本
+     * @return 格式化后的总能耗大字文本，保证数值与单位同一行呈现
      */
     fun formatHistoryDetailOverviewEnergy(
         energyWh: Float,
@@ -1046,9 +1047,9 @@ object BatteryEnergyCalculator {
     ): String {
         return if (unit == PowerDisplayUnit.MAH) {
             val mah = convertWhToMah(energyWh, nominalVoltageVolts)
-            String.format(Locale.getDefault(), "%.0f mAh", mah)
+            String.format(Locale.getDefault(), "%.0f\u00A0mAh", mah)
         } else {
-            String.format(Locale.getDefault(), "%.1f Wh", energyWh)
+            String.format(Locale.getDefault(), "%.1f\u00A0Wh", energyWh)
         }
     }
 
