@@ -16,22 +16,16 @@ class FloatingWindowTest {
      * 辅助格式化实时功率字符串（与悬浮窗实际逻辑一致）。
      *
      * @param powerWatts 瞬时充放电功率瓦特数
+     * @param isCharging 是否处于充电状态（默认 true）
      * @param showUnit 是否显示单位符号（默认 true）
      * @return 格式化后的功率文本
      */
-    private fun formatPowerText(powerWatts: Float?, showUnit: Boolean = true): String {
-        return if (powerWatts != null && abs(powerWatts) > 0.05f) {
-            val formatted = if (powerWatts > 0f) {
-                String.format(Locale.getDefault(), "%.1f", powerWatts)
-            } else {
-                String.format(Locale.getDefault(), "-%.1f", abs(powerWatts))
-            }
-            if (showUnit) "${formatted}W" else formatted
-        } else if (powerWatts != null) {
-            if (showUnit) "0.0W" else "0.0"
-        } else {
-            if (showUnit) "--W" else "--"
-        }
+    private fun formatPowerText(
+        powerWatts: Float?,
+        isCharging: Boolean = true,
+        showUnit: Boolean = true
+    ): String {
+        return com.battery.analysis.manager.FloatingWindowManager.formatPowerText(powerWatts, isCharging, showUnit)
     }
 
     /**
@@ -88,27 +82,33 @@ class FloatingWindowTest {
     }
 
     /**
-     * 验证实时功率文本在充电、放电与无数据状态下的格式化输出。
+     * 验证实时功率文本在充电、放电与无数据状态下的格式化输出，带 +、- 号以区分充、放电。
      */
     @Test
     fun testPowerFormatting() {
-        assertEquals("充电正功率应格式化为正数", "18.5W", formatPowerText(18.5f))
-        assertEquals("充电大功率应格式化为正数", "65.0W", formatPowerText(65.0f))
-        assertEquals("放电耗电应格式化为负数", "-3.2W", formatPowerText(-3.2f))
-        assertEquals("微弱放电应格式化为负数", "-0.8W", formatPowerText(-0.8f))
-        assertEquals("接近零功率应格式化为0.0W", "0.0W", formatPowerText(0.02f))
-        assertEquals("无数据或未获取时如实展示--W", "--W", formatPowerText(null))
+        assertEquals("充电正功率应带+号", "+18.5W", formatPowerText(18.5f, isCharging = true))
+        assertEquals("充电大功率应带+号", "+65.0W", formatPowerText(65.0f, isCharging = true))
+        assertEquals("充电中净放电应带-号", "-2.1W", formatPowerText(-2.1f, isCharging = true))
+        assertEquals("放电耗电应带-号", "-3.2W", formatPowerText(3.2f, isCharging = false))
+        assertEquals("放电负数输入应带-号", "-3.2W", formatPowerText(-3.2f, isCharging = false))
+        assertEquals("微弱放电应带-号", "-0.8W", formatPowerText(0.8f, isCharging = false))
+        assertEquals("充电接近零功率应格式化为+0.0W", "+0.0W", formatPowerText(0.02f, isCharging = true))
+        assertEquals("放电接近零功率应格式化为-0.0W", "-0.0W", formatPowerText(0.02f, isCharging = false))
+        assertEquals("无数据或未获取时如实展示--W", "--W", formatPowerText(null, isCharging = false))
+        assertEquals("充电无数据或未获取时如实展示--W", "--W", formatPowerText(null, isCharging = true))
     }
 
     /**
-     * 验证关闭单位显示时实时功率文本在充电、放电与无数据状态下的格式化输出（无 W 符号）。
+     * 验证关闭单位显示时实时功率文本在充电、放电与无数据状态下的格式化输出（无 W 符号，带 +、- 号）。
      */
     @Test
     fun testPowerFormattingWithoutUnit() {
-        assertEquals("关闭单位时充电正功率仅展示纯数值", "18.5", formatPowerText(18.5f, showUnit = false))
-        assertEquals("关闭单位时放电耗电展示负号纯数值", "-3.2", formatPowerText(-3.2f, showUnit = false))
-        assertEquals("关闭单位时接近零功率展示0.0", "0.0", formatPowerText(0.02f, showUnit = false))
-        assertEquals("关闭单位时无数据或未获取如实展示--", "--", formatPowerText(null, showUnit = false))
+        assertEquals("关闭单位时充电正功率展示+号纯数值", "+18.5", formatPowerText(18.5f, isCharging = true, showUnit = false))
+        assertEquals("关闭单位时充电大功率展示+号纯数值", "+65.0", formatPowerText(65.0f, isCharging = true, showUnit = false))
+        assertEquals("关闭单位时放电耗电展示-号纯数值", "-3.2", formatPowerText(3.2f, isCharging = false, showUnit = false))
+        assertEquals("关闭单位时充电接近零功率展示+0.0", "+0.0", formatPowerText(0.02f, isCharging = true, showUnit = false))
+        assertEquals("关闭单位时放电接近零功率展示-0.0", "-0.0", formatPowerText(0.02f, isCharging = false, showUnit = false))
+        assertEquals("关闭单位时无数据或未获取如实展示--", "--", formatPowerText(null, isCharging = false, showUnit = false))
     }
 
     /**
@@ -371,13 +371,18 @@ class FloatingWindowTest {
     }
 
     /**
-     * 验证文字大小配置参数范围约束逻辑（8sp 至 20sp）。
+     * 验证文字大小配置参数范围约束逻辑（5sp 至 20sp）。
      */
     @Test
     fun testFontSizeConstraint() {
-        val clampFontSize = { size: Int -> size.coerceIn(8, 20) }
-        assertEquals("低于下限8sp时应钳位至8sp", 8, clampFontSize(5))
-        assertEquals("正常8sp保持不变", 8, clampFontSize(8))
+        val clampFontSize = { size: Int ->
+            size.coerceIn(
+                com.battery.analysis.manager.FloatingWindowManager.MIN_FONT_SIZE,
+                com.battery.analysis.manager.FloatingWindowManager.MAX_FONT_SIZE
+            )
+        }
+        assertEquals("低于下限5sp时应钳位至5sp", 5, clampFontSize(3))
+        assertEquals("正常5sp保持不变", 5, clampFontSize(5))
         assertEquals("默认11sp保持不变", 11, clampFontSize(11))
         assertEquals("正常20sp保持不变", 20, clampFontSize(20))
         assertEquals("高于上限20sp时应钳位至20sp", 20, clampFontSize(25))
@@ -405,25 +410,25 @@ class FloatingWindowTest {
     }
 
     /**
-     * 验证纯数据源驱动模式下，外部服务推流数据的格式化与展示一致性。
+     * 验证纯数据源驱动模式下，外部服务推流数据的格式化与展示一致性（显示 +、- 号以区分充、放电）。
      */
     @Test
     fun testPureDataSourcePresentationConsistency() {
-        var powerText = formatPowerText(null)
+        var powerText = formatPowerText(null, isCharging = false)
         var tempText = formatTempText(null)
         assertEquals("初始无数据时功率展示占位符", "--W", powerText)
         assertEquals("初始无数据时温度展示占位符", "--℃", tempText)
 
         // 模拟后台采样服务推送放电数据
-        powerText = formatPowerText(-4.2f)
+        powerText = formatPowerText(4.2f, isCharging = false)
         tempText = formatTempText(35.6f)
         assertEquals("-4.2W", powerText)
         assertEquals("35.6℃", tempText)
 
         // 模拟后台采样服务推送充电数据
-        powerText = formatPowerText(27.8f)
+        powerText = formatPowerText(27.8f, isCharging = true)
         tempText = formatTempText(38.0f)
-        assertEquals("27.8W", powerText)
+        assertEquals("+27.8W", powerText)
         assertEquals("38.0℃", tempText)
     }
 

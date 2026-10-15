@@ -1110,14 +1110,17 @@ class SettingsFragment : Fragment() {
             }
         }
 
-        // 文字大小调节 (范围 8sp 至 20sp, 偏移量 8)
+        // 文字大小调节 (范围 5sp 至 20sp)
+        val minFontSize = com.battery.analysis.manager.FloatingWindowManager.MIN_FONT_SIZE
+        val maxFontSize = com.battery.analysis.manager.FloatingWindowManager.MAX_FONT_SIZE
         val currentFontSize = com.battery.analysis.manager.FloatingWindowManager.getFontSize(ctx)
-        seekFontSize.progress = currentFontSize - 8
+        seekFontSize.max = maxFontSize - minFontSize
+        seekFontSize.progress = currentFontSize - minFontSize
         tvFontSizeValue.text = "${currentFontSize} sp"
 
         seekFontSize.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
-                val sizeSp = progress + 8
+                val sizeSp = progress + minFontSize
                 tvFontSizeValue.text = "${sizeSp} sp"
                 if (fromUser) {
                     com.battery.analysis.manager.FloatingWindowManager.setFontSize(ctx, sizeSp)
@@ -1129,8 +1132,8 @@ class SettingsFragment : Fragment() {
 
         // 文字大小 - 微调按钮
         setupRepeatClick(btnFontSizeMinus) {
-            val targetSize = (seekFontSize.progress + 8 - 1).coerceAtLeast(8)
-            val newProgress = targetSize - 8
+            val targetSize = (seekFontSize.progress + minFontSize - 1).coerceAtLeast(minFontSize)
+            val newProgress = targetSize - minFontSize
             if (newProgress != seekFontSize.progress) {
                 seekFontSize.progress = newProgress
                 tvFontSizeValue.text = "${targetSize} sp"
@@ -1140,8 +1143,8 @@ class SettingsFragment : Fragment() {
 
         // 文字大小 + 微调按钮
         setupRepeatClick(btnFontSizePlus) {
-            val targetSize = (seekFontSize.progress + 8 + 1).coerceAtMost(20)
-            val newProgress = targetSize - 8
+            val targetSize = (seekFontSize.progress + minFontSize + 1).coerceAtMost(maxFontSize)
+            val newProgress = targetSize - minFontSize
             if (newProgress != seekFontSize.progress) {
                 seekFontSize.progress = newProgress
                 tvFontSizeValue.text = "${targetSize} sp"

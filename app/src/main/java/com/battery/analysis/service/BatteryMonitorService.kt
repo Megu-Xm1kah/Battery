@@ -171,10 +171,26 @@ class BatteryMonitorService : Service() {
                 Intent.ACTION_POWER_CONNECTED -> {
                     cachedIsCharging = true
                     clearPersistedScreenOffBaseline(appContext)
+                    if (com.battery.analysis.manager.FloatingWindowManager.isFloatingEnabled(appContext)) {
+                        com.battery.analysis.manager.FloatingWindowManager.updateData(
+                            appContext,
+                            null,
+                            null,
+                            isCharging = true
+                        )
+                    }
                     handlePowerConnected(appContext)
                 }
                 Intent.ACTION_POWER_DISCONNECTED -> {
                     cachedIsCharging = false
+                    if (com.battery.analysis.manager.FloatingWindowManager.isFloatingEnabled(appContext)) {
+                        com.battery.analysis.manager.FloatingWindowManager.updateData(
+                            appContext,
+                            null,
+                            null,
+                            isCharging = false
+                        )
+                    }
                     handlePowerDisconnected(appContext)
                 }
                 Intent.ACTION_SCREEN_ON -> {
@@ -766,7 +782,8 @@ class BatteryMonitorService : Service() {
                                 com.battery.analysis.manager.FloatingWindowManager.updateData(
                                     this@BatteryMonitorService,
                                     curPower,
-                                    curTemp
+                                    curTemp,
+                                    isCharging = true
                                 )
                             }
 
@@ -804,7 +821,8 @@ class BatteryMonitorService : Service() {
                                 com.battery.analysis.manager.FloatingWindowManager.updateData(
                                     this@BatteryMonitorService,
                                     pWatts,
-                                    currentTemp
+                                    currentTemp,
+                                    isCharging = false
                                 )
                             }
 
@@ -1399,6 +1417,30 @@ class BatteryMonitorService : Service() {
         fun getLatestCachedTemperature(): Float? {
             val service = activeServiceRef?.get() ?: return null
             return if (service.cachedTemperature > 0f) service.cachedTemperature else null
+        }
+
+        /**
+         * 获取当前设备是否处于外部电源连接充电状态。
+         * 优先读取活跃服务内存缓存；若服务未激活则通过系统粘性广播读取硬件真实状态。
+         *
+         * @param context 运行上下文
+         * @return 若当前处于充电状态返回 true，放电状态返回 false
+         */
+        fun isCurrentlyCharging(context: Context): Boolean {
+            val service = activeServiceRef?.get()
+            if (service != null) {
+                return service.cachedIsCharging
+            }
+            return try {
+                val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+                val plugged = intent?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0
+                status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                        status == BatteryManager.BATTERY_STATUS_FULL ||
+                        plugged > 0
+            } catch (_: Exception) {
+                false
+            }
         }
 
         /**

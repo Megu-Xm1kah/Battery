@@ -1,0 +1,146 @@
+package com.battery.analysis
+
+import com.battery.analysis.manager.PowerOverviewStats
+import com.battery.analysis.ui.PowerDischargeMetricsViewBinder
+import com.battery.analysis.util.BatteryEnergyCalculator
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * 放电速度与息屏休眠指标卡片通用视图绑定辅助工具类单元测试套件。
+ * 验证息屏、唤醒与深度睡眠卡片时长在超过 1 小时时不显示秒数、不足 1 小时时显示秒数，
+ * 以及卡片事件点击弹框详情保持正常显示秒数不被篡改的完整业务规范。
+ */
+class PowerDischargeMetricsViewBinderTest {
+
+    /**
+     * 验证当持续时间超过 1 小时时，卡片时间格式化输出时分格式（不显示秒数）。
+     */
+    @Test
+    fun testFormatSleepAwakeCardDuration_ExceedingOneHour_HidesSeconds() {
+        // 6 小时 53 分 10 秒 (24,790,000 毫秒) -> 超过小时，不显示秒数，期望 "06h53m"
+        val dur1Ms = (6 * 3600 + 53 * 60 + 10) * 1000L
+        assertEquals("06h53m", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(dur1Ms))
+
+        // 6 小时 34 分 09 秒 (23,649,000 毫秒) -> 超过小时，不显示秒数，期望 "06h34m"
+        val dur2Ms = (6 * 3600 + 34 * 60 + 9) * 1000L
+        assertEquals("06h34m", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(dur2Ms))
+
+        // 整 1 小时 (3,600,000 毫秒) -> 期望 "01h00m"
+        val dur3Ms = 3600 * 1000L
+        assertEquals("01h00m", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(dur3Ms))
+
+        // 1 小时 0 分 45 秒 (3,645,000 毫秒) -> 超过小时，不显示秒数，期望 "01h00m"
+        val dur4Ms = (3600 + 45) * 1000L
+        assertEquals("01h00m", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(dur4Ms))
+
+        // 25 小时 12 分 30 秒 (90,750,000 毫秒) -> 超过小时，期望 "25h12m"
+        val dur5Ms = (25 * 3600 + 12 * 60 + 30) * 1000L
+        assertEquals("25h12m", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(dur5Ms))
+    }
+
+    /**
+     * 验证当持续时间不足 1 小时且大于等于 1 分钟时，卡片时间格式化输出分秒格式（正常显示秒数）。
+     */
+    @Test
+    fun testFormatSleepAwakeCardDuration_LessThanOneHour_ShowsSeconds() {
+        // 19 分 01 秒 (1,141,000 毫秒) -> 不足小时，显示秒数，期望 "19m01s"
+        val dur1Ms = (19 * 60 + 1) * 1000L
+        assertEquals("19m01s", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(dur1Ms))
+
+        // 整 19 分钟 (1,140,000 毫秒) -> 期望 "19m00s"
+        val dur2Ms = 19 * 60 * 1000L
+        assertEquals("19m00s", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(dur2Ms))
+
+        // 5 分 30 秒 (330,000 毫秒) -> 期望 "05m30s"
+        val dur3Ms = (5 * 60 + 30) * 1000L
+        assertEquals("05m30s", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(dur3Ms))
+
+        // 1 分 0 秒 (60,000 毫秒) -> 期望 "01m00s"
+        val dur4Ms = 60 * 1000L
+        assertEquals("01m00s", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(dur4Ms))
+    }
+
+    /**
+     * 验证当持续时间不足 1 分钟时，卡片时间格式化输出秒数格式（正常显示秒数）。
+     */
+    @Test
+    fun testFormatSleepAwakeCardDuration_LessThanOneMinute_ShowsSeconds() {
+        // 45 秒 (45,000 毫秒) -> 期望 "45s"
+        assertEquals("45s", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(45_000L))
+
+        // 5 秒 (5,000 毫秒) -> 期望 "05s"
+        assertEquals("05s", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(5_000L))
+
+        // 0 毫秒 -> 期望 "00s"
+        assertEquals("00s", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(0L))
+
+        // 负数毫秒 -> 期望 "00s"
+        assertEquals("00s", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(-500L))
+    }
+
+    /**
+     * 验证当毫秒值小于等于 0 且提供有效备用文本 fallbackText 时，
+     * 正确解析并依据小时阈值规则格式化。
+     */
+    @Test
+    fun testFormatSleepAwakeCardDuration_FallbackTextParsing() {
+        // 毫秒为 0，文本为 "06h53m10s" -> 超过小时，输出 "06h53m"
+        assertEquals("06h53m", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(0L, "06h53m10s"))
+
+        // 毫秒为 0，文本为 "19m01s" -> 不足小时，输出 "19m01s"
+        assertEquals("19m01s", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(0L, "19m01s"))
+
+        // 毫秒为 0，文本为 "00s" -> 输出 "00s"
+        assertEquals("00s", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(0L, "00s"))
+
+        // 毫秒为 0，文本为 "0s" -> 输出 "00s"
+        assertEquals("00s", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(0L, "0s"))
+
+        // 毫秒为 0，文本为空 -> 输出 "00s"
+        assertEquals("00s", PowerDischargeMetricsViewBinder.formatSleepAwakeCardDuration(0L, ""))
+    }
+
+    /**
+     * 验证卡片事件点击弹框详情中依然保持正常显示秒数，未被卡片紧凑格式化篡改。
+     */
+    @Test
+    fun testCardDetailDialogs_RetainFullSecondsDisplay() {
+        val screenOffDurationMs = (6 * 3600 + 53 * 60 + 10) * 1000L // 06h53m10s
+        val awakeDurationMs = (19 * 60 + 1) * 1000L // 19m01s
+        val deepSleepDurationMs = (6 * 3600 + 34 * 60 + 9) * 1000L // 06h34m09s
+
+        val overview = PowerOverviewStats(
+            avgPowerWatts = 0.5f,
+            screenOffDurationMs = screenOffDurationMs,
+            screenOffAwakeDurationMs = awakeDurationMs,
+            screenOffDeepSleepDurationMs = deepSleepDurationMs,
+            screenOffPercent = 9.5f,
+            screenOffAwakePercent = 0.9f,
+            screenOffDeepSleepPercent = 8.5f,
+            screenOffEnergyWh = 2.924f,
+            screenOffAwakeEnergyWh = 0.292f,
+            screenOffDeepSleepEnergyWh = 2.632f,
+            screenOffDrainMah = 759.4f,
+            screenOffAwakeDrainMah = 75.7f,
+            screenOffDeepSleepDrainMah = 683.7f,
+            screenOffPowerWatts = 0.42f,
+            screenOffAwakePowerWatts = 0.92f,
+            screenOffDeepSleepPowerWatts = 0.40f,
+            isScreenOffDecomposedAvailable = true
+        )
+
+        // 1. 息屏弹框：必须包含完整的 "06h53m10s"，正常显示秒数
+        val screenOffMessage = BatteryEnergyCalculator.formatScreenOffCardDetailMessage(overview, 30.0f)
+        assertTrue("息屏卡片弹框详情必须正常显示秒数 06h53m10s", screenOffMessage.contains("06h53m10s"))
+
+        // 2. 唤醒弹框：必须包含完整的 "19m01s"，正常显示秒数
+        val awakeMessage = BatteryEnergyCalculator.formatAwakeCardDetailMessage(overview, 30.0f)
+        assertTrue("唤醒卡片弹框详情必须正常显示秒数 19m01s", awakeMessage.contains("19m01s"))
+
+        // 3. 深度睡眠弹框：必须包含完整的 "06h34m09s"，正常显示秒数
+        val deepSleepMessage = BatteryEnergyCalculator.formatDeepSleepCardDetailMessage(overview, 30.0f)
+        assertTrue("深度睡眠卡片弹框详情必须正常显示秒数 06h34m09s", deepSleepMessage.contains("06h34m09s"))
+    }
+}

@@ -55,7 +55,7 @@ object FloatingWindowManager {
     const val KEY_OFFSET_X = "pref_floating_offset_x"
 
     const val DEFAULT_FONT_SIZE = 11
-    const val MIN_FONT_SIZE = 8
+    const val MIN_FONT_SIZE = 5
     const val MAX_FONT_SIZE = 20
 
     const val ALIGN_LEFT = 0
@@ -105,6 +105,9 @@ object FloatingWindowManager {
 
     @Volatile
     private var cachedTemperatureCelsius: Float? = null
+
+    @Volatile
+    private var cachedIsCharging: Boolean = false
 
     /**
      * 系统配置变化回调（如屏幕旋转方向横竖屏切换），用于实时自适应重绘悬浮窗位置。
@@ -464,7 +467,7 @@ object FloatingWindowManager {
      * 获取悬浮窗文字大小（单位：sp）。
      *
      * @param context 运行上下文
-     * @return 字体大小整数（范围 8 至 20，默认 11）
+     * @return 字体大小整数（范围 5 至 20，默认 11）
      */
     fun getFontSize(context: Context): Int {
         return getPrefs(context).getInt(KEY_FONT_SIZE, DEFAULT_FONT_SIZE).coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE)
@@ -474,7 +477,7 @@ object FloatingWindowManager {
      * 设置并持久化悬浮窗文字大小（单位：sp）。
      *
      * @param context 运行上下文
-     * @param sizeSp 字体大小整数（范围 8 至 20）
+     * @param sizeSp 字体大小整数（范围 5 至 20）
      */
     fun setFontSize(context: Context, sizeSp: Int) {
         val validSize = sizeSp.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE)
@@ -622,6 +625,7 @@ object FloatingWindowManager {
         // 若服务已在运行，预先提取最新缓存数据用于首次展示
         cachedPowerWatts = BatteryMonitorService.getLatestCachedPowerWatts()
         cachedTemperatureCelsius = BatteryMonitorService.getLatestCachedTemperature()
+        cachedIsCharging = BatteryMonitorService.isCurrentlyCharging(appContext)
 
         mainHandler.post {
             try {
@@ -1023,20 +1027,7 @@ object FloatingWindowManager {
 
         // 格式化实时功率展示
         if (showPower) {
-            val pWatts = cachedPowerWatts
-            val powerText = if (pWatts != null && abs(pWatts) > 0.05f) {
-                val formatted = if (pWatts > 0f) {
-                    String.format(Locale.getDefault(), "%.1f", pWatts)
-                } else {
-                    String.format(Locale.getDefault(), "-%.1f", abs(pWatts))
-                }
-                if (showUnit) "${formatted}W" else formatted
-            } else if (pWatts != null) {
-                if (showUnit) "0.0W" else "0.0"
-            } else {
-                if (showUnit) "--W" else "--"
-            }
-            vh.tvPower.text = powerText
+            vh.tvPower.text = formatPowerText(cachedPowerWatts, cachedIsCharging, showUnit)
         }
 
         // 格式化实时温度展示
@@ -1053,16 +1044,46 @@ object FloatingWindowManager {
     }
 
     /**
-     * 接收后台采样服务数据源推送的最新物理功率与温度数据并刷新悬浮窗展示。
+     * 根据充电与放电状态格式化实时功率字符串，带 +、- 号以区分充、放电。
+     *
+     * @param powerWatts 瞬时充放电功率瓦特数，缺失传 null
+     * @param isCharging 是否处于充电状态
+     * @param showUnit 是否显示单位符号（W）
+     * @return 格式化后的实时功率展示文本
+     */
+    fun formatPowerText(powerWatts: Float?, isCharging: Boolean, showUnit: Boolean = true): String {
+        return if (powerWatts != null && abs(powerWatts) > 0.05f) {
+            val formatted = if (isCharging) {
+                if (powerWatts > 0f) {
+                    String.format(Locale.getDefault(), "+%.1f", powerWatts)
+                } else {
+                    String.format(Locale.getDefault(), "-%.1f", abs(powerWatts))
+                }
+            } else {
+                String.format(Locale.getDefault(), "-%.1f", abs(powerWatts))
+            }
+            if (showUnit) "${formatted}W" else formatted
+        } else if (powerWatts != null) {
+            val formatted = if (isCharging) "+0.0" else "-0.0"
+            if (showUnit) "${formatted}W" else formatted
+        } else {
+            if (showUnit) "--W" else "--"
+        }
+    }
+
+    /**
+     * 接收后台采样服务数据源推送的最新物理功率、温度与充电状态数据并刷新悬浮窗展示。
      * 悬浮窗作为纯展示组件，自身不维护任何后台定时器或轮询协程，完全由系统采样服务单一数据源驱动更新。
      *
      * @param context 运行上下文
      * @param powerWatts 瞬时充放电功率（瓦特 W），无法获取传 null
      * @param tempCelsius 瞬时电池温度（摄氏度 ℃），无法获取传 null
+     * @param isCharging 当前是否处于充电状态，缺失传 null
      */
-    fun updateData(context: Context, powerWatts: Float?, tempCelsius: Float?) {
+    fun updateData(context: Context, powerWatts: Float?, tempCelsius: Float?, isCharging: Boolean? = null) {
         if (powerWatts != null) cachedPowerWatts = powerWatts
         if (tempCelsius != null) cachedTemperatureCelsius = tempCelsius
+        if (isCharging != null) cachedIsCharging = isCharging
         mainHandler.post {
             updateViewContent(context.applicationContext)
         }
