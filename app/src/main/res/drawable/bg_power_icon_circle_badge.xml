@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="?attr/colorControlHighlight">
+    <!-- 统一圆形微底座背景：半透明浅灰底色与细描边，与单位切换胶囊（bg_power_unit_badge）材质完全同款 -->
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="#1A888888" />
+            <stroke
+                android:width="1dp"
+                android:color="#2E888888" />
+        </shape>
+    </item>
+    <!-- 圆形水波纹点击蒙版（Ripple Mask），限制触摸波纹限制在圆形区域内 -->
+    <item android:id="@android:id/mask">
+        <shape android:shape="oval">
+            <solid android:color="@android:color/white" />
+        </shape>
+    </item>
+</ripple>

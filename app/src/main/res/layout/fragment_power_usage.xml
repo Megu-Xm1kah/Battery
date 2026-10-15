@@ -82,23 +82,23 @@
                             tools:visibility="visible" />
                     </LinearLayout>
 
-                    <!-- 电量显示单位切换胶囊按钮（Wh <-> mAh） -->
+                    <!-- 电量显示单位切换胶囊按钮（Wh <-> mAh，饱满度与微底座呼应） -->
                     <LinearLayout
                         android:id="@+id/btn_power_unit_toggle"
                         android:layout_width="wrap_content"
-                        android:layout_height="24dp"
-                        android:layout_marginEnd="5dp"
+                        android:layout_height="28dp"
+                        android:layout_marginEnd="6dp"
                         android:background="@drawable/bg_power_unit_badge"
                         android:clickable="true"
                         android:focusable="true"
                         android:gravity="center"
                         android:orientation="horizontal"
-                        android:paddingStart="5dp"
-                        android:paddingEnd="5dp">
+                        android:paddingStart="3dp"
+                        android:paddingEnd="3dp">
 
                         <ImageView
-                            android:layout_width="7dp"
-                            android:layout_height="7dp"
+                            android:layout_width="8dp"
+                            android:layout_height="8dp"
                             android:src="@drawable/ic_swap_horiz"
                             app:tint="?android:attr/textColorPrimary" />
 
@@ -106,62 +106,67 @@
                             android:id="@+id/tv_power_unit_badge"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
+                            android:layout_marginStart="2dp"
                             android:text="Wh"
                             android:textColor="?android:attr/textColorPrimary"
-                            android:textSize="7sp"
+                            android:textSize="8sp"
                             android:textStyle="bold" />
                     </LinearLayout>
 
-                    <!-- 右侧说明文档图标（问号说明） -->
+                    <!-- 右侧说明文档图标（带微底座纯线条问号） -->
                     <ImageView
                         android:id="@+id/btn_power_guide"
-                        android:layout_width="34dp"
-                        android:layout_height="34dp"
-                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:layout_marginEnd="6dp"
+                        android:background="@drawable/bg_power_icon_circle_badge"
                         android:clickable="true"
-                        android:contentDescription="@string/understood"
+                        android:contentDescription="@string/power_guide_stats_dialog_title"
                         android:focusable="true"
-                        android:padding="5dp"
-                        android:src="@drawable/ic_help_circle"
+                        android:padding="5.5dp"
+                        android:src="@drawable/ic_power_guide_badge"
                         app:tint="?android:attr/textColorPrimary" />
 
-                    <!-- 右侧耗电历史记录按钮 -->
+                    <!-- 右侧耗电历史记录按钮（带微底座纯折线趋势） -->
                     <ImageView
                         android:id="@+id/btn_power_history"
-                        android:layout_width="34dp"
-                        android:layout_height="34dp"
-                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:layout_marginEnd="6dp"
+                        android:background="@drawable/bg_power_icon_circle_badge"
                         android:clickable="true"
                         android:contentDescription="@string/power_history_title"
                         android:focusable="true"
-                        android:padding="5dp"
-                        android:src="@drawable/ic_power_history"
+                        android:padding="5.5dp"
+                        android:src="@drawable/ic_power_history_badge"
                         app:tint="?android:attr/textColorPrimary" />
 
-                    <!-- 右侧充电历史记录按钮 -->
+                    <!-- 右侧充电历史记录按钮（带微底座纯闪电） -->
                     <ImageView
                         android:id="@+id/btn_charging_history"
-                        android:layout_width="34dp"
-                        android:layout_height="34dp"
-                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:layout_marginEnd="6dp"
+                        android:background="@drawable/bg_power_icon_circle_badge"
                         android:clickable="true"
-                        android:contentDescription="充电历史记录"
+                        android:contentDescription="@string/charging_history_title"
                         android:focusable="true"
-                        android:padding="5dp"
-                        android:src="@drawable/ic_charging_history"
+                        android:padding="5.5dp"
+                        android:src="@drawable/ic_charging_history_badge"
                         app:tint="?android:attr/textColorPrimary" />
 
-                    <!-- 右侧垃圾桶清空图标 -->
+                    <!-- 右侧重置统计图标（带微底座双向对称循环重置箭头） -->
                     <ImageView
                         android:id="@+id/btn_power_clear"
-                        android:layout_width="34dp"
-                        android:layout_height="34dp"
-                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:layout_marginEnd="5dp"
+                        android:background="@drawable/bg_power_icon_circle_badge"
                         android:clickable="true"
-                        android:contentDescription="@string/clear_all"
+                        android:contentDescription="@string/power_stats_reset_btn"
                         android:focusable="true"
-                        android:padding="5dp"
-                        android:src="@drawable/ic_delete"
+                        android:padding="5.5dp"
+                        android:src="@drawable/ic_power_reset_sync"
                         app:tint="?android:attr/textColorPrimary" />
                 </LinearLayout>
             </LinearLayout>

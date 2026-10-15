@@ -96,6 +96,7 @@
     <string name="dialog_power_reset_current_level">Current Level</string>
     <string name="dialog_power_reset_current_mode">Tracking Mode</string>
     <string name="dialog_power_reset_recorded_time">Recorded Time</string>
+    <string name="power_stats_reset_btn">Reset Stats</string>
 
     <!-- Comprehensive Power Stats Guide Dialog -->
     <string name="power_guide_stats_dialog_title">Power Statistics &amp; Metrics Guide</string>

@@ -96,6 +96,7 @@
     <string name="dialog_power_reset_current_level">当前电量</string>
     <string name="dialog_power_reset_current_mode">统计模式</string>
     <string name="dialog_power_reset_recorded_time">记录时长</string>
+    <string name="power_stats_reset_btn">重置统计</string>
 
     <!-- 耗电统计综合说明弹窗 -->
     <string name="power_guide_stats_dialog_title">耗电统计与指标说明</string>

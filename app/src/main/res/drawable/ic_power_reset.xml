@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="20dp"
+    android:height="20dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 重置统计图标：与问号、闪电、折线完全一致的同心圆环外圈（描边厚度 2dp） -->
+    <path
+        android:fillColor="?android:attr/textColorPrimary"
+        android:pathData="M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zm0,18c-4.41,0 -8,-3.59 -8,-8s3.59,-8 8,-8 8,3.59 8,8 -3.59,8 -8,8z" />
+    <!-- 居中逆时针重置回旋箭头（经比例精确缩放，视觉体量与闪电、折线高度平衡） -->
+    <group
+        android:pivotX="12"
+        android:pivotY="12"
+        android:scaleX="0.68"
+        android:scaleY="0.68">
+        <path
+            android:fillColor="?android:attr/textColorPrimary"
+            android:pathData="M12,5V1L7,6l5,5V7c3.31,0 6,2.69 6,6s-2.69,6 -6,6 -6,-2.69 -6,-6H4c0,4.42 3.58,8 8,8s8,-3.58 8,-8 -3.58,-8 -8,-8z" />
+    </group>
+</vector>
