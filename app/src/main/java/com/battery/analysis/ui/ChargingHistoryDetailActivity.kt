@@ -1,5 +1,6 @@
 package com.battery.analysis.ui
 
+import android.content.Context
 import android.os.Bundle
 import android.view.View
 import androidx.appcompat.app.AlertDialog
@@ -13,6 +14,8 @@ import com.battery.analysis.databinding.ActivityChargingHistoryDetailBinding
 import com.battery.analysis.db.ChargingHistoryDbHelper
 import com.battery.analysis.manager.PowerUsageManager
 import com.battery.analysis.model.ChargingHistoryRecord
+import com.battery.analysis.model.PowerDisplayUnit
+import com.battery.analysis.util.BatteryEnergyCalculator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -141,10 +144,12 @@ class ChargingHistoryDetailActivity : AppCompatActivity() {
         val sign = if (record.levelGain >= 0) "+${record.levelGain}%" else "${record.levelGain}%"
         binding.tvLevelChange.text = "${record.startLevel}% → ${record.endLevel}% ($sign)"
 
-        binding.tvChargedEnergy.text = String.format(
-            Locale.getDefault(),
-            "+%.2f Wh",
-            record.chargedEnergyWh
+        val prefs = getSharedPreferences(PowerDisplayUnit.PREFS_NAME, Context.MODE_PRIVATE)
+        val unit = PowerDisplayUnit.fromId(prefs.getInt(PowerDisplayUnit.PREF_KEY_POWER_DISPLAY_UNIT, PowerDisplayUnit.WH.id))
+
+        binding.tvChargedEnergy.text = BatteryEnergyCalculator.formatChargingDetailEnergy(
+            record.chargedEnergyWh,
+            unit
         )
 
         binding.tvAvgPower.text = String.format(
@@ -173,10 +178,9 @@ class ChargingHistoryDetailActivity : AppCompatActivity() {
             binding.layoutScreenOffSpecial.visibility = View.VISIBLE
             val screenOffSign = if (record.screenOffLevelGain >= 0) "+${record.screenOffLevelGain}%" else "${record.screenOffLevelGain}%"
             binding.tvScreenOffLevelGain.text = screenOffSign
-            binding.tvScreenOffEnergy.text = String.format(
-                Locale.getDefault(),
-                "+%.2f Wh",
-                record.screenOffEnergyWh
+            binding.tvScreenOffEnergy.text = BatteryEnergyCalculator.formatChargingDetailEnergy(
+                record.screenOffEnergyWh,
+                unit
             )
         } else {
             binding.layoutScreenOffSpecial.visibility = View.GONE

@@ -356,6 +356,8 @@
     <string name="floating_horizontal_align_left">Left</string>
     <string name="floating_horizontal_align_center">Center</string>
     <string name="floating_horizontal_align_right">Right</string>
+    <string name="floating_horizontal_align_center_left">Center Left %d px</string>
+    <string name="floating_horizontal_align_center_right">Center Right %d px</string>
     <string name="floating_opacity">Opacity</string>
     <string name="floating_opacity_format">%d%%</string>
     <string name="floating_theme_mode">Theme Appearance</string>
@@ -364,6 +366,10 @@
     <string name="floating_theme_light">Light Translucent</string>
     <string name="floating_font_size">Font Size</string>
     <string name="floating_font_size_desc">Adjust text size of power and temperature</string>
+    <string name="floating_show_unit">Display Units</string>
+    <string name="floating_show_unit_desc">Show unit symbols (W, ℃) after power and temperature</string>
+    <string name="floating_show_background">Display Background &amp; Border</string>
+    <string name="floating_show_background_desc">Turn off for a transparent look, keeping only text and icons</string>
     <string name="floating_step_minus">Step Decrease</string>
     <string name="floating_step_plus">Step Increase</string>
     <string name="floating_permission_dialog_title">Overlay Permission Required</string>

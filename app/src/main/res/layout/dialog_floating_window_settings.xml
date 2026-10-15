@@ -383,7 +383,57 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- 4. 透明度设置卡片 -->
+        <!-- 4. 是否显示单位设置卡片 -->
+        <LinearLayout
+            android:id="@+id/layout_floating_show_unit"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_dialog_card"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="8dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/floating_show_unit"
+                    android:textColor="?android:attr/textColorPrimary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:text="@string/floating_show_unit_desc"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="11.5sp" />
+            </LinearLayout>
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/switch_show_unit"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:scaleX="0.8"
+                android:scaleY="0.8"
+                app:thumbTint="@color/selector_switch_thumb"
+                app:trackDecorationTint="@color/selector_switch_track_outline"
+                app:trackTint="@color/selector_switch_track" />
+        </LinearLayout>
+
+        <!-- 5. 透明度设置卡片 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -428,7 +478,57 @@
                 android:progress="85" />
         </LinearLayout>
 
-        <!-- 5. 主题明暗对应卡片 (精简为横向胶囊切换器) -->
+        <!-- 6. 是否显示背景和边框设置卡片 -->
+        <LinearLayout
+            android:id="@+id/layout_floating_show_background"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_dialog_card"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="8dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/floating_show_background"
+                    android:textColor="?android:attr/textColorPrimary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:text="@string/floating_show_background_desc"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="11.5sp" />
+            </LinearLayout>
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/switch_show_background"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:scaleX="0.8"
+                android:scaleY="0.8"
+                app:thumbTint="@color/selector_switch_thumb"
+                app:trackDecorationTint="@color/selector_switch_track_outline"
+                app:trackTint="@color/selector_switch_track" />
+        </LinearLayout>
+
+        <!-- 7. 主题明暗对应卡片 (精简为横向胶囊切换器) -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

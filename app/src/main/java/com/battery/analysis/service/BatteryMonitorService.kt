@@ -109,7 +109,7 @@ class BatteryMonitorService : Service() {
     @Volatile
     private var lastScreenOffVoltageVolts: Float = 0f
 
-    /** 当前前台服务是否正挂载在静默渠道 [CHANNEL_ID_SILENT] 上的状态标识 */
+    /** 当前前台服务是否正挂载在静默渠道 [CHANNEL_ID_SILENT] 呈现“电池后台静默监控”的状态标识 */
     @Volatile
     private var isSilentNotificationActive: Boolean = false
 
@@ -339,8 +339,9 @@ class BatteryMonitorService : Service() {
                             pluggedRaw > 0)
                     cachedIsCharging = newIsCharging
 
-                    // 极致省电：仅亮屏时刷新通知，息屏直接跳过
-                    updateNotification(force = false)
+                    // 核心逻辑：系统电池广播触发频率不可控且未采集硬件放电功率，
+                    // 绝不在此处刷新通知栏，避免打乱通知栏采样节奏导致更新忽快忽慢。
+                    // 常驻通知栏数据严格由后台采样服务生成的真实物理数据驱动更新。
 
                     val isInteractive = cachedIsInteractive
                     val screenOffInterval = getScreenOffIntervalMs(appContext)
@@ -473,6 +474,7 @@ class BatteryMonitorService : Service() {
         syncInstantBatteryStatus()
 
         // 1. 无条件第一步调用 startForeground 履行系统前台服务契约，杜绝任何提早退出导致的超时崩溃
+        // 若开启常驻通知栏显示，挂载实时监控卡片；若关闭，挂载静默渠道通知“电池后台静默监控”，绝对不降级、不停止采样服务
         val isDisplayEnabled = isNotificationDisplayEnabled(this)
         val initialNotification = if (isDisplayEnabled) {
             buildNotification(CHANNEL_ID)
@@ -482,7 +484,7 @@ class BatteryMonitorService : Service() {
         safeStartForeground(initialNotification)
         isSilentNotificationActive = !isDisplayEnabled
 
-        // 2. 履约后检查业务守卫：若未开启充放电统计或无需运行，安全退出
+        // 2. 履约后检查业务守卫：若无需运行，安全退出
         if (!shouldServiceRun(this)) {
             stopForeground(STOP_FOREGROUND_REMOVE)
             notificationManager.cancel(NOTIFICATION_ID)
@@ -551,7 +553,7 @@ class BatteryMonitorService : Service() {
         safeStartForeground(notification)
         isSilentNotificationActive = !isDisplayEnabled
 
-        // 2. 检查业务守卫：若未开启充放电统计或无需运行，安全退出
+        // 2. 检查业务守卫：若无需运行，安全退出
         if (!shouldServiceRun(this)) {
             stopForeground(STOP_FOREGROUND_REMOVE)
             notificationManager.cancel(NOTIFICATION_ID)
@@ -704,10 +706,10 @@ class BatteryMonitorService : Service() {
      * 1. 充电中：每周期采集瞬时充电轨迹数据点，持续更新功率走势；
      * 2. 放电中：根据亮屏/息屏配置间隔周期性采集温度与瞬时放电功耗；
      * 3. 智能省电：息屏且非充电状态下若配置为智能省电（0L），退出轮询协程，完全释放 CPU 休眠；
-     * 4. 亮屏/息屏不采样：若对应模式配置为不采样（-1L），则跳过该状态下的放电数据采样。
-     *
-     * 优化：[screenOnInterval] 和 [screenOffInterval] 在协程启动前读取一次，
-     * 循环内不重复读取 SharedPreferences，配置变更时外部会重启本协程以载入新值。
+     * 4. 亮屏/息屏不采样：若对应模式配置为不采样（-1L），则跳过该状态下的放电数据采样；
+     * 5. 绝对时钟步进与防连击保护：基于绝对时间戳锚点推进循环节拍，
+     *    在硬件采样就绪瞬间第一时间将数据派发给悬浮窗，消除前台包名探测和通知栏重载的串行拖累；
+     *    并在系统偶发卡顿超时后跳过落后节拍并设置平滑防抖窗口，彻底杜绝悬浮窗瞬间连跳两次的“忽快忽慢”现象。
      */
     private fun startMonitorSamplingLoop() {
         monitorSamplingJob?.cancel()
@@ -719,6 +721,9 @@ class BatteryMonitorService : Service() {
             // 配置变更时调用 startMonitorSamplingLoop() 会取消并重建本协程，无需内循环轮询配置。
             val screenOnInterval = getScreenOnIntervalMs(applicationContext)
             val screenOffInterval = getScreenOffIntervalMs(applicationContext)
+
+            // 绝对时钟节拍锚点时间戳（SystemClock.elapsedRealtime 毫秒）
+            var nextTickRealtime = SystemClock.elapsedRealtime()
 
             while (isActive) {
                 val isCharging = cachedIsCharging
@@ -734,7 +739,10 @@ class BatteryMonitorService : Service() {
                     break
                 }
 
-                val loopStartRealtime = SystemClock.elapsedRealtime()
+                val targetInterval = if (isInteractive) screenOnInterval else screenOffInterval
+                if (targetInterval <= 0L) {
+                    break
+                }
 
                 val shouldSample = if (isInteractive) {
                     screenOnInterval != INTERVAL_NEVER
@@ -745,16 +753,29 @@ class BatteryMonitorService : Service() {
                 if (shouldSample) {
                     try {
                         if (isCharging) {
-                            chargingManager.sampleCurrentPoint()
-                            val curPower = chargingManager.getSamplePoints().lastOrNull()?.powerWatts
+                            val samplePoint = chargingManager.sampleCurrentPoint()
+                            val curPower = samplePoint.powerWatts
+                            val curVolt = samplePoint.voltageVolts
+                            val curTemp = samplePoint.temperature
+                            cachedVoltageVolts = curVolt
+                            cachedTemperature = curTemp
+                            cachedLevelPercent = samplePoint.batteryLevel
+
+                            // 极速直通悬浮窗：第一时间将最新硬件功率与温度派发至悬浮窗 UI，零阻塞
                             if (com.battery.analysis.manager.FloatingWindowManager.isFloatingEnabled(this@BatteryMonitorService)) {
                                 com.battery.analysis.manager.FloatingWindowManager.updateData(
                                     this@BatteryMonitorService,
                                     curPower,
-                                    cachedTemperature
+                                    curTemp
                                 )
                             }
+
+                            // 随后更新系统常驻通知栏
+                            if (isInteractive && isNotificationDisplayEnabled(this@BatteryMonitorService)) {
+                                updateNotificationWithSample(curPower, curVolt, curTemp)
+                            }
                         } else {
+                            // 1. 优先极速采集硬件放电瞬态物理指标（微秒级 JNI/BatteryManager 直读）
                             val hwSample = SysfsBatterySampler.sampleHardwareDischarge(
                                 context = this@BatteryMonitorService,
                                 fallbackVoltageVolts = cachedVoltageVolts,
@@ -764,7 +785,6 @@ class BatteryMonitorService : Service() {
                             val pWatts = hwSample?.powerWatts ?: 0f
                             val currentVolt = hwSample?.voltageVolts ?: cachedVoltageVolts
                             val currentTemp = hwSample?.temperatureCelsius ?: cachedTemperature
-                            val currentPkg = if (isInteractive) getForegroundPackageName() else null
 
                             // 同步刷新本地缓存
                             if (hwSample?.voltageVolts != null) cachedVoltageVolts = currentVolt
@@ -778,6 +798,8 @@ class BatteryMonitorService : Service() {
                                 cachedDischargePowerWatts = pWatts
                             }
 
+                            // 2. 极速直通悬浮窗：在执行任何可能产生跨进程延迟的前台包名探测或通知栏更新前，
+                            // 第一时间直接驱动桌面悬浮窗刷新，保证视觉更新严格对齐时钟节拍
                             if (com.battery.analysis.manager.FloatingWindowManager.isFloatingEnabled(this@BatteryMonitorService)) {
                                 com.battery.analysis.manager.FloatingWindowManager.updateData(
                                     this@BatteryMonitorService,
@@ -786,6 +808,15 @@ class BatteryMonitorService : Service() {
                                 )
                             }
 
+                            // 3. 在悬浮窗已刷新完毕后，再进行前台应用包名探测，绝不拖累悬浮窗
+                            val currentPkg = if (isInteractive) getForegroundPackageName() else null
+
+                            // 4. 严格跟随放电采样服务数据同步更新常驻通知栏
+                            if (isInteractive && isNotificationDisplayEnabled(this@BatteryMonitorService)) {
+                                updateNotificationWithSample(pWatts, currentVolt, currentTemp)
+                            }
+
+                            // 5. 记录放电瞬时采样点并进行梯形积分累加
                             powerManager.recordDischargeRealtimeSample(
                                 timestamp = System.currentTimeMillis(),
                                 batteryLevel = cachedLevelPercent,
@@ -801,17 +832,25 @@ class BatteryMonitorService : Service() {
                     }
                 }
 
-                // 息屏期间自动跳过通知刷新，亮屏期间才刷新
-                updateNotification(force = false)
-
-                // 严格依据当前屏幕状态所配置的真实采样间隔休眠，若为不采样则退出协程
-                val targetInterval = if (isInteractive) screenOnInterval else screenOffInterval
-                if (targetInterval <= 0L) {
-                    break
+                // 绝对时钟节拍调度推进算法（Fixed-Interval Ticker）
+                val nowRealtime = SystemClock.elapsedRealtime()
+                if (nextTickRealtime <= 0L || nextTickRealtime < nowRealtime - targetInterval * 2) {
+                    nextTickRealtime = nowRealtime + targetInterval
+                } else {
+                    nextTickRealtime += targetInterval
                 }
-                val costMs = SystemClock.elapsedRealtime() - loopStartRealtime
-                val sleepInterval = (targetInterval - costMs).coerceAtLeast(0L)
-                delay(sleepInterval)
+
+                var sleepMs = nextTickRealtime - SystemClock.elapsedRealtime()
+                // 防连击与防雪崩保护（Burst Protection）：
+                // 若由于系统 Binder 拥塞、低内存 GC 等异常导致单次采样耗时严重超出周期（剩余等待不足 100ms），
+                // 绝不允许 delay(0) 连击执行下一轮！直接丢弃落后帧并重新对齐到当前时钟的下一个周期，
+                // 同时保留平滑防抖最小间隔（targetInterval 的 80%），彻底根除瞬间连跳两次的忽快忽慢现象
+                val minSmoothIntervalMs = (targetInterval * 0.8f).toLong().coerceAtLeast(200L)
+                if (sleepMs < 100L) {
+                    nextTickRealtime = SystemClock.elapsedRealtime() + targetInterval
+                    sleepMs = minSmoothIntervalMs
+                }
+                delay(sleepMs.coerceAtLeast(0L))
             }
         }
     }
@@ -877,8 +916,14 @@ class BatteryMonitorService : Service() {
         }
 
         val now = System.currentTimeMillis()
-        if (now - lastForegroundQueryTime < FOREGROUND_CACHE_EXPIRE_MS && lastKnownForegroundPackage != null && lastKnownForegroundPackage != packageName) {
-            return lastKnownForegroundPackage
+        if (now - lastForegroundQueryTime < FOREGROUND_CACHE_EXPIRE_MS) {
+            if (lastKnownForegroundPackage != null && lastKnownForegroundPackage != packageName) {
+                return lastKnownForegroundPackage
+            } else if (lastKnownForegroundPackage == null) {
+                // 在 2 秒短缓存窗口内保持已知空态（如处于桌面启动器或未探知状态），
+                // 彻底杜绝在桌面停留期间每秒重复触发 UsageStatsManager.queryEvents 30 秒大窗口跨进程遍历
+                return null
+            }
         }
         lastForegroundQueryTime = now
 
@@ -1019,17 +1064,18 @@ class BatteryMonitorService : Service() {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
-            .setPriority(if (channelId == CHANNEL_ID_SILENT) NotificationCompat.PRIORITY_MIN else NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(pendingIntent)
             .build()
     }
 
     /**
      * 构建后台静默前台通知对象。
-     * 当用户关闭常驻通知栏展示时使用，挂载至最低重要度渠道 [CHANNEL_ID_SILENT]（[NotificationManager.IMPORTANCE_MIN]），
-     * 状态栏不显示小图标、无声音、无震动且折叠于系统静默通知区域，既履行前台服务契约保持最高保活优先级，又杜绝打扰用户。
+     * 当用户关闭常驻通知栏展示时使用，挂载至最低重要度静默渠道 [CHANNEL_ID_SILENT]（[NotificationManager.IMPORTANCE_MIN]），
+     * 明确展示标题为“电池后台静默监控”，内容为“后台电池监控静默运行中”，
+     * 既履行系统前台服务契约保持最高保活特权且绝对不降级、不停止后台采样服务，又折叠于系统静默通知区域不打扰用户。
      *
-     * @return 静默极简前台系统通知对象
+     * @return 静默前台系统通知对象 [Notification]
      */
     private fun buildSilentNotification(): Notification {
         val pendingIntent = cachedNotificationPendingIntent ?: PendingIntent.getActivity(
@@ -1054,11 +1100,74 @@ class BatteryMonitorService : Service() {
     }
 
     /**
-     * 刷新并推送最新的电池状态通知至系统通知栏。
-     * 无论应用处于前台还是后台运行，均严格根据用户设置的刷新时间间隔周期性更新通知栏内容；
-     * 若用户关闭通知栏常驻显示，则切换至静默渠道 [CHANNEL_ID_SILENT] 保持前台服务契约且不打扰用户，并跳过高频内容刷新；
-     * 若用户开启通知栏常驻显示，则挂载实时监控 Notification 并维持前台服务优先级。
-     * 具备严格的空转短路机制与内容防抖，杜绝每秒重复发起系统 Binder IPC 跨进程调用。
+     * 严格根据采样服务当次采样的真实物理数据刷新系统通知栏。
+     * 杜绝轮询与随机异步广播干扰，完全由底层采样协程产生的新物理采样点就地触发，确保通知栏刷新频率与采样服务严格对齐一致。
+     * 若用户关闭了常驻通知栏展示，则维持静默渠道通知“电池后台静默监控”以履行前台保活特权，且不执行高频界面刷新。
+     *
+     * @param powerWatts 采样服务测得的瞬时充放电功率（单位：W）
+     * @param voltageVolts 采样服务测得的端电压（单位：V）
+     * @param tempCelsius 采样服务测得的电池温度（单位：℃）
+     */
+    fun updateNotificationWithSample(
+        powerWatts: Float?,
+        voltageVolts: Float,
+        tempCelsius: Float
+    ) {
+        try {
+            val isDisplayEnabled = isNotificationDisplayEnabled(this)
+            if (!isDisplayEnabled) {
+                if (!isSilentNotificationActive) {
+                    val silentNotification = buildSilentNotification()
+                    safeStartForeground(silentNotification)
+                    notificationManager.notify(NOTIFICATION_ID, silentNotification)
+                    isSilentNotificationActive = true
+                    lastNotifiedContent = null
+                }
+                return
+            }
+            if (!cachedIsInteractive) {
+                return
+            }
+
+            val isCharging = cachedIsCharging
+            val powerStr = if (powerWatts != null && abs(powerWatts) > 0.05f) {
+                if (isCharging) {
+                    if (powerWatts > 0f) {
+                        String.format(Locale.getDefault(), "%.1fW", powerWatts)
+                    } else {
+                        String.format(Locale.getDefault(), "-%.1fW", abs(powerWatts))
+                    }
+                } else {
+                    String.format(Locale.getDefault(), "-%.1fW", abs(powerWatts))
+                }
+            } else if (isCharging) {
+                "0.0W"
+            } else {
+                "--W"
+            }
+
+            val voltStr = String.format(Locale.getDefault(), "%.2fV", voltageVolts)
+            val tempStr = String.format(Locale.getDefault(), "%.1f℃", tempCelsius)
+            val singleLineInfo = "$powerStr | $voltStr | $tempStr"
+            if (singleLineInfo == lastNotifiedContent && !isSilentNotificationActive) {
+                return
+            }
+            cachedSingleLineInfo = singleLineInfo
+            lastNotifiedContent = singleLineInfo
+            lastNotifiedTime = SystemClock.elapsedRealtime()
+
+            val notification = buildNotification(CHANNEL_ID, singleLineInfo)
+            safeStartForeground(notification)
+            notificationManager.notify(NOTIFICATION_ID, notification)
+            isSilentNotificationActive = false
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * 刷新并推送电池状态通知至系统通知栏。
+     * 当用户开启常驻通知栏时，挂载实时监控通知卡片并由采样服务真实数据驱动刷新；
+     * 当用户关闭常驻通知栏时，挂载至静默渠道 [CHANNEL_ID_SILENT] 呈现“电池后台静默监控”，
+     * 严格履行前台服务保活契约，保持最高保活特权，绝对不降级且不停止后台采样服务。
      *
      * @param force 是否强制触发系统通知栏刷新（如点亮屏幕瞬间或切换开关配置后）
      */
@@ -1066,8 +1175,6 @@ class BatteryMonitorService : Service() {
         try {
             val isDisplayEnabled = isNotificationDisplayEnabled(this)
             if (!isDisplayEnabled) {
-                // 若处于关闭常驻显示状态：如果当前尚未切换为静默前台通知，或为强制刷新，则挂载一次静默通知以保持前台服务契约
-                // 后续所有常规采样循环直接短路 return，杜绝高频 Binder IPC 与 CPU 唤醒
                 if (!isSilentNotificationActive || force) {
                     val silentNotification = buildSilentNotification()
                     safeStartForeground(silentNotification)
@@ -1078,23 +1185,13 @@ class BatteryMonitorService : Service() {
                 return
             }
 
-            // 用户开启了常驻通知栏显示：从静默状态切回或内容有变时更新
-            // 优化：直接使用内存缓存的屏幕交互状态，消除 pm.isInteractive 的跨进程 Binder IPC 开销
             if (!cachedIsInteractive && !force) {
                 return
             }
 
             val singleLineInfo = computeSingleLineInfo()
-            val now = SystemClock.elapsedRealtime()
-            // 非强制刷新且当前已是显示模式：同时校验内容是否变化与 500ms 最小推送间隔，双重节流消除高频无意义 IPC 唤醒 SystemUI
-            if (!force && !isSilentNotificationActive && singleLineInfo == lastNotifiedContent) {
-                return
-            }
-            if (!force && !isSilentNotificationActive && (now - lastNotifiedTime) < 500L) {
-                return
-            }
             lastNotifiedContent = singleLineInfo
-            lastNotifiedTime = now
+            lastNotifiedTime = SystemClock.elapsedRealtime()
 
             val notification = buildNotification(CHANNEL_ID, singleLineInfo)
             safeStartForeground(notification)
@@ -1279,6 +1376,32 @@ class BatteryMonitorService : Service() {
         fun isServiceActive(): Boolean = isServiceActive
 
         /**
+         * 获取当前后台服务内存中缓存的最新瞬时放电/充电物理功率（瓦特 W）。
+         * 忠实反映服务最新采样的底层硬件数据，无数据时返回 null。
+         *
+         * @return 瞬时充放电功率（瓦特 W），若服务未运行或尚未采样则返回 null
+         */
+        fun getLatestCachedPowerWatts(): Float? {
+            val service = activeServiceRef?.get() ?: return null
+            return if (service.cachedIsCharging) {
+                ChargingStatsManager.getInstance(service.applicationContext).getSamplePoints().lastOrNull()?.powerWatts
+            } else {
+                service.cachedDischargePowerWatts
+            }
+        }
+
+        /**
+         * 获取当前后台服务内存中缓存的最新电池温度（摄氏度 ℃）。
+         * 忠实反映服务最新采样的底层硬件数据，无数据时返回 null。
+         *
+         * @return 瞬时电池温度（摄氏度 ℃），若服务未运行或无数据则返回 null
+         */
+        fun getLatestCachedTemperature(): Float? {
+            val service = activeServiceRef?.get() ?: return null
+            return if (service.cachedTemperature > 0f) service.cachedTemperature else null
+        }
+
+        /**
          * 获取用户是否在设置中开启了充、放电统计功能（默认关闭）。
          *
          * @param context 应用程序上下文
@@ -1302,13 +1425,16 @@ class BatteryMonitorService : Service() {
 
         /**
          * 动态通知正在运行的后台服务更新常驻通知栏的显示状态。
-         * 若用户关闭显示，服务将切换至静默渠道以继续保持前台服务保活特权；
-         * 若用户开启显示，服务将挂起前台实时通知进行展示并恢复高频刷新。
+         * 若用户关闭显示，挂载至静默渠道 [CHANNEL_ID_SILENT] 并呈现“电池后台静默监控”，
+         * 严格履行前台保活契约，保持最高保活特权，绝对不降级且不停止后台采样服务；
+         * 若用户开启显示，挂载实时监控通知卡片并由采样服务真实数据驱动刷新。
          *
          * @param context 应用程序上下文
          */
         fun updateNotificationVisibility(context: Context) {
-            if (!shouldServiceRun(context)) {
+            val service = activeServiceRef?.get()
+            if (service != null) {
+                service.updateNotification(force = true)
                 return
             }
             val intent = Intent(context, BatteryMonitorService::class.java).apply {
@@ -1347,19 +1473,30 @@ class BatteryMonitorService : Service() {
 
         /**
          * 判断后台电池监控服务当前是否应该开启运行。
-         * 必须在用户开启了“启用充、放电统计”开关的前提下，且亮屏监控或息屏待机中开启了任意一项采样（!= INTERVAL_NEVER），才允许运行服务；
-         * 若充、放电统计开关处于关闭状态，或亮屏与息屏均配置为不采样（== INTERVAL_NEVER），则绝不开启服务。
+         * 满足以下任一条件时允许运行服务：
+         * 1. 用户开启了桌面悬浮窗显示，必须依靠后台服务作为唯一采样数据源；
+         * 2. 后台服务处于启用状态（[isServiceEnabled] 默认开启，保持前台服务契约与后台采样）；
+         * 3. 用户开启了“启用充、放电统计”开关，且亮屏或息屏中开启了任意一项采样（!= INTERVAL_NEVER）。
+         * 注意：关闭常驻通知栏显示开关仅切换通知形态为“电池后台静默监控”，绝对不停止后台服务与采样。
          *
          * @param context 应用程序上下文
          * @return 若需要启动服务返回 true，否则返回 false
          */
         fun shouldServiceRun(context: Context): Boolean {
-            if (!isChargeDischargeStatsEnabled(context)) {
-                return false
+            val isFloating = com.battery.analysis.manager.FloatingWindowManager.isFloatingEnabled(context) &&
+                    com.battery.analysis.manager.FloatingWindowManager.canDrawOverlays(context)
+            if (isFloating) {
+                return true
             }
-            val onInterval = getScreenOnIntervalMs(context)
-            val offInterval = getScreenOffIntervalMs(context)
-            return onInterval != INTERVAL_NEVER || offInterval != INTERVAL_NEVER
+            if (isServiceEnabled(context)) {
+                return true
+            }
+            if (isChargeDischargeStatsEnabled(context)) {
+                val onInterval = getScreenOnIntervalMs(context)
+                val offInterval = getScreenOffIntervalMs(context)
+                return onInterval != INTERVAL_NEVER || offInterval != INTERVAL_NEVER
+            }
+            return false
         }
 
         /**
@@ -1408,12 +1545,12 @@ class BatteryMonitorService : Service() {
 
         /**
          * 启动后台电池实时监控前台服务，并标记用户配置为已开启。
-         * 若用户未开启“启用充、放电统计”开关或无需运行，则直接拦截不予启动，严格保障关闭状态下无后台监控服务运行。
+         * 仅在 [shouldServiceRun] 为 true 时启动，严格保障关闭状态下无后台监控服务运行。
          *
          * @param context 应用程序上下文
          */
         fun start(context: Context) {
-            if (!isChargeDischargeStatsEnabled(context) || !shouldServiceRun(context)) {
+            if (!shouldServiceRun(context)) {
                 return
             }
             val intent = Intent(context, BatteryMonitorService::class.java)
@@ -1443,13 +1580,14 @@ class BatteryMonitorService : Service() {
         }
 
         /**
-         * 获取用户是否配置了开启后台常驻服务（兼容旧接口，等价于 shouldServiceRun 且充放电统计开关已开启）。
+         * 获取用户是否配置了开启后台常驻服务。
          *
          * @param context 应用程序上下文
-         * @return 若需要运行返回 true，否则返回 false
+         * @return 若后台常驻监控已启用返回 true，否则返回 false（默认 true 以保证后台采样与保活）
          */
         fun isServiceEnabled(context: Context): Boolean {
-            return isChargeDischargeStatsEnabled(context) && shouldServiceRun(context)
+            val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            return prefs.getBoolean(KEY_SERVICE_ENABLED, true)
         }
 
         /**

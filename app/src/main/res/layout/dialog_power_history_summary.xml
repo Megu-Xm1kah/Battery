@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
+    android:layout_height="match_parent"
     android:background="@drawable/bg_dialog_surface"
     android:clipToOutline="true"
     android:gravity="center_horizontal"
@@ -47,12 +47,26 @@
         android:textSize="12.5sp"
         tools:text="📊 统计范围：共 85 条放电记录 · 累计掉电 -1097%" />
 
-    <!-- 核心表格对比卡片容器（加宽并四列均分，单位前置于指标栏统一标注） -->
-    <LinearLayout
+    <!-- 滚动内容区 -->
+    <androidx.core.widget.NestedScrollView
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:background="@drawable/bg_dialog_card"
+        android:layout_height="0dp"
+        android:layout_marginTop="10dp"
+        android:layout_weight="1"
+        android:fillViewport="true"
+        android:overScrollMode="never">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- 核心表格对比卡片容器（加宽并四列均分，单位前置于指标栏统一标注） -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:background="@drawable/bg_dialog_card"
         android:orientation="vertical"
         android:paddingHorizontal="4dp"
         android:paddingVertical="8dp">
@@ -499,6 +513,9 @@
             android:textColor="?android:attr/textColorSecondary"
             android:textSize="11.5sp" />
     </LinearLayout>
+
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
 
     <!-- 底部确认按钮 -->
     <TextView

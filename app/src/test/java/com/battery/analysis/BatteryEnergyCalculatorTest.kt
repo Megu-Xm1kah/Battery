@@ -464,4 +464,140 @@ class BatteryEnergyCalculatorTest {
         assertEquals("息屏常量严格为1", 1, BatteryEnergyCalculator.ROW_SCREEN_OFF)
         assertEquals("全局常量严格为2", 2, BatteryEnergyCalculator.ROW_GLOBAL)
     }
+
+    /**
+     * 测试 formatDisplayEnergy 在 Wh 模式下的精确格式化、微弱量化保护与空值处理。
+     */
+    @Test
+    fun testFormatDisplayEnergyWhMode() {
+        // 常规数值保留 3 位小数
+        val normal = BatteryEnergyCalculator.formatDisplayEnergy(0.25f, com.battery.analysis.model.PowerDisplayUnit.WH)
+        assertEquals("0.250Wh", normal)
+
+        // 微量能耗展示 <0.001Wh
+        val micro = BatteryEnergyCalculator.formatDisplayEnergy(0.0003f, com.battery.analysis.model.PowerDisplayUnit.WH)
+        assertEquals("<0.001Wh", micro)
+
+        // 极微底噪或 0 消耗展示 --
+        val zero = BatteryEnergyCalculator.formatDisplayEnergy(0f, com.battery.analysis.model.PowerDisplayUnit.WH)
+        assertEquals("--", zero)
+    }
+
+    /**
+     * 测试 formatDisplayEnergy 在 mAh 模式下基于 3.85V 标称电压的换算精度、微小值保护与空值处理。
+     */
+    @Test
+    fun testFormatDisplayEnergyMahMode() {
+        // 0.25Wh / 3.85V * 1000 = 64.935mAh -> 格式化保留 1 位小数 64.9mAh
+        val normal = BatteryEnergyCalculator.formatDisplayEnergy(0.25f, com.battery.analysis.model.PowerDisplayUnit.MAH, 3.85f)
+        assertEquals("64.9mAh", normal)
+
+        // 微量电量（如 0.0001Wh 对应约 0.026mAh）展示 <0.1mAh
+        val micro = BatteryEnergyCalculator.formatDisplayEnergy(0.0001f, com.battery.analysis.model.PowerDisplayUnit.MAH, 3.85f)
+        assertEquals("<0.1mAh", micro)
+
+        // 无效值或 0 消耗展示 --
+        val zero = BatteryEnergyCalculator.formatDisplayEnergy(0f, com.battery.analysis.model.PowerDisplayUnit.MAH, 3.85f)
+        assertEquals("--", zero)
+    }
+
+    /**
+     * 测试 formatDisplayEnergy 在接收非法负数或 NaN 时的防御性处理。
+     */
+    @Test
+    fun testFormatDisplayEnergyInvalidValues() {
+        val negative = BatteryEnergyCalculator.formatDisplayEnergy(-0.5f, com.battery.analysis.model.PowerDisplayUnit.WH)
+        assertEquals("--", negative)
+
+        val nanVal = BatteryEnergyCalculator.formatDisplayEnergy(Float.NaN, com.battery.analysis.model.PowerDisplayUnit.MAH)
+        assertEquals("--", nanVal)
+    }
+
+    /**
+     * 测试单位切换科学原理说明文案的完整性与专业物理基准依据。
+     */
+    @Test
+    fun testUnitSwitchExplanation() {
+        val (mahTitle, mahMsg) = BatteryEnergyCalculator.getUnitSwitchExplanation(com.battery.analysis.model.PowerDisplayUnit.MAH, 3.85f)
+        assertTrue("标题包含毫安时", mahTitle.contains("毫安时"))
+        assertTrue("内容包含标称电压换算", mahMsg.contains("3.85V"))
+        assertTrue("内容包含电荷量定义", mahMsg.contains("电荷量"))
+
+        val (whTitle, whMsg) = BatteryEnergyCalculator.getUnitSwitchExplanation(com.battery.analysis.model.PowerDisplayUnit.WH)
+        assertTrue("标题包含瓦时", whTitle.contains("瓦时"))
+        assertTrue("内容包含能量做功定义", whMsg.contains("做功"))
+    }
+
+    /**
+     * 测试单位切换结构化弹窗内容模型生成与关键字段校验。
+     */
+    @Test
+    fun testUnitSwitchDialogContent() {
+        val mahContent = BatteryEnergyCalculator.getUnitSwitchDialogContent(com.battery.analysis.model.PowerDisplayUnit.MAH, 3.85f)
+        assertTrue("标题包含毫安时", mahContent.title.contains("毫安时"))
+        assertTrue("公式包含换算表达式", mahContent.formula.contains("3.85V"))
+        assertTrue("定义包含电荷量", mahContent.definition.contains("电荷量"))
+        assertTrue("依据包含物理守恒", mahContent.science.contains("守恒"))
+
+        val whContent = BatteryEnergyCalculator.getUnitSwitchDialogContent(com.battery.analysis.model.PowerDisplayUnit.WH, 3.85f)
+        assertTrue("标题包含瓦时", whContent.title.contains("瓦时"))
+        assertTrue("定义包含能量物理单位", whContent.definition.contains("能量"))
+        assertTrue("依据包含消除电压平台差异", whContent.science.contains("基准单位"))
+    }
+
+    /**
+     * 测试充电主界面充入能量（formatChargingGainEnergy）在 Wh 与 mAh 模式下的格式化。
+     */
+    @Test
+    fun testFormatChargingGainEnergy() {
+        // Wh 模式：保留 1 位小数 + 符号
+        val whStr = BatteryEnergyCalculator.formatChargingGainEnergy(0.53f, com.battery.analysis.model.PowerDisplayUnit.WH)
+        assertEquals("+0.5Wh", whStr)
+
+        // mAh 模式：0.53Wh / 3.85V * 1000 ≈ 137.66 -> +138mAh
+        val mahStr = BatteryEnergyCalculator.formatChargingGainEnergy(0.53f, com.battery.analysis.model.PowerDisplayUnit.MAH, 3.85f)
+        assertEquals("+138mAh", mahStr)
+    }
+
+    /**
+     * 测试充电详情页充入能量（formatChargingDetailEnergy）在 Wh 与 mAh 模式下的格式化。
+     */
+    @Test
+    fun testFormatChargingDetailEnergy() {
+        // Wh 模式：保留 2 位小数
+        val whStr = BatteryEnergyCalculator.formatChargingDetailEnergy(6.85f, com.battery.analysis.model.PowerDisplayUnit.WH)
+        assertEquals("+6.85 Wh", whStr)
+
+        // mAh 模式：6.85Wh / 3.85V * 1000 ≈ 1779.22 -> +1779 mAh
+        val mahStr = BatteryEnergyCalculator.formatChargingDetailEnergy(6.85f, com.battery.analysis.model.PowerDisplayUnit.MAH, 3.85f)
+        assertEquals("+1779 mAh", mahStr)
+    }
+
+    /**
+     * 测试历史详情页总能耗大字（formatHistoryDetailOverviewEnergy）在 Wh 与 mAh 模式下的格式化。
+     */
+    @Test
+    fun testFormatHistoryDetailOverviewEnergy() {
+        // Wh 模式：保留 1 位小数
+        val whStr = BatteryEnergyCalculator.formatHistoryDetailOverviewEnergy(14.23f, com.battery.analysis.model.PowerDisplayUnit.WH)
+        assertEquals("14.2 Wh", whStr)
+
+        // mAh 模式：14.23Wh / 3.85V * 1000 ≈ 3696.1 -> 3696 mAh
+        val mahStr = BatteryEnergyCalculator.formatHistoryDetailOverviewEnergy(14.23f, com.battery.analysis.model.PowerDisplayUnit.MAH, 3.85f)
+        assertEquals("3696 mAh", mahStr)
+    }
+
+    /**
+     * 测试 Wh 与 mAh 相互换算的数学精度与守恒性。
+     */
+    @Test
+    fun testConvertWhToMahAndMahToWh() {
+        val energyWh = 19.25f
+        val mah = BatteryEnergyCalculator.convertWhToMah(energyWh, 3.85f)
+        assertEquals(5000f, mah, 0.01f)
+
+        val convertedWh = BatteryEnergyCalculator.convertMahToWh(mah, 3.85f)
+        assertEquals(energyWh, convertedWh, 0.01f)
+    }
 }
+

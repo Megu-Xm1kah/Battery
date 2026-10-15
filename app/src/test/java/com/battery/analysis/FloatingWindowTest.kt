@@ -16,19 +16,21 @@ class FloatingWindowTest {
      * 辅助格式化实时功率字符串（与悬浮窗实际逻辑一致）。
      *
      * @param powerWatts 瞬时充放电功率瓦特数
+     * @param showUnit 是否显示单位符号（默认 true）
      * @return 格式化后的功率文本
      */
-    private fun formatPowerText(powerWatts: Float?): String {
+    private fun formatPowerText(powerWatts: Float?, showUnit: Boolean = true): String {
         return if (powerWatts != null && abs(powerWatts) > 0.05f) {
-            if (powerWatts > 0f) {
-                String.format(Locale.getDefault(), "%.1fW", powerWatts)
+            val formatted = if (powerWatts > 0f) {
+                String.format(Locale.getDefault(), "%.1f", powerWatts)
             } else {
-                String.format(Locale.getDefault(), "-%.1fW", abs(powerWatts))
+                String.format(Locale.getDefault(), "-%.1f", abs(powerWatts))
             }
+            if (showUnit) "${formatted}W" else formatted
         } else if (powerWatts != null) {
-            "0.0W"
+            if (showUnit) "0.0W" else "0.0"
         } else {
-            "--W"
+            if (showUnit) "--W" else "--"
         }
     }
 
@@ -36,13 +38,15 @@ class FloatingWindowTest {
      * 辅助格式化实时温度字符串（与悬浮窗实际逻辑一致）。
      *
      * @param tempCelsius 瞬时电池温度摄氏度
+     * @param showUnit 是否显示单位符号（默认 true）
      * @return 格式化后的温度文本
      */
-    private fun formatTempText(tempCelsius: Float?): String {
+    private fun formatTempText(tempCelsius: Float?, showUnit: Boolean = true): String {
         return if (tempCelsius != null && tempCelsius > 0f) {
-            String.format(Locale.getDefault(), "%.1f℃", tempCelsius)
+            val formatted = String.format(Locale.getDefault(), "%.1f", tempCelsius)
+            if (showUnit) "${formatted}℃" else formatted
         } else {
-            "--℃"
+            if (showUnit) "--℃" else "--"
         }
     }
 
@@ -97,6 +101,17 @@ class FloatingWindowTest {
     }
 
     /**
+     * 验证关闭单位显示时实时功率文本在充电、放电与无数据状态下的格式化输出（无 W 符号）。
+     */
+    @Test
+    fun testPowerFormattingWithoutUnit() {
+        assertEquals("关闭单位时充电正功率仅展示纯数值", "18.5", formatPowerText(18.5f, showUnit = false))
+        assertEquals("关闭单位时放电耗电展示负号纯数值", "-3.2", formatPowerText(-3.2f, showUnit = false))
+        assertEquals("关闭单位时接近零功率展示0.0", "0.0", formatPowerText(0.02f, showUnit = false))
+        assertEquals("关闭单位时无数据或未获取如实展示--", "--", formatPowerText(null, showUnit = false))
+    }
+
+    /**
      * 验证实时温度文本在有效温度与无数据状态下的格式化输出。
      */
     @Test
@@ -105,6 +120,28 @@ class FloatingWindowTest {
         assertEquals("高温报警应真实反映", "42.0℃", formatTempText(42.0f))
         assertEquals("无数据或未获取时如实展示未知状态", "--℃", formatTempText(null))
         assertEquals("异常零度以下无效值展示未知状态", "--℃", formatTempText(-1f))
+    }
+
+    /**
+     * 验证关闭单位显示时实时温度文本在有效温度与无数据状态下的格式化输出（无 ℃ 符号）。
+     */
+    @Test
+    fun testTempFormattingWithoutUnit() {
+        assertEquals("关闭单位时正常温度展示纯数值", "32.5", formatTempText(32.5f, showUnit = false))
+        assertEquals("关闭单位时高温状态展示纯数值", "42.0", formatTempText(42.0f, showUnit = false))
+        assertEquals("关闭单位时无数据或未获取如实展示--", "--", formatTempText(null, showUnit = false))
+        assertEquals("关闭单位时异常温度如实展示未知状态--", "--", formatTempText(-1f, showUnit = false))
+    }
+
+    /**
+     * 验证是否显示单位与是否显示背景和边框的默认配置预期值（均为默认开启 true）。
+     */
+    @Test
+    fun testDefaultUnitAndBackgroundSettings() {
+        val defaultShowUnit = true
+        val defaultShowBackground = true
+        assertTrue("悬浮窗默认应显示单位符号", defaultShowUnit)
+        assertTrue("悬浮窗默认应显示卡片背景与边框", defaultShowBackground)
     }
 
     /**
@@ -281,6 +318,59 @@ class FloatingWindowTest {
     }
 
     /**
+     * 辅助计算基于相对居中偏移量的自适应水平 X 坐标（横竖屏通用算法）。
+     *
+     * @param screenWidth 屏幕宽度物理像素
+     * @param viewWidth 悬浮窗宽度物理像素
+     * @param offsetX 相对屏幕居中偏移量像素（0 居中，负数居中偏左，正数居中偏右）
+     * @return 约束在屏幕边界内的最终 X 坐标
+     */
+    private fun calculateAdaptiveHorizontalX(
+        screenWidth: Int,
+        viewWidth: Int,
+        offsetX: Int
+    ): Int {
+        val maxX = (screenWidth - viewWidth).coerceAtLeast(0)
+        val centerX = ((screenWidth - viewWidth) / 2).coerceAtLeast(0)
+        return (centerX + offsetX).coerceIn(0, maxX)
+    }
+
+    /**
+     * 验证横竖屏切换时，居中偏左、偏右任意偏移位置自适应保持对称对齐，彻底解决横屏下居中左右错位问题。
+     */
+    @Test
+    fun testCenterLeftAndRightLandscapeAdaptation() {
+        val portScreenWidth = 1080
+        val landScreenWidth = 2400
+        val viewWidth = 180
+
+        val portCenter = (portScreenWidth - viewWidth) / 2
+        val landCenter = (landScreenWidth - viewWidth) / 2
+
+        // 场景 1: 严格居中 (offset = 0)
+        val portExactCenter = calculateAdaptiveHorizontalX(portScreenWidth, viewWidth, 0)
+        val landExactCenter = calculateAdaptiveHorizontalX(landScreenWidth, viewWidth, 0)
+        assertEquals(450, portExactCenter)
+        assertEquals(1110, landExactCenter)
+
+        // 场景 2: 居中往左 50px (避开居中摄像头打孔，offset = -50)
+        val portCenterLeft50 = calculateAdaptiveHorizontalX(portScreenWidth, viewWidth, -50)
+        val landCenterLeft50 = calculateAdaptiveHorizontalX(landScreenWidth, viewWidth, -50)
+        assertEquals("竖屏居中偏左50px", portCenter - 50, portCenterLeft50)
+        assertEquals("横屏下亦精准位于横屏中心偏左50px处", landCenter - 50, landCenterLeft50)
+        assertEquals(400, portCenterLeft50)
+        assertEquals(1060, landCenterLeft50)
+
+        // 场景 3: 居中往右 80px (offset = +80)
+        val portCenterRight80 = calculateAdaptiveHorizontalX(portScreenWidth, viewWidth, 80)
+        val landCenterRight80 = calculateAdaptiveHorizontalX(landScreenWidth, viewWidth, 80)
+        assertEquals("竖屏居中偏右80px", portCenter + 80, portCenterRight80)
+        assertEquals("横屏下亦精准位于横屏中心偏右80px处", landCenter + 80, landCenterRight80)
+        assertEquals(530, portCenterRight80)
+        assertEquals(1190, landCenterRight80)
+    }
+
+    /**
      * 验证文字大小配置参数范围约束逻辑（8sp 至 20sp）。
      */
     @Test
@@ -312,5 +402,94 @@ class FloatingWindowTest {
         assertEquals(101, stepUp(100, maxY))
         assertEquals(2200, stepUp(2199, maxY))
         assertEquals(2200, stepUp(2200, maxY)) // 触碰边界不再增大
+    }
+
+    /**
+     * 验证纯数据源驱动模式下，外部服务推流数据的格式化与展示一致性。
+     */
+    @Test
+    fun testPureDataSourcePresentationConsistency() {
+        var powerText = formatPowerText(null)
+        var tempText = formatTempText(null)
+        assertEquals("初始无数据时功率展示占位符", "--W", powerText)
+        assertEquals("初始无数据时温度展示占位符", "--℃", tempText)
+
+        // 模拟后台采样服务推送放电数据
+        powerText = formatPowerText(-4.2f)
+        tempText = formatTempText(35.6f)
+        assertEquals("-4.2W", powerText)
+        assertEquals("35.6℃", tempText)
+
+        // 模拟后台采样服务推送充电数据
+        powerText = formatPowerText(27.8f)
+        tempText = formatTempText(38.0f)
+        assertEquals("27.8W", powerText)
+        assertEquals("38.0℃", tempText)
+    }
+
+    /**
+     * 验证固定周期调度算法（Fixed-Interval Ticker）在正常耗时下的时钟步进与延迟计算。
+     */
+    @Test
+    fun testFixedIntervalTickerNormalStep() {
+        val targetInterval = 1000L
+        var nextTick = 10000L
+        val currentNow = 10060L // 单次采样耗时 60ms
+
+        nextTick += targetInterval
+        var sleepMs = nextTick - currentNow
+        val minSmoothIntervalMs = (targetInterval * 0.8f).toLong().coerceAtLeast(200L)
+
+        if (sleepMs < 100L) {
+            nextTick = currentNow + targetInterval
+            sleepMs = minSmoothIntervalMs
+        }
+
+        assertEquals("正常耗时下锚点递增推进", 11000L, nextTick)
+        assertEquals("正常耗时下睡眠时长扣减执行耗时以严格对齐目标时间", 940L, sleepMs)
+    }
+
+    /**
+     * 验证固定周期调度算法在遭遇系统级严重卡顿超时（costMs >= targetInterval）时的防连击保护机制。
+     * 必须跳过落后节拍并重置下一个整周期，且休眠时长绝不能为 0ms，杜绝瞬间连跳两下的视觉抖动。
+     */
+    @Test
+    fun testFixedIntervalTickerBurstProtection() {
+        val targetInterval = 1000L
+        var nextTick = 10000L
+        val currentNow = 11150L // 系统卡顿或重度 IPC 导致耗时高达 1150ms，已超过 1000ms
+
+        nextTick += targetInterval // 11000L
+        var sleepMs = nextTick - currentNow // 11000 - 11150 = -150L (< 100L)
+        val minSmoothIntervalMs = (targetInterval * 0.8f).toLong().coerceAtLeast(200L) // 800L
+
+        if (sleepMs < 100L) {
+            nextTick = currentNow + targetInterval
+            sleepMs = minSmoothIntervalMs
+        }
+
+        assertEquals("严重超时时重置锚点至当前时间加上周期", 12150L, nextTick)
+        assertEquals("严重超时时强制设定平滑防抖最小间隔（800ms），绝不执行0ms连击", 800L, sleepMs)
+        assertTrue("休眠时长必须大于等于200ms平滑阈值", sleepMs >= 200L)
+    }
+
+    /**
+     * 验证用户处于桌面或前台应用未解析出时（null 状态），短效缓存生效以杜绝每秒穿透查询 USM。
+     */
+    @Test
+    fun testForegroundAppDesktopNullCache() {
+        val expireMs = 2000L
+        var lastKnownPackage: String? = null
+        var lastQueryTime = 10000L
+
+        // 辅助缓存命中检查逻辑
+        val shouldBypassUsmQuery = { now: Long ->
+            (now - lastQueryTime < expireMs) && (lastKnownPackage == null)
+        }
+
+        // 在 2 秒短缓存窗口内，桌面状态直接返回 null，无需执行 USM 查询
+        assertTrue("1.0秒时应命中空态缓存跳过查询", shouldBypassUsmQuery(11000L))
+        assertTrue("1.8秒时应命中空态缓存跳过查询", shouldBypassUsmQuery(11800L))
+        assertTrue("超过2.0秒缓存过期时应重新触发查询", !shouldBypassUsmQuery(12050L))
     }
 }

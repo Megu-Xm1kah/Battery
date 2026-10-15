@@ -690,15 +690,12 @@ class HistoryFragment : Fragment() {
         }
 
         dialog.show()
-        applyDialogWindowStyle(dialog, heightRatio = 0.95f)
-
-        val height = (resources.displayMetrics.heightPixels * 0.95).toInt()
-        // 使用符合 FrameLayout 父容器要求的 FrameLayout.LayoutParams (支持 MarginLayoutParams)，彻底杜绝 ClassCastException 并锁定高度
-        dialogView.layoutParams = android.widget.FrameLayout.LayoutParams(
-            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        com.battery.analysis.util.DialogWindowHelper.applyAdaptiveDialogWindowStyle(
+            dialog = dialog,
+            dialogView = dialogView,
+            widthRatio = 0.92,
+            maxHeightRatio = 0.90f
         )
-        dialogView.minimumHeight = height
     }
 
     /**
@@ -797,7 +794,12 @@ class HistoryFragment : Fragment() {
         }
 
         dialog.show()
-        applyDialogWindowStyle(dialog)
+        com.battery.analysis.util.DialogWindowHelper.applyAdaptiveDialogWindowStyle(
+            dialog = dialog,
+            dialogView = dialogView,
+            widthRatio = 0.92,
+            maxHeightRatio = 0.90f
+        )
     }
 
     /**

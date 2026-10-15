@@ -1851,10 +1851,12 @@ class ShizukuBatteryStatsParser(private val context: Context) {
         private val REGEX_WIFI_DRAIN = Pattern.compile("(?:Wifi|Wi-Fi):\\s*([\\d.]+)", Pattern.CASE_INSENSITIVE)
         private val REGEX_BLUETOOTH_DRAIN = Pattern.compile("Bluetooth:\\s*([\\d.]+)", Pattern.CASE_INSENSITIVE)
         private val REGEX_TIME_ON_BATTERY = Pattern.compile("Time on battery:\\s*([^\\n\\(]+)", Pattern.CASE_INSENSITIVE)
+        private val REGEX_TIME_ON_BATTERY_REALTIME_UPTIME = Pattern.compile("Time on battery:\\s*([^\\n\\(,]+?)(?:\\s*\\([^)]+\\))?\\s*realtime,\\s*([^\\n\\(]+?)(?:\\s*\\([^)]+\\))?\\s*uptime", Pattern.CASE_INSENSITIVE)
         private val REGEX_DISCHARGE_TIME = Pattern.compile("Discharge:\\s*([^\\n\\(]+)", Pattern.CASE_INSENSITIVE)
         private val REGEX_SCREEN_ON = Pattern.compile("Screen on:\\s*([^\\n\\(]+)", Pattern.CASE_INSENSITIVE)
         private val REGEX_SCREEN_OFF_TIME = Pattern.compile("Time on battery screen off:\\s*([^\\n\\(]+)", Pattern.CASE_INSENSITIVE)
         private val REGEX_SCREEN_OFF_REALTIME_UPTIME = Pattern.compile("Time on battery screen off:\\s*([^\\n\\(,]+?)(?:\\s*\\([^)]+\\))?\\s*realtime,\\s*([^\\n\\(]+?)(?:\\s*\\([^)]+\\))?\\s*uptime", Pattern.CASE_INSENSITIVE)
+        private val REGEX_SCREEN_OFF_REALTIME_UPTIME_MODERN = Pattern.compile("Screen off:\\s*([^\\n\\(,]+?)(?:\\s*\\([^)]+\\))?\\s*realtime,\\s*([^\\n\\(]+?)(?:\\s*\\([^)]+\\))?\\s*uptime", Pattern.CASE_INSENSITIVE)
         private val REGEX_SCREEN_OFF_AWAKE_ALONE = Pattern.compile("Screen off was also awake:\\s*([^\\n\\(]+)", Pattern.CASE_INSENSITIVE)
         private val REGEX_SCREEN_OFF_SLEEPING_ALONE = Pattern.compile("Screen off was also sleeping:\\s*([^\\n\\(]+)", Pattern.CASE_INSENSITIVE)
         private val REGEX_SCREEN_OFF_SIMPLE = Pattern.compile("Screen off:\\s*([^\\n\\(]+)", Pattern.CASE_INSENSITIVE)
@@ -1965,10 +1967,25 @@ class ShizukuBatteryStatsParser(private val context: Context) {
             }
 
             // 2. 匹配自断电以来的总放电耗时
-            val timeMatcher = REGEX_TIME_ON_BATTERY.matcher(rawText)
-            if (timeMatcher.find()) {
-                val timeStr = timeMatcher.group(1) ?: ""
-                dischargeDurationMs = parseDurationStringToMs(timeStr)
+            // 2. 匹配自断电以来的总放电耗时与全局物理时钟（realtime / uptime）
+            var totalRealtimeMs = 0L
+            var totalUptimeMs = 0L
+            val globalRealtimeUptimeMatcher = REGEX_TIME_ON_BATTERY_REALTIME_UPTIME.matcher(rawText)
+            if (globalRealtimeUptimeMatcher.find()) {
+                val rStr = globalRealtimeUptimeMatcher.group(1)?.trim() ?: ""
+                val uStr = globalRealtimeUptimeMatcher.group(2)?.trim() ?: ""
+                totalRealtimeMs = parseDurationStringToMs(rStr)
+                totalUptimeMs = parseDurationStringToMs(uStr)
+                if (totalRealtimeMs > 0L) {
+                    dischargeDurationMs = totalRealtimeMs
+                }
+            }
+            if (dischargeDurationMs <= 0L) {
+                val timeMatcher = REGEX_TIME_ON_BATTERY.matcher(rawText)
+                if (timeMatcher.find()) {
+                    val timeStr = timeMatcher.group(1) ?: ""
+                    dischargeDurationMs = parseDurationStringToMs(timeStr)
+                }
             }
             if (dischargeDurationMs <= 0L) {
                 val disMatcher = REGEX_DISCHARGE_TIME.matcher(rawText)
@@ -1998,10 +2015,15 @@ class ShizukuBatteryStatsParser(private val context: Context) {
             var screenOffAwakeDrainMah = 0f
             var screenOffDeepSleepDrainMah = 0f
 
+            // 优先匹配标准与现代化息屏 realtime/uptime（如 "Time on battery screen off: ... realtime, ... uptime" 或 "Screen off: ... realtime, ... uptime"）
             val realtimeUptimeMatcher = REGEX_SCREEN_OFF_REALTIME_UPTIME.matcher(rawText)
-            if (realtimeUptimeMatcher.find()) {
-                val realtimeStr = realtimeUptimeMatcher.group(1)?.trim() ?: ""
-                val uptimeStr = realtimeUptimeMatcher.group(2)?.trim() ?: ""
+            val modernRealtimeUptimeMatcher = if (!realtimeUptimeMatcher.find()) REGEX_SCREEN_OFF_REALTIME_UPTIME_MODERN.matcher(rawText) else null
+            val hasMatchedOffRealtimeUptime = if (modernRealtimeUptimeMatcher != null) modernRealtimeUptimeMatcher.find() else true
+
+            if (hasMatchedOffRealtimeUptime) {
+                val activeMatcher = modernRealtimeUptimeMatcher ?: realtimeUptimeMatcher
+                val realtimeStr = activeMatcher.group(1)?.trim() ?: ""
+                val uptimeStr = activeMatcher.group(2)?.trim() ?: ""
                 screenOffDurationMs = parseDurationStringToMs(realtimeStr)
                 screenOffAwakeDurationMs = parseDurationStringToMs(uptimeStr)
                 screenOffDeepSleepDurationMs = (screenOffDurationMs - screenOffAwakeDurationMs).coerceAtLeast(0L)
@@ -2035,8 +2057,18 @@ class ShizukuBatteryStatsParser(private val context: Context) {
             if (screenOffDurationMs <= 0L && dischargeDurationMs > screenOnDurationMs) {
                 screenOffDurationMs = (dischargeDurationMs - screenOnDurationMs).coerceAtLeast(0L)
             }
-            if (screenOffDurationMs > 0L && screenOffDeepSleepDurationMs <= 0L && screenOffAwakeDurationMs > 0L) {
+
+            // 若息屏独立唤醒/深睡字段均缺失，但全局提取到了有效断电 realtime 与 uptime：
+            // 根据 Linux 内核调度第一性原理，系统挂起（Suspend / Deep Sleep）必然且仅能发生于息屏态（亮屏时 CPU 必然保持 running），
+            // 故整机挂起时长 (totalRealtime - totalUptime) 即为物理息屏深度休眠时长
+            if (screenOffDeepSleepDurationMs <= 0L && screenOffAwakeDurationMs <= 0L && totalRealtimeMs > 0L && totalUptimeMs > 0L) {
+                val globalDeepSleep = (totalRealtimeMs - totalUptimeMs).coerceAtLeast(0L)
+                screenOffDeepSleepDurationMs = if (screenOffDurationMs > 0L) globalDeepSleep.coerceAtMost(screenOffDurationMs) else globalDeepSleep
+                screenOffAwakeDurationMs = (screenOffDurationMs - screenOffDeepSleepDurationMs).coerceAtLeast(0L)
+            } else if (screenOffDurationMs > 0L && screenOffDeepSleepDurationMs <= 0L && screenOffAwakeDurationMs > 0L) {
                 screenOffDeepSleepDurationMs = (screenOffDurationMs - screenOffAwakeDurationMs).coerceAtLeast(0L)
+            } else if (screenOffDurationMs > 0L && screenOffAwakeDurationMs <= 0L && screenOffDeepSleepDurationMs > 0L) {
+                screenOffAwakeDurationMs = (screenOffDurationMs - screenOffDeepSleepDurationMs).coerceAtLeast(0L)
             }
 
             // 匹配系统底层真实息屏放电量 (mAh)

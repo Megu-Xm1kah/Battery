@@ -526,8 +526,9 @@
                     <!-- 亮屏充入能量 -->
                     <TextView
                         android:id="@+id/tv_charging_screen_on_energy_gain"
-                        android:layout_width="65dp"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        android:minWidth="65dp"
                         android:gravity="end"
                         android:singleLine="true"
                         android:textColor="?android:attr/textColorPrimary"
@@ -586,8 +587,9 @@
                     <!-- 息屏充入能量 -->
                     <TextView
                         android:id="@+id/tv_charging_screen_off_energy_gain"
-                        android:layout_width="65dp"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        android:minWidth="65dp"
                         android:gravity="end"
                         android:singleLine="true"
                         android:textColor="?android:attr/textColorPrimary"

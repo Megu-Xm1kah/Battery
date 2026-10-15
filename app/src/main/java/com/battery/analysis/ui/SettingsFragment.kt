@@ -627,7 +627,7 @@ class SettingsFragment : Fragment() {
         }
 
         showAndTrackDialog(dialog)
-        applyDialogWindowStyle(dialog)
+        applyLongContentDialogStyle(dialog, dialogView)
     }
 
     /**
@@ -800,6 +800,8 @@ class SettingsFragment : Fragment() {
         val fontSize = com.battery.analysis.manager.FloatingWindowManager.getFontSize(ctx)
         val currentY = com.battery.analysis.manager.FloatingWindowManager.getPosY(ctx)
         val sbHeight = com.battery.analysis.manager.FloatingWindowManager.getStatusBarHeight(ctx)
+        val showUnit = com.battery.analysis.manager.FloatingWindowManager.isShowUnit(ctx)
+        val showBackground = com.battery.analysis.manager.FloatingWindowManager.isShowBackground(ctx)
         val summary = buildString {
             if (isStatusBar && currentY < sbHeight) {
                 append("状态栏位置")
@@ -808,6 +810,12 @@ class SettingsFragment : Fragment() {
             }
             append(" · ").append(fontSize).append("sp字号")
             append(" · ").append(opacity).append("%透明度")
+            if (!showBackground) {
+                append(" · 无边框")
+            }
+            if (!showUnit) {
+                append(" · 无单位")
+            }
         }
         binding.tvFloatingPositionSummary.text = summary
     }
@@ -886,6 +894,12 @@ class SettingsFragment : Fragment() {
         val seekOpacity = dialogView.findViewById<android.widget.SeekBar>(R.id.seekbar_opacity)
         val tvOpacityValue = dialogView.findViewById<TextView>(R.id.tv_opacity_value)
 
+        val layoutShowUnit = dialogView.findViewById<android.view.View>(R.id.layout_floating_show_unit)
+        val switchShowUnit = dialogView.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.switch_show_unit)
+
+        val layoutShowBackground = dialogView.findViewById<android.view.View>(R.id.layout_floating_show_background)
+        val switchShowBackground = dialogView.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.switch_show_background)
+
         val rbThemeFollow = dialogView.findViewById<RadioButton>(R.id.rb_theme_follow_system)
         val rbThemeDark = dialogView.findViewById<RadioButton>(R.id.rb_theme_dark)
         val rbThemeLight = dialogView.findViewById<RadioButton>(R.id.rb_theme_light)
@@ -901,9 +915,12 @@ class SettingsFragment : Fragment() {
         val initialRawY = com.battery.analysis.manager.FloatingWindowManager.getPosY(ctx)
         val initialAlign = com.battery.analysis.manager.FloatingWindowManager.getHorizontalAlign(ctx)
         val initialX = com.battery.analysis.manager.FloatingWindowManager.getPosX(ctx)
+        val initialOffsetX = com.battery.analysis.manager.FloatingWindowManager.getOffsetX(ctx)
         val initialFontSize = com.battery.analysis.manager.FloatingWindowManager.getFontSize(ctx)
         val initialOpacity = com.battery.analysis.manager.FloatingWindowManager.getOpacity(ctx)
         val initialThemeMode = com.battery.analysis.manager.FloatingWindowManager.getThemeMode(ctx)
+        val initialShowUnit = com.battery.analysis.manager.FloatingWindowManager.isShowUnit(ctx)
+        val initialShowBackground = com.battery.analysis.manager.FloatingWindowManager.isShowBackground(ctx)
 
         val isAlignStatusBar = initialAlignStatusBar
         switchStatusBar.isChecked = isAlignStatusBar
@@ -986,12 +1003,14 @@ class SettingsFragment : Fragment() {
         }
 
         seekHorizontal.max = screenWidth
+        val centerProgress = screenWidth / 2
         val currentAlign = com.battery.analysis.manager.FloatingWindowManager.getHorizontalAlign(ctx)
-        val currentX = com.battery.analysis.manager.FloatingWindowManager.getPosX(ctx)
-        if (currentX >= 0) {
-            seekHorizontal.progress = currentX.coerceIn(0, screenWidth)
-        } else {
-            seekHorizontal.progress = screenWidth / 2
+        val currentOffset = com.battery.analysis.manager.FloatingWindowManager.getOffsetX(ctx)
+        seekHorizontal.progress = when (currentAlign) {
+            com.battery.analysis.manager.FloatingWindowManager.ALIGN_LEFT -> 0
+            com.battery.analysis.manager.FloatingWindowManager.ALIGN_RIGHT -> screenWidth
+            com.battery.analysis.manager.FloatingWindowManager.ALIGN_CENTER -> centerProgress
+            else -> (centerProgress + currentOffset).coerceIn(0, screenWidth)
         }
 
         val updateHorizontalCapsules = { align: Int ->
@@ -1002,23 +1021,36 @@ class SettingsFragment : Fragment() {
                 com.battery.analysis.manager.FloatingWindowManager.ALIGN_LEFT -> "X: " + getString(R.string.floating_horizontal_align_left)
                 com.battery.analysis.manager.FloatingWindowManager.ALIGN_CENTER -> "X: " + getString(R.string.floating_horizontal_align_center)
                 com.battery.analysis.manager.FloatingWindowManager.ALIGN_RIGHT -> "X: " + getString(R.string.floating_horizontal_align_right)
-                else -> "X: ${seekHorizontal.progress} px"
+                else -> {
+                    val offset = com.battery.analysis.manager.FloatingWindowManager.getOffsetX(ctx)
+                    if (offset == 0) {
+                        "X: " + getString(R.string.floating_horizontal_align_center)
+                    } else if (offset < 0) {
+                        getString(R.string.floating_horizontal_align_center_left, Math.abs(offset))
+                    } else {
+                        getString(R.string.floating_horizontal_align_center_right, offset)
+                    }
+                }
             }
         }
         updateHorizontalCapsules(currentAlign)
 
         rbLeft.setOnClickListener {
             com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, com.battery.analysis.manager.FloatingWindowManager.ALIGN_LEFT)
+            seekHorizontal.progress = 0
             updateHorizontalCapsules(com.battery.analysis.manager.FloatingWindowManager.ALIGN_LEFT)
             com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
         }
         rbCenter.setOnClickListener {
             com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, com.battery.analysis.manager.FloatingWindowManager.ALIGN_CENTER)
+            com.battery.analysis.manager.FloatingWindowManager.setOffsetX(ctx, 0)
+            seekHorizontal.progress = centerProgress
             updateHorizontalCapsules(com.battery.analysis.manager.FloatingWindowManager.ALIGN_CENTER)
             com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
         }
         rbRight.setOnClickListener {
             com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, com.battery.analysis.manager.FloatingWindowManager.ALIGN_RIGHT)
+            seekHorizontal.progress = screenWidth
             updateHorizontalCapsules(com.battery.analysis.manager.FloatingWindowManager.ALIGN_RIGHT)
             com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
         }
@@ -1026,9 +1058,15 @@ class SettingsFragment : Fragment() {
         seekHorizontal.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
-                    com.battery.analysis.manager.FloatingWindowManager.setPosX(ctx, progress)
-                    com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, com.battery.analysis.manager.FloatingWindowManager.ALIGN_CUSTOM)
-                    updateHorizontalCapsules(com.battery.analysis.manager.FloatingWindowManager.ALIGN_CUSTOM)
+                    val offset = progress - centerProgress
+                    com.battery.analysis.manager.FloatingWindowManager.setOffsetX(ctx, offset)
+                    val newAlign = if (offset == 0) {
+                        com.battery.analysis.manager.FloatingWindowManager.ALIGN_CENTER
+                    } else {
+                        com.battery.analysis.manager.FloatingWindowManager.ALIGN_CUSTOM
+                    }
+                    com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, newAlign)
+                    updateHorizontalCapsules(newAlign)
                     com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
                 }
             }
@@ -1038,24 +1076,36 @@ class SettingsFragment : Fragment() {
 
         // 水平位置 - 微调按钮
         setupRepeatClick(btnHorizontalMinus) {
-            val targetX = (seekHorizontal.progress - 1).coerceAtLeast(0)
-            if (targetX != seekHorizontal.progress) {
-                seekHorizontal.progress = targetX
-                com.battery.analysis.manager.FloatingWindowManager.setPosX(ctx, targetX)
-                com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, com.battery.analysis.manager.FloatingWindowManager.ALIGN_CUSTOM)
-                updateHorizontalCapsules(com.battery.analysis.manager.FloatingWindowManager.ALIGN_CUSTOM)
+            val targetProgress = (seekHorizontal.progress - 1).coerceAtLeast(0)
+            if (targetProgress != seekHorizontal.progress) {
+                seekHorizontal.progress = targetProgress
+                val offset = targetProgress - centerProgress
+                com.battery.analysis.manager.FloatingWindowManager.setOffsetX(ctx, offset)
+                val newAlign = if (offset == 0) {
+                    com.battery.analysis.manager.FloatingWindowManager.ALIGN_CENTER
+                } else {
+                    com.battery.analysis.manager.FloatingWindowManager.ALIGN_CUSTOM
+                }
+                com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, newAlign)
+                updateHorizontalCapsules(newAlign)
                 com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
             }
         }
 
         // 水平位置 + 微调按钮
         setupRepeatClick(btnHorizontalPlus) {
-            val targetX = (seekHorizontal.progress + 1).coerceAtMost(seekHorizontal.max)
-            if (targetX != seekHorizontal.progress) {
-                seekHorizontal.progress = targetX
-                com.battery.analysis.manager.FloatingWindowManager.setPosX(ctx, targetX)
-                com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, com.battery.analysis.manager.FloatingWindowManager.ALIGN_CUSTOM)
-                updateHorizontalCapsules(com.battery.analysis.manager.FloatingWindowManager.ALIGN_CUSTOM)
+            val targetProgress = (seekHorizontal.progress + 1).coerceAtMost(seekHorizontal.max)
+            if (targetProgress != seekHorizontal.progress) {
+                seekHorizontal.progress = targetProgress
+                val offset = targetProgress - centerProgress
+                com.battery.analysis.manager.FloatingWindowManager.setOffsetX(ctx, offset)
+                val newAlign = if (offset == 0) {
+                    com.battery.analysis.manager.FloatingWindowManager.ALIGN_CENTER
+                } else {
+                    com.battery.analysis.manager.FloatingWindowManager.ALIGN_CUSTOM
+                }
+                com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, newAlign)
+                updateHorizontalCapsules(newAlign)
                 com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
             }
         }
@@ -1099,6 +1149,15 @@ class SettingsFragment : Fragment() {
             }
         }
 
+        // 是否显示单位开关交互
+        switchShowUnit.isChecked = initialShowUnit
+        switchShowUnit.setOnCheckedChangeListener { _, isChecked ->
+            com.battery.analysis.manager.FloatingWindowManager.setShowUnit(ctx, isChecked)
+        }
+        layoutShowUnit?.setOnClickListener {
+            switchShowUnit.toggle()
+        }
+
         val currentOpacity = com.battery.analysis.manager.FloatingWindowManager.getOpacity(ctx)
         seekOpacity.progress = currentOpacity
         tvOpacityValue.text = "${currentOpacity}%"
@@ -1114,6 +1173,15 @@ class SettingsFragment : Fragment() {
             override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
         })
+
+        // 是否显示背景和边框开关交互
+        switchShowBackground.isChecked = initialShowBackground
+        switchShowBackground.setOnCheckedChangeListener { _, isChecked ->
+            com.battery.analysis.manager.FloatingWindowManager.setShowBackground(ctx, isChecked)
+        }
+        layoutShowBackground?.setOnClickListener {
+            switchShowBackground.toggle()
+        }
 
         val updateThemeCapsules = { mode: Int ->
             rbThemeFollow.isChecked = (mode == com.battery.analysis.manager.FloatingWindowManager.THEME_FOLLOW_SYSTEM)
@@ -1144,8 +1212,11 @@ class SettingsFragment : Fragment() {
             com.battery.analysis.manager.FloatingWindowManager.setPosY(ctx, initialRawY)
             com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, initialAlign)
             com.battery.analysis.manager.FloatingWindowManager.setPosX(ctx, initialX)
+            com.battery.analysis.manager.FloatingWindowManager.setOffsetX(ctx, initialOffsetX)
             com.battery.analysis.manager.FloatingWindowManager.setFontSize(ctx, initialFontSize)
+            com.battery.analysis.manager.FloatingWindowManager.setShowUnit(ctx, initialShowUnit)
             com.battery.analysis.manager.FloatingWindowManager.setOpacity(ctx, initialOpacity)
+            com.battery.analysis.manager.FloatingWindowManager.setShowBackground(ctx, initialShowBackground)
             com.battery.analysis.manager.FloatingWindowManager.setThemeMode(ctx, initialThemeMode)
             com.battery.analysis.manager.FloatingWindowManager.updatePositionAndAppearance(ctx)
             updateFloatingPositionSummary()
@@ -1170,7 +1241,7 @@ class SettingsFragment : Fragment() {
         }
 
         showAndTrackDialog(dialog)
-        applyDialogWindowStyle(dialog)
+        applyLongContentDialogStyle(dialog, dialogView)
     }
 
     /**
@@ -1370,6 +1441,26 @@ class SettingsFragment : Fragment() {
             window.setLayout(width, height)
             window.setGravity(android.view.Gravity.CENTER)
         }
+    }
+
+    /**
+     * 为弹窗统一配置窗口样式，智能适配内容自适应包裹（未超 90%）与最大 90% 高度限制（超出时内部平滑滚动）。
+     *
+     * @param dialog 待配置样式的 [AlertDialog] 实例
+     * @param dialogView 弹窗的根视图 [View]
+     * @param widthRatio 弹窗宽度相对屏幕可用物理宽度的比例（默认为 0.92）
+     */
+    private fun applyLongContentDialogStyle(
+        dialog: AlertDialog,
+        dialogView: View,
+        widthRatio: Double = 0.92
+    ) {
+        com.battery.analysis.util.DialogWindowHelper.applyAdaptiveDialogWindowStyle(
+            dialog = dialog,
+            dialogView = dialogView,
+            widthRatio = widthRatio,
+            maxHeightRatio = 0.90f
+        )
     }
 
     /**
@@ -1578,6 +1669,7 @@ class SettingsFragment : Fragment() {
                 if (isChecked) {
                     com.battery.analysis.service.BatteryMonitorService.start(requireContext())
                 }
+                // 无论开启还是关闭，绝对不停止后台服务与采样，履行前台服务契约，仅切换通知形态（开: 实时监控; 关: 电池后台静默监控）
                 com.battery.analysis.service.BatteryMonitorService.updateNotificationVisibility(requireContext())
             }
         }
@@ -1768,13 +1860,7 @@ class SettingsFragment : Fragment() {
         }
 
         showAndTrackDialog(dialog)
-        applyDialogWindowStyle(dialog, heightRatio = 0.90f)
-        val targetHeight = (resources.displayMetrics.heightPixels * 0.90).toInt()
-        dialogView.layoutParams = android.widget.FrameLayout.LayoutParams(
-            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-        )
-        dialogView.minimumHeight = targetHeight
+        applyLongContentDialogStyle(dialog, dialogView)
     }
 
     /**
@@ -2119,7 +2205,7 @@ class SettingsFragment : Fragment() {
         }
 
         showAndTrackDialog(dialog)
-        applyDialogWindowStyle(dialog)
+        applyLongContentDialogStyle(dialog, dialogView)
     }
 
 

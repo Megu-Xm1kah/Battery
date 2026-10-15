@@ -3,6 +3,7 @@ package com.battery.analysis.util
 import java.util.Locale
 import com.battery.analysis.manager.PowerOverviewStats
 import com.battery.analysis.manager.PowerUsageManager
+import com.battery.analysis.model.PowerDisplayUnit
 
 /**
  * 设备电池物理总能量及获取方式详情实体类。
@@ -858,6 +859,237 @@ object BatteryEnergyCalculator {
             else -> String.format(Locale.getDefault(), "%02dm", minutes)
         }
     }
+    /**
+     * 根据指定的显示单位统一格式化能量/电量数值。
+     * 若单位为 Wh，格式化为 "0.250Wh"（数值介于 0.00001Wh 与 0.0005Wh 之间时显示 "<0.001Wh"）；
+     * 若单位为 mAh，基于电池标称工作电压严格折算并格式化为 "64.9mAh"（数值介于 0.001mAh 与 0.05mAh 之间时显示 "<0.1mAh"）；
+     * 若能量小于等于 0 或为无效浮点数，如实返回 "--"（忠实反映系统真实数据，严禁伪造假数据）。
+     *
+     * @param energyWh 实际消耗的物理能量数值（单位：Wh）
+     * @param unit 目标呈现的显示单位 [PowerDisplayUnit]
+     * @param nominalVoltageVolts 折算采用的标称电压（单位：V，默认采用 3.85V 行业标准放电平台中位电压）
+     * @return 格式化后的带单位文本（如 "0.250Wh"、"64.9mAh" 或 "--"）
+     */
+    fun formatDisplayEnergy(
+        energyWh: Float,
+        unit: PowerDisplayUnit,
+        nominalVoltageVolts: Float = DEFAULT_NOMINAL_VOLTAGE_VOLTS
+    ): String {
+        if (energyWh <= 0f || energyWh.isNaN()) return "--"
+        val safeNominalVoltage = if (nominalVoltageVolts > 0f) nominalVoltageVolts else DEFAULT_NOMINAL_VOLTAGE_VOLTS
+        return when (unit) {
+            PowerDisplayUnit.WH -> {
+                if (energyWh >= 0.0005f) {
+                    String.format(Locale.getDefault(), "%.3fWh", energyWh)
+                } else if (energyWh > 0.00001f) {
+                    "<0.001Wh"
+                } else {
+                    "--"
+                }
+            }
+            PowerDisplayUnit.MAH -> {
+                val mah = (energyWh * 1000f) / safeNominalVoltage
+                if (mah >= 0.05f) {
+                    String.format(Locale.getDefault(), "%.1fmAh", mah)
+                } else if (mah > 0.001f) {
+                    "<0.1mAh"
+                } else {
+                    "--"
+                }
+            }
+        }
+    }
+
+    /**
+     * 电量显示单位切换弹窗的结构化说明内容模型。
+     *
+     * @property title 弹窗主标题
+     * @property subtitle 弹窗副标题
+     * @property formula 核心换算公式
+     * @property example 换算参考数值示例
+     * @property definition 物理定义说明
+     * @property science 科学守恒说明
+     */
+    data class UnitSwitchDialogContent(
+        val title: String,
+        val subtitle: String,
+        val formula: String,
+        val example: String,
+        val definition: String,
+        val science: String
+    )
+
+    /**
+     * 获取单位切换弹窗的结构化展示内容。
+     *
+     * @param targetUnit 目标显示单位 [PowerDisplayUnit]
+     * @param nominalVoltageVolts 折算基准标称电压（单位：V，默认 3.85V）
+     * @return 结构化的弹窗展示数据模型 [UnitSwitchDialogContent]
+     */
+    fun getUnitSwitchDialogContent(
+        targetUnit: PowerDisplayUnit,
+        nominalVoltageVolts: Float = DEFAULT_NOMINAL_VOLTAGE_VOLTS
+    ): UnitSwitchDialogContent {
+        val safeV = if (nominalVoltageVolts > 0f) nominalVoltageVolts else DEFAULT_NOMINAL_VOLTAGE_VOLTS
+        return when (targetUnit) {
+            PowerDisplayUnit.MAH -> {
+                val ratio = 1000f / safeV
+                val ratioStr = String.format(Locale.getDefault(), "%.1f", ratio)
+                UnitSwitchDialogContent(
+                    title = "已切换为【毫安时 (mAh)】显示",
+                    subtitle = "展现层单位切换 · 严谨物理守恒",
+                    formula = "电量 (mAh) = 能量 (Wh) × 1000 ÷ ${safeV}V",
+                    example = "换算参考：1.000 Wh ≈ $ratioStr mAh",
+                    definition = "电荷量物理单位（Q = I × t），符合手机电池出厂标称容量（如 5000mAh）的日常直觉感知。",
+                    science = "杜绝使用随负载跳变的瞬时端电压逆算，保证所有应用耗电总和与整机掉电在数学与物理上完全守恒。"
+                )
+            }
+            PowerDisplayUnit.WH -> {
+                UnitSwitchDialogContent(
+                    title = "已切换为【瓦时 (Wh)】显示",
+                    subtitle = "展现层单位切换 · 严谨物理守恒",
+                    formula = "能量 (Wh) = 电量 (mAh) × ${safeV}V ÷ 1000",
+                    example = "换算参考：1000 mAh ≈ ${String.format(Locale.getDefault(), "%.3f", safeV)} Wh",
+                    definition = "能量物理单位（E = U × I × t），直接反映电池电芯化学能做功与能量释放，符合工业权威计量标准。",
+                    science = "消除不同设备工作电压平台及串联双电芯架构对容量判读的干扰，是专业级硬件能耗分析的基准单位。"
+                )
+            }
+        }
+    }
+
+    /**
+     * 将能量数值（单位：Wh）基于电池标称工作平台电压换算为等效电量（单位：mAh）。
+     * 换算公式遵循物理定律：电量 (mAh) = 能量 (Wh) × 1000 ÷ 标称电压 (V)。
+     *
+     * @param energyWh 实际能量数值（单位：Wh）
+     * @param nominalVoltageVolts 电池标称工作电压（单位：V，默认采用 3.85V 行业标准中位电压）
+     * @return 换算得出的等效电量数值（单位：mAh）
+     */
+    fun convertWhToMah(
+        energyWh: Float,
+        nominalVoltageVolts: Float = DEFAULT_NOMINAL_VOLTAGE_VOLTS
+    ): Float {
+        val safeNominalVoltage = if (nominalVoltageVolts > 0f) nominalVoltageVolts else DEFAULT_NOMINAL_VOLTAGE_VOLTS
+        return (energyWh * 1000f) / safeNominalVoltage
+    }
+
+    /**
+     * 将电量数值（单位：mAh）基于电池标称工作平台电压换算为等效能量（单位：Wh）。
+     * 换算公式遵循物理定律：能量 (Wh) = 电量 (mAh) × 标称电压 (V) ÷ 1000。
+     *
+     * @param capacityMah 实际电量数值（单位：mAh）
+     * @param nominalVoltageVolts 电池标称工作电压（单位：V，默认采用 3.85V 行业标准中位电压）
+     * @return 换算得出的等效能量数值（单位：Wh）
+     */
+    fun convertMahToWh(
+        capacityMah: Float,
+        nominalVoltageVolts: Float = DEFAULT_NOMINAL_VOLTAGE_VOLTS
+    ): Float {
+        val safeNominalVoltage = if (nominalVoltageVolts > 0f) nominalVoltageVolts else DEFAULT_NOMINAL_VOLTAGE_VOLTS
+        return (capacityMah * safeNominalVoltage) / 1000f
+    }
+
+    /**
+     * 格式化充入或增量能量/电量（带正号前缀，用于充电主视图，如 "+0.5Wh" 或 "+130mAh"）。
+     *
+     * @param energyWh 充入能量数值（单位：Wh）
+     * @param unit 目标显示单位 [PowerDisplayUnit]
+     * @param nominalVoltageVolts 折算采用的标称电压（单位：V，默认 3.85V）
+     * @return 格式化后的带正号文本
+     */
+    fun formatChargingGainEnergy(
+        energyWh: Float,
+        unit: PowerDisplayUnit = PowerDisplayUnit.WH,
+        nominalVoltageVolts: Float = DEFAULT_NOMINAL_VOLTAGE_VOLTS
+    ): String {
+        return if (unit == PowerDisplayUnit.MAH) {
+            val mah = convertWhToMah(energyWh, nominalVoltageVolts)
+            String.format(Locale.getDefault(), "+%.0fmAh", mah)
+        } else {
+            String.format(Locale.getDefault(), "+%.1fWh", energyWh)
+        }
+    }
+
+    /**
+     * 格式化充电历史详情页的充入能量数值（保留两位小数或整数 mAh，如 "+6.85 Wh" 或 "+1779 mAh"）。
+     *
+     * @param energyWh 充入能量数值（单位：Wh）
+     * @param unit 目标显示单位 [PowerDisplayUnit]
+     * @param nominalVoltageVolts 折算采用的标称电压（单位：V，默认 3.85V）
+     * @return 格式化后的带符号充入能量文本
+     */
+    fun formatChargingDetailEnergy(
+        energyWh: Float,
+        unit: PowerDisplayUnit = PowerDisplayUnit.WH,
+        nominalVoltageVolts: Float = DEFAULT_NOMINAL_VOLTAGE_VOLTS
+    ): String {
+        return if (unit == PowerDisplayUnit.MAH) {
+            val mah = convertWhToMah(energyWh, nominalVoltageVolts)
+            String.format(Locale.getDefault(), "+%.0f mAh", mah)
+        } else {
+            String.format(Locale.getDefault(), "+%.2f Wh", energyWh)
+        }
+    }
+
+    /**
+     * 格式化历史详情页顶部大字总消耗能量/电量（如 "14.2 Wh" 或 "3688 mAh"）。
+     *
+     * @param energyWh 消耗能量数值（单位：Wh）
+     * @param unit 目标显示单位 [PowerDisplayUnit]
+     * @param nominalVoltageVolts 折算采用的标称电压（单位：V，默认 3.85V）
+     * @return 格式化后的总能耗大字文本
+     */
+    fun formatHistoryDetailOverviewEnergy(
+        energyWh: Float,
+        unit: PowerDisplayUnit = PowerDisplayUnit.WH,
+        nominalVoltageVolts: Float = DEFAULT_NOMINAL_VOLTAGE_VOLTS
+    ): String {
+        return if (unit == PowerDisplayUnit.MAH) {
+            val mah = convertWhToMah(energyWh, nominalVoltageVolts)
+            String.format(Locale.getDefault(), "%.0f mAh", mah)
+        } else {
+            String.format(Locale.getDefault(), "%.1f Wh", energyWh)
+        }
+    }
+
+    /**
+     * 构建切换电量显示单位时的专业科学原理说明文案。
+     * 阐明当前单位的物理定义、换算基准与行业科学依据，帮助用户理解两种模式的技术差异。
+     *
+     * @param targetUnit 目标切换到的显示单位 [PowerDisplayUnit]
+     * @param nominalVoltageVolts 折算基准标称电压（单位：V，默认 3.85V）
+     * @return 包含标题与正文详情的弹窗说明文案对 [Pair]（First 为弹窗标题，Second 为正文描述）
+     */
+    fun getUnitSwitchExplanation(
+        targetUnit: PowerDisplayUnit,
+        nominalVoltageVolts: Float = DEFAULT_NOMINAL_VOLTAGE_VOLTS
+    ): Pair<String, String> {
+        val safeV = if (nominalVoltageVolts > 0f) nominalVoltageVolts else DEFAULT_NOMINAL_VOLTAGE_VOLTS
+        return when (targetUnit) {
+            PowerDisplayUnit.MAH -> {
+                val title = "已切换为【毫安时 (mAh)】显示"
+                val message = buildString {
+                    append("已将电量展示切换为【毫安时 (mAh)】模式。\n\n")
+                    append("• 物理定义：电荷量单位（Q = I × t），符合绝大多数手机电池出厂标称容量（如 5000mAh）的日常直觉感知；\n")
+                    append("• 换算标准：基于国际标准锂电标称工作平台电压（${safeV}V）严格守恒换算：\n")
+                    append("  电量(mAh) = 能量(Wh) × 1000 ÷ ${safeV}V；\n")
+                    append("• 科学依据：杜绝使用跳变的瞬时端电压，保证应用耗电总和与整机掉电在数学与物理上完全守恒。")
+                }
+                Pair(title, message)
+            }
+            PowerDisplayUnit.WH -> {
+                val title = "已切换为【瓦时 (Wh)】显示"
+                val message = buildString {
+                    append("已将电量展示切换为【瓦时 (Wh)】模式。\n\n")
+                    append("• 物理定义：真实做功与发热能量单位（E = P × t），直接反映电池化学能做功与能量释放；\n")
+                    append("• 核心优势：消除了不同设备工作电压差异及串联双电芯架构对容量判读的干扰，是专业级硬件能耗分析的基准单位；\n")
+                    append("• 换算关系：能量(Wh) = 功率(W) × 时长(h)。")
+                }
+                Pair(title, message)
+            }
+        }
+    }
 }
+
 
 

@@ -14,6 +14,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.CheckBox
 import android.widget.ImageView
 import android.widget.PopupWindow
 import android.widget.TextView
@@ -35,6 +36,7 @@ import com.battery.analysis.manager.PowerUsageManager
 import com.battery.analysis.manager.ShizukuManager
 import com.battery.analysis.model.ChargingSamplePoint
 import com.battery.analysis.model.ChargingSessionSummary
+import com.battery.analysis.model.PowerDisplayUnit
 import com.battery.analysis.ui.view.ChargingChartView
 import com.battery.analysis.timeline.presentation.AppEnergyDetailBottomSheetDialog
 import com.battery.analysis.timeline.presentation.TimelineMetric
@@ -71,6 +73,9 @@ class PowerUsageFragment : Fragment() {
 
     // 当前展示界面模式：0 为耗电统计，1 为充电统计
     private var currentDisplayTab: Int = 0
+
+    // 当前电量呈现单位：默认 Wh，支持在 Wh 与 mAh 间自由互相切换
+    private var currentDisplayUnit: PowerDisplayUnit = PowerDisplayUnit.WH
 
     // 充电数据实时采样轮询后台协程
     private var chargingPollingJob: Job? = null
@@ -335,6 +340,13 @@ class PowerUsageFragment : Fragment() {
         setupClickListeners()
         setupFirstTimeGuideUI()
         setupCoordinatorScroll()
+
+        // 初始化电量显示单位（Wh / mAh）并应用至适配器与顶部指示胶囊
+        val prefs = requireContext().getSharedPreferences(PowerDisplayUnit.PREFS_NAME, Context.MODE_PRIVATE)
+        val unitId = prefs.getInt(PowerDisplayUnit.PREF_KEY_POWER_DISPLAY_UNIT, PowerDisplayUnit.WH.id)
+        currentDisplayUnit = PowerDisplayUnit.fromId(unitId)
+        binding.tvPowerUnitBadge.text = currentDisplayUnit.symbol
+        adapter.updateDisplayUnit(currentDisplayUnit)
 
         // 仅在视口真实物理尺寸（宽高）发生改变时才更新短列表折叠限制（如分屏/横竖屏切换），杜绝在普通内部重排时触发死循环
         binding.coordinatorPower.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
@@ -1042,6 +1054,15 @@ class PowerUsageFragment : Fragment() {
      * 设置各按钮与交互组件的点击事件监听。
      */
     private fun setupClickListeners() {
+        // 顶部电量显示单位切换胶囊按钮（点击切换 Wh <-> mAh，长按查看说明）
+        binding.btnPowerUnitToggle.setOnClickListener {
+            togglePowerDisplayUnit()
+        }
+        binding.btnPowerUnitToggle.setOnLongClickListener {
+            showPowerUnitExplanationDialog(currentDisplayUnit)
+            true
+        }
+
         // 顶部说明文档图标点击（自适应展示耗电说明或充电说明）
         binding.btnPowerGuide.setOnClickListener {
             if (currentDisplayTab == 0) {
@@ -1784,7 +1805,11 @@ class PowerUsageFragment : Fragment() {
         if (capacityMah != null && capacityMah > 0f) {
             val nominalVoltage = com.battery.analysis.util.BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS
             val nominalWh = (capacityMah * nominalVoltage) / 1000f
-            chargingView.tvMetricCapacityEnergy.text = "${capacityMah.toInt()}mAh (≈${String.format(Locale.getDefault(), "%.1f", nominalWh)}Wh)"
+            if (currentDisplayUnit == PowerDisplayUnit.MAH) {
+                chargingView.tvMetricCapacityEnergy.text = "${capacityMah.toInt()}mAh (≈${String.format(Locale.getDefault(), "%.1f", nominalWh)}Wh)"
+            } else {
+                chargingView.tvMetricCapacityEnergy.text = "${String.format(Locale.getDefault(), "%.1f", nominalWh)}Wh (≈${capacityMah.toInt()}mAh)"
+            }
         } else {
             chargingView.tvMetricCapacityEnergy.text = "--"
         }
@@ -1801,12 +1826,12 @@ class PowerUsageFragment : Fragment() {
         // 第一行：亮屏数据（时间格式 00:00，百分比与能量）
         chargingView.tvChargingScreenOnDuration.text = formatDurationColon(screenOnDurationMs)
         chargingView.tvChargingScreenOnLevelGain.text = "+$screenOnLevelGain%"
-        chargingView.tvChargingScreenOnEnergyGain.text = String.format(Locale.getDefault(), "+%.1fWh", screenOnEnergyWh)
+        chargingView.tvChargingScreenOnEnergyGain.text = BatteryEnergyCalculator.formatChargingGainEnergy(screenOnEnergyWh, currentDisplayUnit)
 
         // 第二行：息屏数据（时间格式 00:00，百分比与能量，与亮屏行严格列对齐）
         chargingView.tvChargingScreenOffDuration.text = formatDurationColon(summary.screenOffDurationMs)
         chargingView.tvChargingScreenOffLevelGain.text = "+${summary.screenOffLevelGain}%"
-        chargingView.tvChargingScreenOffEnergyGain.text = String.format(Locale.getDefault(), "+%.1fWh", summary.screenOffEnergyWh)
+        chargingView.tvChargingScreenOffEnergyGain.text = BatteryEnergyCalculator.formatChargingGainEnergy(summary.screenOffEnergyWh, currentDisplayUnit)
     }
 
     private var lastQueryAppEventsTime = 0L
@@ -1905,7 +1930,7 @@ class PowerUsageFragment : Fragment() {
         }
 
         showAndTrackDialog(dialog)
-        applyDialogWindowStyle(dialog)
+        applyLongContentDialogStyle(dialog, dialogView)
     }
 
     /**
@@ -2128,20 +2153,23 @@ class PowerUsageFragment : Fragment() {
         }
 
         // 第一行：亮屏数据（图标已由 XML 设置）
+        val onEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(onEnergy, currentDisplayUnit)
         binding.tvMetricScreenOnTime.text = formatValueWithSmallPercent(onDurationStr, onDurationRatioStr)
-        binding.tvMetricScreenOnEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", onEnergy), onEnergyRatioStr)
+        binding.tvMetricScreenOnEnergy.text = formatValueWithSmallPercent(onEnergyText, onEnergyRatioStr)
         binding.tvMetricScreenOnPower.text = onPowerStr
         binding.tvMetricScreenOnRemaining.text = overview.remainingScreenOnText
 
         // 第二行：息屏数据
+        val offEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(offEnergy, currentDisplayUnit)
         binding.tvMetricScreenOffTime.text = formatValueWithSmallPercent(offDurationStr, offDurationRatioStr)
-        binding.tvMetricScreenOffEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", offEnergy), offEnergyRatioStr)
+        binding.tvMetricScreenOffEnergy.text = formatValueWithSmallPercent(offEnergyText, offEnergyRatioStr)
         binding.tvMetricScreenOffPower.text = offPowerStr
         binding.tvMetricScreenOffRemaining.text = overview.remainingScreenOffText
 
         // 第三行：全局数据
+        val totalEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(totalEnergy, currentDisplayUnit)
         binding.tvMetricGlobalTime.text = formatValueWithSmallPercent(totalDurationStr, "100%")
-        binding.tvMetricGlobalEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", totalEnergy), globalEnergyRatioStr)
+        binding.tvMetricGlobalEnergy.text = formatValueWithSmallPercent(totalEnergyText, globalEnergyRatioStr)
         binding.tvMetricGlobalPower.text = avgPowerStr
         binding.tvMetricGlobalRemaining.text = overview.remainingCompositeText
 
@@ -2300,20 +2328,23 @@ class PowerUsageFragment : Fragment() {
         }
 
         // 第一行：亮屏数据
+        val onEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(subStats.screenOnEnergyWh, currentDisplayUnit)
         binding.tvMetricScreenOnTime.text = formatValueWithSmallPercent(onDurationStr, onDurationRatioStr)
-        binding.tvMetricScreenOnEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", subStats.screenOnEnergyWh), onEnergyRatioStr)
+        binding.tvMetricScreenOnEnergy.text = formatValueWithSmallPercent(onEnergyText, onEnergyRatioStr)
         binding.tvMetricScreenOnPower.text = onPowerStr
         binding.tvMetricScreenOnRemaining.text = onDurationStr
 
         // 第二行：息屏数据
+        val offEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(subStats.screenOffEnergyWh, currentDisplayUnit)
         binding.tvMetricScreenOffTime.text = formatValueWithSmallPercent(offDurationStr, offDurationRatioStr)
-        binding.tvMetricScreenOffEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", subStats.screenOffEnergyWh), offEnergyRatioStr)
+        binding.tvMetricScreenOffEnergy.text = formatValueWithSmallPercent(offEnergyText, offEnergyRatioStr)
         binding.tvMetricScreenOffPower.text = offPowerStr
         binding.tvMetricScreenOffRemaining.text = offDurationStr
 
         // 第三行：全局数据
+        val totalEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(subStats.totalEnergyWh, currentDisplayUnit)
         binding.tvMetricGlobalTime.text = formatValueWithSmallPercent(totalDurationStr, "100%")
-        binding.tvMetricGlobalEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", subStats.totalEnergyWh), globalEnergyRatioStr)
+        binding.tvMetricGlobalEnergy.text = formatValueWithSmallPercent(totalEnergyText, globalEnergyRatioStr)
         binding.tvMetricGlobalPower.text = avgPowerStr
         binding.tvMetricGlobalRemaining.text = totalDurationStr
 
@@ -2407,18 +2438,21 @@ class PowerUsageFragment : Fragment() {
             "--"
         }
 
+        val onEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(onEnergy, currentDisplayUnit)
         binding.tvMetricScreenOnTime.text = formatValueWithSmallPercent(onDurationStr, onDurationRatioStr)
-        binding.tvMetricScreenOnEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", onEnergy), onEnergyRatioStr)
+        binding.tvMetricScreenOnEnergy.text = formatValueWithSmallPercent(onEnergyText, onEnergyRatioStr)
         binding.tvMetricScreenOnPower.text = onPowerStr
         binding.tvMetricScreenOnRemaining.text = overview.remainingScreenOnText
 
+        val offEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(offEnergy, currentDisplayUnit)
         binding.tvMetricScreenOffTime.text = formatValueWithSmallPercent(offDurationStr, offDurationRatioStr)
-        binding.tvMetricScreenOffEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", offEnergy), offEnergyRatioStr)
+        binding.tvMetricScreenOffEnergy.text = formatValueWithSmallPercent(offEnergyText, offEnergyRatioStr)
         binding.tvMetricScreenOffPower.text = offPowerStr
         binding.tvMetricScreenOffRemaining.text = overview.remainingScreenOffText
 
+        val totalEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(totalEnergy, currentDisplayUnit)
         binding.tvMetricGlobalTime.text = formatValueWithSmallPercent(totalDurationStr, "100%")
-        binding.tvMetricGlobalEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", totalEnergy), globalEnergyRatioStr)
+        binding.tvMetricGlobalEnergy.text = formatValueWithSmallPercent(totalEnergyText, globalEnergyRatioStr)
         binding.tvMetricGlobalPower.text = avgPowerStr
         binding.tvMetricGlobalRemaining.text = overview.remainingCompositeText
 
@@ -2659,7 +2693,7 @@ class PowerUsageFragment : Fragment() {
 
         reloadHistoryList()
         showAndTrackDialog(dialog)
-        applyDialogWindowStyle(dialog)
+        applyLongContentDialogStyle(dialog, dialogView)
     }
 
     /**
@@ -2790,7 +2824,7 @@ class PowerUsageFragment : Fragment() {
 
         reloadChargingHistory()
         showAndTrackDialog(dialog)
-        applyDialogWindowStyle(dialog)
+        applyLongContentDialogStyle(dialog, dialogView)
     }
 
     /**
@@ -2838,18 +2872,127 @@ class PowerUsageFragment : Fragment() {
     }
 
     /**
-     * 为自定义对话框应用统一的居中、宽度、半透明背景及系统级平滑弹出与取消动画窗口样式。
+     * 为自定义对话框应用统一的居中、宽度、半透明背景及系统级平滑弹出与取消动画窗口样式，支持指定弹窗高度屏幕占比。
      *
      * @param dialog 待配置样式的 [AlertDialog] 实例
+     * @param heightRatio 弹窗高度占屏幕高度比例（若为空则使用 WRAP_CONTENT）
      */
-    private fun applyDialogWindowStyle(dialog: AlertDialog) {
+    private fun applyDialogWindowStyle(dialog: AlertDialog, heightRatio: Float? = null) {
         dialog.window?.let { window ->
             window.setWindowAnimations(R.style.Animation_Dialog_CenterPop)
             window.setBackgroundDrawableResource(android.R.color.transparent)
-            val width = (resources.displayMetrics.widthPixels * 0.92).toInt()
-            window.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)
+            val displayMetrics = resources.displayMetrics
+            val width = (displayMetrics.widthPixels * 0.92).toInt()
+            val height = if (heightRatio != null && heightRatio > 0f) {
+                (displayMetrics.heightPixels * heightRatio).toInt()
+            } else {
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            }
+            window.setLayout(width, height)
             window.setGravity(Gravity.CENTER)
         }
+    }
+
+    /**
+     * 为弹窗统一配置窗口样式，智能适配内容自适应包裹（未超 90%）与最大 90% 高度限制（超出时内部平滑滚动）。
+     *
+     * @param dialog 待配置样式的 [AlertDialog] 实例
+     * @param dialogView 弹窗的根视图 [View]
+     * @param widthRatio 弹窗宽度相对屏幕可用物理宽度的比例（默认为 0.92）
+     */
+    private fun applyLongContentDialogStyle(
+        dialog: AlertDialog,
+        dialogView: View,
+        widthRatio: Double = 0.92
+    ) {
+        com.battery.analysis.util.DialogWindowHelper.applyAdaptiveDialogWindowStyle(
+            dialog = dialog,
+            dialogView = dialogView,
+            widthRatio = widthRatio,
+            maxHeightRatio = 0.90f
+        )
+    }
+
+    /**
+     * 响应用户点击顶部电量显示单位切换胶囊按钮，在瓦时（Wh，能量）与毫安时（mAh，电量）之间互相切换。
+     * 持久化当前单位偏好，刷新顶部胶囊文字、应用列表、核心放电卡片及充电卡片，并弹出美观科学原理说明弹窗。
+     */
+    private fun togglePowerDisplayUnit() {
+        val newUnit = currentDisplayUnit.toggle()
+        currentDisplayUnit = newUnit
+
+        // 1. 持久化存储用户选定的电量显示单位偏好
+        val prefs = requireContext().getSharedPreferences(PowerDisplayUnit.PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putInt(PowerDisplayUnit.PREF_KEY_POWER_DISPLAY_UNIT, newUnit.id).apply()
+
+        // 2. 更新顶部胶囊徽标的文字显示
+        binding.tvPowerUnitBadge.text = newUnit.symbol
+
+        // 3. 通知列表适配器以最新单位重新绑定应用列表能耗数据
+        adapter.updateDisplayUnit(newUnit)
+
+        // 4. 若当前缓存了整机概览数据包，重新渲染吸顶核心放电卡片与指标视图
+        lastRenderedPackage?.let { pkg ->
+            renderFullPowerData(pkg, markAsRefreshed = false)
+        }
+
+        // 4.1 若当前处于充电视图，重新渲染充电指标数据卡片
+        if (currentDisplayTab == 1) {
+            renderChargingData()
+        }
+
+        // 5. 判断是否需要弹出科学原理说明对话框
+        val donotShow = prefs.getBoolean(PowerDisplayUnit.PREF_KEY_POWER_UNIT_DIALOG_DONOT_SHOW, false)
+        if (!donotShow) {
+            showPowerUnitExplanationDialog(newUnit)
+        } else {
+            Toast.makeText(requireContext(), "已切换为${newUnit.label}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 弹出电量显示单位（Wh / mAh）科学原理说明与物理换算依据对话框。
+     * 采用精心设计的层次化卡片弹窗，呈现核心换算公式、物理定义及物理守恒依据，并支持用户勾选“不再弹出”。
+     *
+     * @param targetUnit 当前或目标电量显示单位 [PowerDisplayUnit]
+     */
+    private fun showPowerUnitExplanationDialog(targetUnit: PowerDisplayUnit) {
+        val content = BatteryEnergyCalculator.getUnitSwitchDialogContent(targetUnit)
+        val dialogView = layoutInflater.inflate(R.layout.dialog_power_unit_switch_explanation, null)
+
+        val tvTitle = dialogView.findViewById<TextView>(R.id.tv_unit_dialog_title)
+        val tvSubtitle = dialogView.findViewById<TextView>(R.id.tv_unit_dialog_subtitle)
+        val tvFormula = dialogView.findViewById<TextView>(R.id.tv_unit_dialog_formula)
+        val tvExample = dialogView.findViewById<TextView>(R.id.tv_unit_dialog_example)
+        val tvDefinition = dialogView.findViewById<TextView>(R.id.tv_unit_dialog_definition)
+        val tvScience = dialogView.findViewById<TextView>(R.id.tv_unit_dialog_science)
+        val cbDonotShow = dialogView.findViewById<CheckBox>(R.id.cb_unit_dialog_donot_show)
+        val btnConfirm = dialogView.findViewById<TextView>(R.id.btn_unit_dialog_confirm)
+
+        tvTitle.text = content.title
+        tvSubtitle.text = content.subtitle
+        tvFormula.text = content.formula
+        tvExample.text = content.example
+        tvDefinition.text = content.definition
+        tvScience.text = content.science
+
+        val dialog = AlertDialog.Builder(requireContext())
+            .setView(dialogView)
+            .create()
+
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        btnConfirm.setOnClickListener {
+            if (cbDonotShow.isChecked) {
+                val prefs = requireContext().getSharedPreferences(PowerDisplayUnit.PREFS_NAME, Context.MODE_PRIVATE)
+                prefs.edit().putBoolean(PowerDisplayUnit.PREF_KEY_POWER_UNIT_DIALOG_DONOT_SHOW, true).apply()
+                Toast.makeText(requireContext(), "后续切换将直接生效，长按单位按钮可随时再次查看说明", Toast.LENGTH_LONG).show()
+            }
+            dialog.dismiss()
+        }
+
+        showAndTrackDialog(dialog)
+        applyLongContentDialogStyle(dialog, dialogView)
     }
 
     /**
@@ -2869,7 +3012,7 @@ class PowerUsageFragment : Fragment() {
         }
 
         showAndTrackDialog(dialog)
-        applyDialogWindowStyle(dialog)
+        applyLongContentDialogStyle(dialog, dialogView)
     }
 
     /**
@@ -2888,7 +3031,7 @@ class PowerUsageFragment : Fragment() {
         }
 
         showAndTrackDialog(dialog)
-        applyDialogWindowStyle(dialog)
+        applyLongContentDialogStyle(dialog, dialogView)
     }
 
     /**
@@ -2907,7 +3050,7 @@ class PowerUsageFragment : Fragment() {
         }
 
         showAndTrackDialog(dialog)
-        applyDialogWindowStyle(dialog)
+        applyLongContentDialogStyle(dialog, dialogView)
     }
 
     /**
@@ -2995,10 +3138,13 @@ class PowerUsageFragment : Fragment() {
         popupWindow.isFocusable = true
         popupWindow.animationStyle = R.style.Animation_PopupTopRight
 
+        val tvEnergySort = popupView.findViewById<TextView>(R.id.tv_sort_energy)
+        tvEnergySort.text = if (currentDisplayUnit == PowerDisplayUnit.MAH) "按消耗电量 (mAh)" else "按消耗能量 (Wh)"
+
         val sortViews = listOf(
             popupView.findViewById<TextView>(R.id.tv_sort_duration),
             popupView.findViewById<TextView>(R.id.tv_sort_power),
-            popupView.findViewById<TextView>(R.id.tv_sort_energy),
+            tvEnergySort,
             popupView.findViewById<TextView>(R.id.tv_sort_name)
         )
 

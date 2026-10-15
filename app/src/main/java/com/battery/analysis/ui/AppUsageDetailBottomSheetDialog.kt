@@ -9,6 +9,8 @@ import android.view.View
 import android.widget.TextView
 import com.battery.analysis.R
 import com.battery.analysis.model.AppPowerUsageItem
+import com.battery.analysis.model.PowerDisplayUnit
+import com.battery.analysis.util.BatteryEnergyCalculator
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.imageview.ShapeableImageView
 import com.battery.analysis.timeline.util.DrawableBitmapCache
@@ -38,6 +40,11 @@ class AppUsageDetailBottomSheetDialog(
     private val isShizuku: Boolean = true,
     private val periodRangeText: String? = null
 ) : BottomSheetDialog(context) {
+
+    private val currentDisplayUnit: PowerDisplayUnit by lazy {
+        val prefs = context.getSharedPreferences(PowerDisplayUnit.PREFS_NAME, Context.MODE_PRIVATE)
+        PowerDisplayUnit.fromId(prefs.getInt(PowerDisplayUnit.PREF_KEY_POWER_DISPLAY_UNIT, PowerDisplayUnit.WH.id))
+    }
 
     private val dateTimeFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
     private val timeOnlyFormatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
@@ -264,18 +271,34 @@ class AppUsageDetailBottomSheetDialog(
     }
 
     /**
-     * 格式化瓦时能量为自适应单位文本，精确到小数点后三位（如 "6.400 mWh"、"0.250 Wh" 或 "0.000 mWh"）。
+     * 格式化能量/电量为自适应单位文本。
+     * 根据当前选定的单位模式适配：
+     * - MAH 模式下自适应呈现为精确电量（如 "25.3 mAh" 或 "0.0 mAh"）；
+     * - WH 模式下自适应呈现为精确能量（如 "6.400 mWh"、"0.250 Wh" 或 "0.000 mWh"）。
      *
      * @param wh 能量数值（单位：Wh）
-     * @return 格式化后的精确能量文本
+     * @return 格式化后的精确能量/电量文本
      */
     private fun formatEnergyValue(wh: Float): String {
-        if (wh <= 0f) return "0.000 mWh"
-        val mwh = wh * 1000f
-        return if (mwh >= 1000f) {
-            String.format(Locale.getDefault(), "%.3f Wh", wh)
+        return if (currentDisplayUnit == PowerDisplayUnit.MAH) {
+            val mah = BatteryEnergyCalculator.convertWhToMah(wh)
+            if (mah <= 0f) {
+                "0.0 mAh"
+            } else if (mah < 0.1f) {
+                "<0.1 mAh"
+            } else if (mah < 10f) {
+                String.format(Locale.getDefault(), "%.2f mAh", mah)
+            } else {
+                String.format(Locale.getDefault(), "%.1f mAh", mah)
+            }
         } else {
-            String.format(Locale.getDefault(), "%.3f mWh", mwh)
+            if (wh <= 0f) return "0.000 mWh"
+            val mwh = wh * 1000f
+            if (mwh >= 1000f) {
+                String.format(Locale.getDefault(), "%.3f Wh", wh)
+            } else {
+                String.format(Locale.getDefault(), "%.3f mWh", mwh)
+            }
         }
     }
 

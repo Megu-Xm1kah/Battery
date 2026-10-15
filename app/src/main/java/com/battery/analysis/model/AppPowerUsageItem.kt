@@ -379,6 +379,18 @@ data class AppPowerUsageItem(
         val fg = getForegroundEnergyValue()
         return formatSingleEnergyWh(fg)
     }
+
+    /**
+     * 根据指定的显示单位获取格式化后的前台消耗能量/电量展示文本。
+     * 若单位为 Wh，展示瓦时数值（如 "0.250Wh"）；若为 mAh，按行业标准标称工作电压折算为毫安时数值（如 "64.9mAh"）。
+     *
+     * @param unit 目标呈现的显示单位 [PowerDisplayUnit]
+     * @return 格式化后的能量/电量展示字符串（如 "0.250Wh" 或 "64.9mAh"）
+     */
+    fun getFormattedDisplayEnergy(unit: PowerDisplayUnit): String {
+        val fg = getForegroundEnergyValue()
+        return com.battery.analysis.util.BatteryEnergyCalculator.formatDisplayEnergy(fg, unit)
+    }
 }
 
 

@@ -42,7 +42,7 @@
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
                     android:paddingStart="14dp"
-                    android:paddingEnd="14dp"
+                    android:paddingEnd="5dp"
                     android:paddingTop="10dp"
                     android:paddingBottom="8dp">
 
@@ -82,6 +82,36 @@
                             tools:visibility="visible" />
                     </LinearLayout>
 
+                    <!-- 电量显示单位切换胶囊按钮（Wh <-> mAh） -->
+                    <LinearLayout
+                        android:id="@+id/btn_power_unit_toggle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="28dp"
+                        android:layout_marginEnd="5dp"
+                        android:background="@drawable/bg_power_unit_badge"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:orientation="horizontal"
+                        android:paddingStart="5dp"
+                        android:paddingEnd="5dp">
+
+                        <ImageView
+                            android:layout_width="10dp"
+                            android:layout_height="10dp"
+                            android:src="@drawable/ic_swap_horiz"
+                            app:tint="?android:attr/textColorPrimary" />
+
+                        <TextView
+                            android:id="@+id/tv_power_unit_badge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Wh"
+                            android:textColor="?android:attr/textColorPrimary"
+                            android:textSize="8sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
                     <!-- 右侧说明文档图标（问号说明） -->
                     <ImageView
                         android:id="@+id/btn_power_guide"
@@ -91,7 +121,7 @@
                         android:clickable="true"
                         android:contentDescription="@string/understood"
                         android:focusable="true"
-                        android:padding="6dp"
+                        android:padding="5dp"
                         android:src="@drawable/ic_help_circle"
                         app:tint="?android:attr/textColorPrimary" />
 
@@ -100,7 +130,6 @@
                         android:id="@+id/btn_power_history"
                         android:layout_width="34dp"
                         android:layout_height="34dp"
-                        android:layout_marginStart="4dp"
                         android:background="?attr/selectableItemBackgroundBorderless"
                         android:clickable="true"
                         android:contentDescription="@string/power_history_title"
@@ -114,7 +143,6 @@
                         android:id="@+id/btn_charging_history"
                         android:layout_width="34dp"
                         android:layout_height="34dp"
-                        android:layout_marginStart="4dp"
                         android:background="?attr/selectableItemBackgroundBorderless"
                         android:clickable="true"
                         android:contentDescription="充电历史记录"
@@ -128,7 +156,6 @@
                         android:id="@+id/btn_power_clear"
                         android:layout_width="34dp"
                         android:layout_height="34dp"
-                        android:layout_marginStart="4dp"
                         android:background="?attr/selectableItemBackgroundBorderless"
                         android:clickable="true"
                         android:contentDescription="@string/clear_all"

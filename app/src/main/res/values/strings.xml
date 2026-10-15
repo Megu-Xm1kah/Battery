@@ -356,6 +356,8 @@
     <string name="floating_horizontal_align_left">靠左</string>
     <string name="floating_horizontal_align_center">居中</string>
     <string name="floating_horizontal_align_right">靠右</string>
+    <string name="floating_horizontal_align_center_left">居中偏左 %d px</string>
+    <string name="floating_horizontal_align_center_right">居中偏右 %d px</string>
     <string name="floating_opacity">透明度</string>
     <string name="floating_opacity_format">%d%%</string>
     <string name="floating_theme_mode">主题明暗对应</string>
@@ -364,6 +366,10 @@
     <string name="floating_theme_light">亮色微透</string>
     <string name="floating_font_size">文字大小</string>
     <string name="floating_font_size_desc">调节悬浮窗内功率与温度文字字号</string>
+    <string name="floating_show_unit">显示单位</string>
+    <string name="floating_show_unit_desc">在悬浮窗功率与温度后显示 W、℃ 单位符号</string>
+    <string name="floating_show_background">显示背景和边框</string>
+    <string name="floating_show_background_desc">关闭后透明呈现，仅保留文字与图标</string>
     <string name="floating_step_minus">微调减小</string>
     <string name="floating_step_plus">微调增大</string>
     <string name="floating_permission_dialog_title">需要开启悬浮窗权限</string>

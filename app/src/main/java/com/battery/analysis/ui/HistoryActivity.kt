@@ -690,21 +690,12 @@ class HistoryActivity : AppCompatActivity() {
         }
 
         dialog.show()
-
-        dialog.window?.let { window ->
-            window.setBackgroundDrawableResource(android.R.color.transparent)
-            val displayMetrics = resources.displayMetrics
-            val width = (displayMetrics.widthPixels * 0.92).toInt()
-            val height = (displayMetrics.heightPixels * 0.95).toInt()
-            window.setLayout(width, height)
-            window.setGravity(android.view.Gravity.CENTER)
-
-            dialogView.layoutParams = android.widget.FrameLayout.LayoutParams(
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            dialogView.minimumHeight = height
-        }
+        com.battery.analysis.util.DialogWindowHelper.applyAdaptiveDialogWindowStyle(
+            dialog = dialog,
+            dialogView = dialogView,
+            widthRatio = 0.92,
+            maxHeightRatio = 0.90f
+        )
     }
 
     /**
@@ -803,13 +794,12 @@ class HistoryActivity : AppCompatActivity() {
         }
 
         dialog.show()
-
-        dialog.window?.let { window ->
-            window.setBackgroundDrawableResource(android.R.color.transparent)
-            val width = (resources.displayMetrics.widthPixels * 0.92).toInt()
-            window.setLayout(width, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
-            window.setGravity(android.view.Gravity.CENTER)
-        }
+        com.battery.analysis.util.DialogWindowHelper.applyAdaptiveDialogWindowStyle(
+            dialog = dialog,
+            dialogView = dialogView,
+            widthRatio = 0.92,
+            maxHeightRatio = 0.90f
+        )
     }
 
     /**

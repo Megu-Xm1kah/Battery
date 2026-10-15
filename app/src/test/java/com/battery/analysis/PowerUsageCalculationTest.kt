@@ -6341,7 +6341,144 @@ class PowerUsageCalculationTest {
         assertTrue("必须包含 0.35 W 休眠功率", detailMessage.contains("0.35 W"))
         assertTrue("深睡功率 > 0.20W 时必须包含偏高成因说明", detailMessage.contains("当前深睡功率偏高（> 0.20W），通常由双卡5G网络寻呼、弱信号基带发射、外设硬件漏电或后台静默拉起引起"))
     }
+
+    /**
+     * 验证用户实际反馈的息屏全唤醒高功耗工况（息屏 04m12s 0.056Wh 0.80W，图表时间轴全浅红唤醒）：
+     * 1. 当系统底层尚未上报深睡/唤醒独立字段时，决议方法严禁将整段息屏全额兜底为深度睡眠；
+     * 2. 依据物理采样点（平均 0.80W 活跃放电、无 CPU 挂起断层），忠实判定为 100% 息屏唤醒（awakeMs = 252s, deepSleepMs = 0s）；
+     * 3. 能量分解忠实划拨为：唤醒 0.056Wh / 0.80W，深度睡眠 0.000Wh / 0.00W；
+     * 4. 时间轴切片方法 splitScreenOffEvents 输出全部为浅红色唤醒事件，卡片与时间轴 100% 物理自洽！
+     */
+    @Test
+    fun testResolveScreenOffDurationsWhenAllAwakeHighWattsAndNoSuspendGaps() {
+        val screenOffMs = 252_000L // 04m12s
+        val offEnergyWh = 0.056f
+        val offStartTs = 1_700_000_000_000L
+        val offEndTs = offStartTs + screenOffMs
+
+        // 构造息屏期间每隔 5 秒一个采样点、功耗约为 0.80W 的采样序列（持续高功耗、无大于 20 秒的挂起断层）
+        val samples = mutableListOf<com.battery.analysis.model.PowerDischargePoint>()
+        var curTs = offStartTs
+        while (curTs <= offEndTs) {
+            samples.add(
+                com.battery.analysis.model.PowerDischargePoint(
+                    timestamp = curTs,
+                    elapsedHours = (curTs - offStartTs) / 3600000f,
+                    batteryLevel = 90,
+                    voltageVolts = 3.85f,
+                    powerWatts = 0.80f,
+                    isScreenOn = false
+                )
+            )
+            curTs += 5_000L
+        }
+
+        // 1. 验证决议方法：底层无标记时，依据物理采样点判定为纯唤醒，深睡为 0
+        val (awakeMs, deepSleepMs) = PowerUsageManager.resolveScreenOffAwakeAndDeepSleepDurations(
+            screenOffMs = screenOffMs,
+            rawAwakeMs = 0L,
+            rawDeepSleepMs = 0L,
+            samples = samples,
+            offStartTs = offStartTs,
+            offEndTs = offEndTs
+        )
+
+        assertEquals("息屏高功耗无断层时，唤醒时长必须忠实等于息屏时长（252,000ms）", screenOffMs, awakeMs)
+        assertEquals("息屏高功耗无断层时，深度睡眠时长必须为 0L", 0L, deepSleepMs)
+
+        // 2. 验证能量分解计算：唤醒全额获得能量与功率，深睡为 0
+        val decomposed = PowerUsageManager.calculateScreenOffAwakeAndDeepSleepEnergy(
+            offEnergyWh = offEnergyWh,
+            screenOffMs = screenOffMs,
+            deepSleepMs = deepSleepMs,
+            awakeMs = awakeMs,
+            samples = samples
+        )
+
+        assertTrue("分解结果必须可用", decomposed.isDecomposedAvailable)
+        assertEquals("唤醒能量全额承载息屏能耗 0.056Wh", 0.056f, decomposed.awakeEnergyWh, 0.001f)
+        assertEquals("唤醒平均功率准确反映 0.80W", 0.80f, decomposed.awakeWatts, 0.01f)
+        assertEquals("深度睡眠能量必须为 0Wh", 0f, decomposed.deepSleepEnergyWh, 0.0001f)
+        assertEquals("深度睡眠平均功率必须为 0W", 0f, decomposed.deepSleepWatts, 0.0001f)
+
+        // 3. 验证时间轴切片：全段切分为浅红色唤醒事件，不存在任何深度休眠暗红段
+        val timelineEvents = PowerUsageManager.splitScreenOffEvents(
+            offStartTs = offStartTs,
+            offEndTs = offEndTs,
+            realtimeSamples = samples,
+            totalAwakeMs = awakeMs,
+            totalDeepSleepMs = deepSleepMs
+        )
+
+        assertFalse("时间轴不能产生空事件", timelineEvents.isEmpty())
+        assertTrue("全息屏段切片必须全部为唤醒事件（isDeepSleep = false）", timelineEvents.all { !it.isDeepSleep })
+    }
+
+    /**
+     * 验证当息屏期间存在显著挂起采样断层（CPU 真正进入 Suspend）时，决议方法忠实切分休眠时长。
+     */
+    @Test
+    fun testResolveScreenOffDurationsWithHardwareSuspendGaps() {
+        val screenOffMs = 300_000L // 5 分钟
+        val offStartTs = 1_700_000_000_000L
+        val offEndTs = offStartTs + screenOffMs
+
+        // 构造：前 30 秒每 5 秒采样（功耗 0.10W），中间 240 秒无采样（CPU 挂起断层），最后 30 秒每 5 秒采样（0.10W）
+        val samples = mutableListOf<com.battery.analysis.model.PowerDischargePoint>()
+        var t = offStartTs
+        while (t <= offStartTs + 30_000L) {
+            samples.add(com.battery.analysis.model.PowerDischargePoint(timestamp = t, elapsedHours = 0f, batteryLevel = 80, voltageVolts = 3.85f, powerWatts = 0.10f, isScreenOn = false))
+            t += 5_000L
+        }
+        t = offStartTs + 270_000L
+        while (t <= offEndTs) {
+            samples.add(com.battery.analysis.model.PowerDischargePoint(timestamp = t, elapsedHours = 0.08f, batteryLevel = 80, voltageVolts = 3.85f, powerWatts = 0.10f, isScreenOn = false))
+            t += 5_000L
+        }
+
+        val (awakeMs, deepSleepMs) = PowerUsageManager.resolveScreenOffAwakeAndDeepSleepDurations(
+            screenOffMs = screenOffMs,
+            rawAwakeMs = 0L,
+            rawDeepSleepMs = 0L,
+            samples = samples,
+            offStartTs = offStartTs,
+            offEndTs = offEndTs
+        )
+
+        assertEquals("挂起断层部分必须忠实决议为深度睡眠时长（240,000ms）", 240_000L, deepSleepMs)
+        assertEquals("其余活跃采样部分必须忠实决议为唤醒时长（60,000ms）", 60_000L, awakeMs)
+    }
+
+    /**
+     * 验证 ShizukuBatteryStatsParser 能够精准解析包含全局 realtime/uptime 的 dumpsys batterystats 文本，
+     * 并依据 Linux 第一性原理将挂起差值映射为深度睡眠与唤醒时长。
+     */
+    @Test
+    fun testShizukuBatteryStatsParserTimeOnBatteryRealtimeUptimeDecoupling() {
+        val sampleDumpsys = """
+            Battery History:
+            0 (10) 090 status=discharging
+            Statistics since last charge:
+              System starts: 0, currently on battery: false
+              Time on battery: 10m 0s (100.0%) realtime, 2m 0s (20.0%) uptime
+              Screen on: 1m 0s (10.0%) 1x, Screen off: 9m 0s (90.0%)
+              Screen off discharge: 15.0 mAh
+              Device standby: 5.0 mAh
+              Capacity: 4500, Computed drain: 30.0, actual drain: 30.0
+        """.trimIndent()
+
+        val summary = com.battery.analysis.provider.ShizukuBatteryStatsParser.parseDischargeSummaryFromText(sampleDumpsys)
+
+        assertEquals("总放电物理时长必须为 10 分钟（600,000ms）", 600_000L, summary.dischargeDurationMs)
+        assertEquals("亮屏时长必须为 1 分钟（60,000ms）", 60_000L, summary.screenOnDurationMs)
+        assertEquals("息屏时长必须为 9 分钟（540,000ms）", 540_000L, summary.screenOffDurationMs)
+        // 全局深睡 = 10m realtime - 2m uptime = 8m = 480,000ms
+        assertEquals("深度睡眠必须准确解析为 8 分钟（480,000ms）", 480_000L, summary.screenOffDeepSleepDurationMs)
+        // 息屏唤醒 = 9m off - 8m sleep = 1m = 60,000ms
+        assertEquals("息屏唤醒必须准确解析为 1 分钟（60,000ms）", 60_000L, summary.screenOffAwakeDurationMs)
+    }
 }
+
 
 
 

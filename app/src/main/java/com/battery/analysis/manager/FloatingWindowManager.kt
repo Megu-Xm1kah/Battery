@@ -1,21 +1,17 @@
 package com.battery.analysis.manager
 
 import android.annotation.SuppressLint
-import android.content.BroadcastReceiver
 import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.net.Uri
-import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.PowerManager
 import android.provider.Settings
 import android.util.DisplayMetrics
 import android.util.TypedValue
@@ -30,14 +26,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import com.battery.analysis.R
-import com.battery.analysis.util.SysfsBatterySampler
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
+import com.battery.analysis.service.BatteryMonitorService
 import java.util.Locale
 import kotlin.math.abs
 
@@ -61,6 +50,9 @@ object FloatingWindowManager {
     const val KEY_OPACITY = "pref_floating_opacity"
     const val KEY_THEME_MODE = "pref_floating_theme_mode"
     const val KEY_FONT_SIZE = "pref_floating_font_size"
+    const val KEY_SHOW_UNIT = "pref_floating_show_unit"
+    const val KEY_SHOW_BACKGROUND = "pref_floating_show_background"
+    const val KEY_OFFSET_X = "pref_floating_offset_x"
 
     const val DEFAULT_FONT_SIZE = 11
     const val MIN_FONT_SIZE = 8
@@ -75,16 +67,33 @@ object FloatingWindowManager {
     const val THEME_DARK = 1
     const val THEME_LIGHT = 2
 
+    /**
+     * 悬浮窗视图内部子控件快速引用持有者，避免高频刷新时反复遍历 View 树。
+     *
+     * @property layoutPower 实时功率布局容器
+     * @property layoutTemp 实时温度布局容器
+     * @property tvDivider 分隔符文本控件
+     * @property tvPower 功率数值文本控件
+     * @property tvTemp 温度数值文本控件
+     * @property ivPower 功率图标控件
+     * @property ivTemp 温度图标控件
+     */
+    private class FloatingViewHolder(
+        val layoutPower: View,
+        val layoutTemp: View,
+        val tvDivider: TextView,
+        val tvPower: TextView,
+        val tvTemp: TextView,
+        val ivPower: ImageView,
+        val ivTemp: ImageView
+    )
+
     private var floatingView: View? = null
+    private var viewHolder: FloatingViewHolder? = null
     private var windowManager: WindowManager? = null
     private var layoutParams: WindowManager.LayoutParams? = null
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private var samplingJob: Job? = null
     private val mainHandler = Handler(Looper.getMainLooper())
-
-    @Volatile
-    private var isReceiverRegistered = false
 
     @Volatile
     private var isCallbacksRegistered = false
@@ -96,36 +105,6 @@ object FloatingWindowManager {
 
     @Volatile
     private var cachedTemperatureCelsius: Float? = null
-
-    /**
-     * 系统屏幕点亮与熄灭动态广播接收器，用于在息屏时休眠停止刷新、亮屏时立即恢复。
-     */
-    private val screenReceiver = object : BroadcastReceiver() {
-        /**
-         * 接收系统屏幕与电池广播。
-         *
-         * @param context 运行上下文
-         * @param intent 广播 Intent
-         */
-        override fun onReceive(context: Context?, intent: Intent?) {
-            val ctx = context ?: return
-            when (intent?.action) {
-                Intent.ACTION_SCREEN_ON -> {
-                    startSamplingLoop(ctx.applicationContext)
-                }
-                Intent.ACTION_SCREEN_OFF -> {
-                    stopSamplingLoop()
-                }
-                Intent.ACTION_BATTERY_CHANGED -> {
-                    val tempRaw = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1)
-                    if (tempRaw > 0) {
-                        cachedTemperatureCelsius = tempRaw / 10f
-                    }
-                    updateViewContent(ctx.applicationContext)
-                }
-            }
-        }
-    }
 
     /**
      * 系统配置变化回调（如屏幕旋转方向横竖屏切换），用于实时自适应重绘悬浮窗位置。
@@ -219,6 +198,8 @@ object FloatingWindowManager {
 
     /**
      * 设置并持久化是否开启悬浮窗显示。
+     * 开启时拉起悬浮窗，若后台监控服务尚未运行则启动服务作为数据源驱动；
+     * 关闭时隐藏悬浮窗，并在系统无需继续运行服务时安全停止后台服务。
      *
      * @param context 运行上下文
      * @param enabled 是否开启
@@ -227,8 +208,14 @@ object FloatingWindowManager {
         getPrefs(context).edit().putBoolean(KEY_ENABLED, enabled).apply()
         if (enabled) {
             show(context)
+            if (BatteryMonitorService.shouldServiceRun(context)) {
+                BatteryMonitorService.start(context)
+            }
         } else {
             hide(context)
+            if (!BatteryMonitorService.shouldServiceRun(context)) {
+                BatteryMonitorService.stop(context)
+            }
         }
     }
 
@@ -328,8 +315,63 @@ object FloatingWindowManager {
     }
 
     /**
+     * 获取悬浮窗相对屏幕水平中心基准线的偏移量（单位：像素）。
+     * 0 表示严格居中，负数表示居中偏左偏移，正数表示居中偏右偏移。
+     * 自适应横屏与竖屏切换，确保无论屏幕方向如何旋转，居中偏左或偏右的物理相对间距均始终精准保持。
+     *
+     * @param context 运行上下文
+     * @return 相对屏幕水平中心的偏移量像素值
+     */
+    fun getOffsetX(context: Context): Int {
+        val prefs = getPrefs(context)
+        if (prefs.contains(KEY_OFFSET_X)) {
+            return prefs.getInt(KEY_OFFSET_X, 0)
+        }
+        val savedX = prefs.getInt(KEY_POS_X, -1)
+        if (savedX >= 0) {
+            val (w, h) = getRealScreenSize(context)
+            val portWidth = minOf(w, h)
+            val density = context.resources.displayMetrics.density
+            val defaultViewWidth = (120 * density).toInt()
+            val currentViewWidth = floatingView?.width?.takeIf { it > 0 } ?: defaultViewWidth
+            val portCenter = (portWidth - currentViewWidth) / 2
+            val calculatedOffset = savedX - portCenter
+            prefs.edit().putInt(KEY_OFFSET_X, calculatedOffset).apply()
+            return calculatedOffset
+        }
+        return 0
+    }
+
+    /**
+     * 设置并持久化悬浮窗相对屏幕水平中心基准线的偏移量（单位：像素）。
+     * 同步刷新并推导保存横竖屏各自对应的绝对 X 坐标缓存。
+     *
+     * @param context 运行上下文
+     * @param offset 相对屏幕水平中心的偏移量（0 居中，负数居中偏左，正数居中偏右）
+     */
+    fun setOffsetX(context: Context, offset: Int) {
+        val prefs = getPrefs(context)
+        val (w, h) = getRealScreenSize(context)
+        val portWidth = minOf(w, h)
+        val landWidth = maxOf(w, h)
+        val density = context.resources.displayMetrics.density
+        val defaultViewWidth = (120 * density).toInt()
+        val currentViewWidth = floatingView?.width?.takeIf { it > 0 } ?: defaultViewWidth
+        val portCenter = (portWidth - currentViewWidth) / 2
+        val landCenter = (landWidth - currentViewWidth) / 2
+        val portMaxX = (portWidth - currentViewWidth).coerceAtLeast(0)
+        val landMaxX = (landWidth - currentViewWidth).coerceAtLeast(0)
+
+        prefs.edit()
+            .putInt(KEY_OFFSET_X, offset)
+            .putInt(KEY_POS_X, (portCenter + offset).coerceIn(0, portMaxX))
+            .putInt(KEY_POS_X_LAND, (landCenter + offset).coerceIn(0, landMaxX))
+            .apply()
+    }
+
+    /**
      * 获取指定或当前屏幕方向下持久化的水平位置 X 坐标（像素）。
-     * 若处于横屏模式且尚未单独保存过横屏坐标，将智能根据屏幕比例自适应转换并约束。
+     * 若处于横屏模式且未单独保存过横屏坐标，智能根据相对居中偏移量自适应转换为横屏对应最佳坐标。
      *
      * @param context 运行上下文
      * @param isLandscape 是否为横屏方向（默认依据当前屏幕动态判定）
@@ -337,9 +379,34 @@ object FloatingWindowManager {
      */
     fun getPosX(context: Context, isLandscape: Boolean = isLandscape(context)): Int {
         val prefs = getPrefs(context)
+        val (w, h) = getRealScreenSize(context)
+        val screenWidth = if (isLandscape) maxOf(w, h) else minOf(w, h)
+        val density = context.resources.displayMetrics.density
+        val defaultViewWidth = (120 * density).toInt()
+        val currentViewWidth = floatingView?.width?.takeIf { it > 0 } ?: defaultViewWidth
+        val centerX = (screenWidth - currentViewWidth) / 2
+        val maxX = (screenWidth - currentViewWidth).coerceAtLeast(0)
+
+        if (prefs.contains(KEY_OFFSET_X)) {
+            val offset = prefs.getInt(KEY_OFFSET_X, 0)
+            return (centerX + offset).coerceIn(0, maxX)
+        }
+
         return if (isLandscape) {
             val landX = prefs.getInt(KEY_POS_X_LAND, -1)
-            if (landX >= 0) landX else prefs.getInt(KEY_POS_X, -1)
+            if (landX >= 0) {
+                landX
+            } else {
+                val portX = prefs.getInt(KEY_POS_X, -1)
+                if (portX >= 0) {
+                    val portWidth = minOf(w, h)
+                    val portCenter = (portWidth - currentViewWidth) / 2
+                    val offset = portX - portCenter
+                    (centerX + offset).coerceIn(0, maxX)
+                } else {
+                    -1
+                }
+            }
         } else {
             prefs.getInt(KEY_POS_X, -1)
         }
@@ -347,14 +414,21 @@ object FloatingWindowManager {
 
     /**
      * 设置并持久化指定或当前屏幕方向下的水平位置 X 坐标（像素）。
+     * 自动推导并同步相对居中偏移量，保证横屏与竖屏自适应联动。
      *
      * @param context 运行上下文
      * @param x X 坐标像素值
      * @param isLandscape 是否为横屏方向（默认依据当前屏幕动态判定）
      */
     fun setPosX(context: Context, x: Int, isLandscape: Boolean = isLandscape(context)) {
-        val key = if (isLandscape) KEY_POS_X_LAND else KEY_POS_X
-        getPrefs(context).edit().putInt(key, x).apply()
+        val (w, h) = getRealScreenSize(context)
+        val screenWidth = if (isLandscape) maxOf(w, h) else minOf(w, h)
+        val density = context.resources.displayMetrics.density
+        val defaultViewWidth = (120 * density).toInt()
+        val currentViewWidth = floatingView?.width?.takeIf { it > 0 } ?: defaultViewWidth
+        val centerX = (screenWidth - currentViewWidth) / 2
+        val offset = x - centerX
+        setOffsetX(context, offset)
     }
 
     /**
@@ -420,12 +494,16 @@ object FloatingWindowManager {
 
     /**
      * 设置并持久化水平对齐模式。
+     * 若设置为居中对齐，自动重置相对居中偏移量为 0。
      *
      * @param context 运行上下文
      * @param align 对齐模式枚举值
      */
     fun setHorizontalAlign(context: Context, align: Int) {
         getPrefs(context).edit().putInt(KEY_HORIZONTAL_ALIGN, align).apply()
+        if (align == ALIGN_CENTER) {
+            getPrefs(context).edit().putInt(KEY_OFFSET_X, 0).apply()
+        }
         updatePositionAndAppearance(context)
     }
 
@@ -472,6 +550,48 @@ object FloatingWindowManager {
     }
 
     /**
+     * 查询悬浮窗是否开启单位符号显示（W、℃）。
+     *
+     * @param context 运行上下文
+     * @return 若开启显示单位返回 true，未开启返回 false（默认 true）
+     */
+    fun isShowUnit(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_SHOW_UNIT, true)
+    }
+
+    /**
+     * 设置并持久化悬浮窗是否开启单位符号显示。
+     *
+     * @param context 运行上下文
+     * @param show 是否显示单位
+     */
+    fun setShowUnit(context: Context, show: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_SHOW_UNIT, show).apply()
+        updatePositionAndAppearance(context)
+    }
+
+    /**
+     * 查询悬浮窗是否显示卡片背景与边框。
+     *
+     * @param context 运行上下文
+     * @return 若显示背景和边框返回 true，透明沉浸返回 false（默认 true）
+     */
+    fun isShowBackground(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_SHOW_BACKGROUND, true)
+    }
+
+    /**
+     * 设置并持久化悬浮窗是否显示卡片背景与边框。
+     *
+     * @param context 运行上下文
+     * @param show 是否显示背景和边框
+     */
+    fun setShowBackground(context: Context, show: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_SHOW_BACKGROUND, show).apply()
+        updatePositionAndAppearance(context)
+    }
+
+    /**
      * 获取系统顶层状态栏的高度物理像素。
      *
      * @param context 运行上下文
@@ -499,6 +619,10 @@ object FloatingWindowManager {
             return
         }
 
+        // 若服务已在运行，预先提取最新缓存数据用于首次展示
+        cachedPowerWatts = BatteryMonitorService.getLatestCachedPowerWatts()
+        cachedTemperatureCelsius = BatteryMonitorService.getLatestCachedTemperature()
+
         mainHandler.post {
             try {
                 if (floatingView != null) {
@@ -510,6 +634,15 @@ object FloatingWindowManager {
                 val inflater = LayoutInflater.from(appContext)
                 val view = inflater.inflate(R.layout.layout_floating_window, null)
                 floatingView = view
+                viewHolder = FloatingViewHolder(
+                    layoutPower = view.findViewById(R.id.layout_floating_power),
+                    layoutTemp = view.findViewById(R.id.layout_floating_temp),
+                    tvDivider = view.findViewById(R.id.tv_floating_divider),
+                    tvPower = view.findViewById(R.id.tv_floating_power),
+                    tvTemp = view.findViewById(R.id.tv_floating_temp),
+                    ivPower = view.findViewById(R.id.iv_floating_power_icon),
+                    ivTemp = view.findViewById(R.id.iv_floating_temp_icon)
+                )
 
                 setupTouchDrag(appContext, view)
 
@@ -559,9 +692,7 @@ object FloatingWindowManager {
 
                 windowManager?.addView(view, wmParams)
 
-                registerScreenReceiver(appContext)
                 registerComponentCallbacks(appContext)
-                startSamplingLoop(appContext)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -569,7 +700,7 @@ object FloatingWindowManager {
     }
 
     /**
-     * 关闭并隐藏桌面悬浮窗，释放 Window 与采样监听资源。
+     * 关闭并隐藏桌面悬浮窗，释放 Window 与屏幕方向监听资源。
      *
      * @param context 运行上下文
      */
@@ -577,8 +708,6 @@ object FloatingWindowManager {
         val appContext = context.applicationContext
         mainHandler.post {
             try {
-                stopSamplingLoop()
-                unregisterScreenReceiver(appContext)
                 unregisterComponentCallbacks(appContext)
                 floatingView?.let { view ->
                     windowManager?.removeViewImmediate(view)
@@ -586,42 +715,10 @@ object FloatingWindowManager {
             } catch (_: Exception) {
             } finally {
                 floatingView = null
+                viewHolder = null
                 layoutParams = null
                 windowManager = null
             }
-        }
-    }
-
-    /**
-     * 注册系统屏幕亮灭与电池状态动态广播。
-     *
-     * @param context 运行上下文
-     */
-    private fun registerScreenReceiver(context: Context) {
-        if (!isReceiverRegistered) {
-            try {
-                val filter = IntentFilter().apply {
-                    addAction(Intent.ACTION_SCREEN_ON)
-                    addAction(Intent.ACTION_SCREEN_OFF)
-                    addAction(Intent.ACTION_BATTERY_CHANGED)
-                }
-                context.registerReceiver(screenReceiver, filter)
-                isReceiverRegistered = true
-            } catch (_: Exception) {}
-        }
-    }
-
-    /**
-     * 注销系统屏幕亮灭与电池状态动态广播。
-     *
-     * @param context 运行上下文
-     */
-    private fun unregisterScreenReceiver(context: Context) {
-        if (isReceiverRegistered) {
-            try {
-                context.unregisterReceiver(screenReceiver)
-            } catch (_: Exception) {}
-            isReceiverRegistered = false
         }
     }
 
@@ -718,15 +815,16 @@ object FloatingWindowManager {
         val alignMode = getHorizontalAlign(context)
         val edgePadding = (16 * density).toInt()
         val maxX = (screenWidth - viewWidth).coerceAtLeast(0)
+        val centerX = ((screenWidth - viewWidth) / 2).coerceAtLeast(0)
         params.x = when (alignMode) {
             ALIGN_LEFT -> edgePadding.coerceIn(0, maxX)
-            ALIGN_CENTER -> ((screenWidth - viewWidth) / 2).coerceAtLeast(0)
+            ALIGN_CENTER -> centerX
             ALIGN_RIGHT -> (screenWidth - viewWidth - edgePadding).coerceAtLeast(0)
             ALIGN_CUSTOM -> {
-                val savedX = getPosX(context, isLand)
-                if (savedX >= 0) savedX.coerceIn(0, maxX) else ((screenWidth - viewWidth) / 2).coerceAtLeast(0)
+                val offset = getOffsetX(context)
+                (centerX + offset).coerceIn(0, maxX)
             }
-            else -> ((screenWidth - viewWidth) / 2).coerceAtLeast(0)
+            else -> centerX
         }
     }
 
@@ -747,11 +845,21 @@ object FloatingWindowManager {
             else -> isSystemDarkMode(context)
         }
 
-        val tvPower = view.findViewById<TextView>(R.id.tv_floating_power)
-        val tvTemp = view.findViewById<TextView>(R.id.tv_floating_temp)
-        val tvDivider = view.findViewById<TextView>(R.id.tv_floating_divider)
-        val ivPower = view.findViewById<ImageView>(R.id.iv_floating_power_icon)
-        val ivTemp = view.findViewById<ImageView>(R.id.iv_floating_temp_icon)
+        val vh = viewHolder ?: FloatingViewHolder(
+            layoutPower = view.findViewById(R.id.layout_floating_power),
+            layoutTemp = view.findViewById(R.id.layout_floating_temp),
+            tvDivider = view.findViewById(R.id.tv_floating_divider),
+            tvPower = view.findViewById(R.id.tv_floating_power),
+            tvTemp = view.findViewById(R.id.tv_floating_temp),
+            ivPower = view.findViewById(R.id.iv_floating_power_icon),
+            ivTemp = view.findViewById(R.id.iv_floating_temp_icon)
+        ).also { viewHolder = it }
+
+        val tvPower = vh.tvPower
+        val tvTemp = vh.tvTemp
+        val tvDivider = vh.tvDivider
+        val ivPower = vh.ivPower
+        val ivTemp = vh.ivTemp
 
         // 动态应用用户设置的文字大小
         val fontSize = getFontSize(context).toFloat()
@@ -759,15 +867,35 @@ object FloatingWindowManager {
         tvTemp.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize)
         tvDivider.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize + 0.5f)
 
+        val showBg = isShowBackground(context)
+        if (showBg) {
+            if (isDark) {
+                view.setBackgroundResource(R.drawable.bg_floating_window_dark)
+            } else {
+                view.setBackgroundResource(R.drawable.bg_floating_window_light)
+            }
+            tvPower.setShadowLayer(0f, 0f, 0f, 0)
+            tvTemp.setShadowLayer(0f, 0f, 0f, 0)
+            tvDivider.setShadowLayer(0f, 0f, 0f, 0)
+        } else {
+            view.setBackgroundColor(Color.TRANSPARENT)
+            val density = context.resources.displayMetrics.density
+            val hPad = (4 * density).toInt()
+            val vPad = (1 * density).toInt()
+            view.setPadding(hPad, vPad, hPad, vPad)
+            val shadowColor = if (isDark) Color.parseColor("#80000000") else Color.parseColor("#40000000")
+            tvPower.setShadowLayer(2.5f, 0f, 1f, shadowColor)
+            tvTemp.setShadowLayer(2.5f, 0f, 1f, shadowColor)
+            tvDivider.setShadowLayer(2.5f, 0f, 1f, shadowColor)
+        }
+
         if (isDark) {
-            view.setBackgroundResource(R.drawable.bg_floating_window_dark)
             tvPower.setTextColor(Color.WHITE)
             tvTemp.setTextColor(Color.WHITE)
             tvDivider.setTextColor(Color.parseColor("#88FFFFFF"))
             ivPower.setColorFilter(Color.parseColor("#10B981"))
             ivTemp.setColorFilter(Color.parseColor("#F59E0B"))
         } else {
-            view.setBackgroundResource(R.drawable.bg_floating_window_light)
             tvPower.setTextColor(Color.parseColor("#111827"))
             tvTemp.setTextColor(Color.parseColor("#111827"))
             tvDivider.setTextColor(Color.parseColor("#88000000"))
@@ -853,7 +981,9 @@ object FloatingWindowManager {
                         val finalX = params.x.coerceIn(0, maxX)
                         params.y = finalY
                         params.x = finalX
-                        setPosX(context, finalX, isLand)
+                        val currentCenterX = ((screenWidth - viewW) / 2).coerceAtLeast(0)
+                        val currentOffset = finalX - currentCenterX
+                        setOffsetX(context, currentOffset)
                         setPosY(context, finalY, isLand)
                         setHorizontalAlign(context, ALIGN_CUSTOM)
                     }
@@ -873,50 +1003,58 @@ object FloatingWindowManager {
      */
     private fun updateViewContent(context: Context) {
         val view = floatingView ?: return
+        val vh = viewHolder ?: FloatingViewHolder(
+            layoutPower = view.findViewById(R.id.layout_floating_power),
+            layoutTemp = view.findViewById(R.id.layout_floating_temp),
+            tvDivider = view.findViewById(R.id.tv_floating_divider),
+            tvPower = view.findViewById(R.id.tv_floating_power),
+            tvTemp = view.findViewById(R.id.tv_floating_temp),
+            ivPower = view.findViewById(R.id.iv_floating_power_icon),
+            ivTemp = view.findViewById(R.id.iv_floating_temp_icon)
+        ).also { viewHolder = it }
+
         val showPower = isShowPower(context)
         val showTemp = isShowTemp(context)
+        val showUnit = isShowUnit(context)
 
-        val layoutPower = view.findViewById<View>(R.id.layout_floating_power)
-        val layoutTemp = view.findViewById<View>(R.id.layout_floating_temp)
-        val tvDivider = view.findViewById<View>(R.id.tv_floating_divider)
-        val tvPower = view.findViewById<TextView>(R.id.tv_floating_power)
-        val tvTemp = view.findViewById<TextView>(R.id.tv_floating_temp)
-
-        layoutPower.visibility = if (showPower) View.VISIBLE else View.GONE
-        layoutTemp.visibility = if (showTemp) View.VISIBLE else View.GONE
-        tvDivider.visibility = if (showPower && showTemp) View.VISIBLE else View.GONE
+        vh.layoutPower.visibility = if (showPower) View.VISIBLE else View.GONE
+        vh.layoutTemp.visibility = if (showTemp) View.VISIBLE else View.GONE
+        vh.tvDivider.visibility = if (showPower && showTemp) View.VISIBLE else View.GONE
 
         // 格式化实时功率展示
         if (showPower) {
             val pWatts = cachedPowerWatts
             val powerText = if (pWatts != null && abs(pWatts) > 0.05f) {
-                if (pWatts > 0f) {
-                    String.format(Locale.getDefault(), "%.1fW", pWatts)
+                val formatted = if (pWatts > 0f) {
+                    String.format(Locale.getDefault(), "%.1f", pWatts)
                 } else {
-                    String.format(Locale.getDefault(), "-%.1fW", abs(pWatts))
+                    String.format(Locale.getDefault(), "-%.1f", abs(pWatts))
                 }
+                if (showUnit) "${formatted}W" else formatted
             } else if (pWatts != null) {
-                "0.0W"
+                if (showUnit) "0.0W" else "0.0"
             } else {
-                "--W"
+                if (showUnit) "--W" else "--"
             }
-            tvPower.text = powerText
+            vh.tvPower.text = powerText
         }
 
         // 格式化实时温度展示
         if (showTemp) {
             val temp = cachedTemperatureCelsius
             val tempText = if (temp != null && temp > 0f) {
-                String.format(Locale.getDefault(), "%.1f℃", temp)
+                val formatted = String.format(Locale.getDefault(), "%.1f", temp)
+                if (showUnit) "${formatted}℃" else formatted
             } else {
-                "--℃"
+                if (showUnit) "--℃" else "--"
             }
-            tvTemp.text = tempText
+            vh.tvTemp.text = tempText
         }
     }
 
     /**
-     * 外部（如后台服务采样更新时）主动注入最新物理功率与温度数据。
+     * 接收后台采样服务数据源推送的最新物理功率与温度数据并刷新悬浮窗展示。
+     * 悬浮窗作为纯展示组件，自身不维护任何后台定时器或轮询协程，完全由系统采样服务单一数据源驱动更新。
      *
      * @param context 运行上下文
      * @param powerWatts 瞬时充放电功率（瓦特 W），无法获取传 null
@@ -928,81 +1066,5 @@ object FloatingWindowManager {
         mainHandler.post {
             updateViewContent(context.applicationContext)
         }
-    }
-
-    /**
-     * 开启悬浮窗自主低功耗数据采样循环。
-     * 仅在屏幕处于点亮交互状态下周期性采集真实底层硬件数据，息屏自动暂停。
-     *
-     * @param context 运行上下文
-     */
-    private fun startSamplingLoop(context: Context) {
-        samplingJob?.cancel()
-        val appContext = context.applicationContext
-        samplingJob = scope.launch(Dispatchers.IO) {
-            val pm = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
-            while (isActive) {
-                val isScreenOn = pm?.isInteractive ?: true
-                if (!isScreenOn) {
-                    break
-                }
-
-                try {
-                    // 读取系统底层真实电池状态
-                    val sticky = appContext.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-                    var isCharging = false
-                    if (sticky != null) {
-                        val tempRaw = sticky.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1)
-                        val statusRaw = sticky.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
-                        val pluggedRaw = sticky.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0)
-                        if (tempRaw > 0) {
-                            cachedTemperatureCelsius = tempRaw / 10f
-                        }
-                        isCharging = (statusRaw == BatteryManager.BATTERY_STATUS_CHARGING ||
-                                statusRaw == BatteryManager.BATTERY_STATUS_FULL ||
-                                pluggedRaw > 0)
-                    }
-
-                    // 真实底层瞬时硬件采样
-                    if (isCharging) {
-                        val hwSample = SysfsBatterySampler.sampleHardwareBattery(
-                            context = appContext,
-                            isCharging = true,
-                            allowProcessFork = false
-                        )
-                        if (hwSample?.powerWatts != null) {
-                            cachedPowerWatts = hwSample.powerWatts
-                        }
-                    } else {
-                        val hwSample = SysfsBatterySampler.sampleHardwareDischarge(
-                            context = appContext,
-                            fallbackVoltageVolts = 4.0f,
-                            fallbackTempCelsius = cachedTemperatureCelsius ?: 25.0f,
-                            allowProcessFork = false
-                        )
-                        if (hwSample?.powerWatts != null) {
-                            cachedPowerWatts = hwSample.powerWatts
-                        }
-                        if (hwSample?.temperatureCelsius != null) {
-                            cachedTemperatureCelsius = hwSample.temperatureCelsius
-                        }
-                    }
-
-                    launch(Dispatchers.Main) {
-                        updateViewContent(appContext)
-                    }
-                } catch (_: Exception) {}
-
-                delay(1000L)
-            }
-        }
-    }
-
-    /**
-     * 停止自主数据采样循环协程。
-     */
-    private fun stopSamplingLoop() {
-        samplingJob?.cancel()
-        samplingJob = null
     }
 }

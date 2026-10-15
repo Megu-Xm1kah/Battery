@@ -933,6 +933,9 @@ class PowerUsageManager private constructor(private val context: Context) {
             if (offEnergyWh <= 0f || screenOffMs <= 0L) {
                 return ScreenOffDecomposedEnergy(0f, 0f, 0f, 0f, isDecomposedAvailable = false)
             }
+            if (awakeMs <= 0L && deepSleepMs <= 0L) {
+                return ScreenOffDecomposedEnergy(0f, 0f, 0f, 0f, isDecomposedAvailable = false)
+            }
             if (deepSleepMs <= 0L) {
                 val awakeWatts = if (awakeMs > 0L) (offEnergyWh / (awakeMs.toFloat() / 3600000f)) else (offEnergyWh / (screenOffMs.toFloat() / 3600000f))
                 return ScreenOffDecomposedEnergy(offEnergyWh, 0f, awakeWatts, 0f, isDecomposedAvailable = true)
@@ -1069,6 +1072,103 @@ class PowerUsageManager private constructor(private val context: Context) {
         }
 
         /**
+         * 结合系统底层统计、本地屏幕广播增量与瞬时硬件物理放电采样点，科学决议息屏期间的真实唤醒与深度睡眠时长。
+         * 严禁无依据捏造假数据或将整段息屏盲目划归为深度休眠。
+         *
+         * @param screenOffMs 息屏总耗时（毫秒）
+         * @param rawAwakeMs 底层或本地记录的唤醒时长（毫秒，默认 0L）
+         * @param rawDeepSleepMs 底层或本地记录的深度睡眠时长（毫秒，默认 0L）
+         * @param samples 瞬时放电物理采样点列表 [List<PowerDischargePoint>]
+         * @param offStartTs 息屏开始时间戳（毫秒，默认 0L）
+         * @param offEndTs 息屏结束时间戳（毫秒，默认 0L）
+         * @return 包含真实物理唤醒时长与深度睡眠时长的二元组 [Pair<Long, Long>] (first 为 awakeMs, second 为 deepSleepMs)
+         */
+        fun resolveScreenOffAwakeAndDeepSleepDurations(
+            screenOffMs: Long,
+            rawAwakeMs: Long = 0L,
+            rawDeepSleepMs: Long = 0L,
+            samples: List<PowerDischargePoint> = emptyList(),
+            offStartTs: Long = 0L,
+            offEndTs: Long = 0L
+        ): Pair<Long, Long> {
+            if (screenOffMs <= 0L) {
+                return Pair(0L, 0L)
+            }
+
+            // 1. 底层或本地数据源已给出明确的深睡或唤醒时长
+            if (rawAwakeMs > 0L && rawDeepSleepMs > 0L) {
+                val total = rawAwakeMs + rawDeepSleepMs
+                val ratio = rawAwakeMs.toDouble() / total.toDouble()
+                val resolvedAwake = (screenOffMs * ratio).toLong().coerceIn(0L, screenOffMs)
+                val resolvedSleep = (screenOffMs - resolvedAwake).coerceAtLeast(0L)
+                return Pair(resolvedAwake, resolvedSleep)
+            }
+            if (rawAwakeMs > 0L && rawDeepSleepMs <= 0L) {
+                val resolvedAwake = rawAwakeMs.coerceAtMost(screenOffMs)
+                val resolvedSleep = (screenOffMs - resolvedAwake).coerceAtLeast(0L)
+                return Pair(resolvedAwake, resolvedSleep)
+            }
+            if (rawDeepSleepMs > 0L && rawAwakeMs <= 0L) {
+                val resolvedSleep = rawDeepSleepMs.coerceAtMost(screenOffMs)
+                val resolvedAwake = (screenOffMs - resolvedSleep).coerceAtLeast(0L)
+                return Pair(resolvedAwake, resolvedSleep)
+            }
+
+            // 2. 底层与本地统计均缺失时（rawAwakeMs == 0L 且 rawDeepSleepMs == 0L）：
+            // 依据硬件时钟第一性原理与瞬时物理采样点（dischargeRealtimeSamples）进行客观物理决议，
+            // 杜绝无依据盲目将整段息屏全额兜底为深度睡眠。
+            val offSamples = if (offStartTs > 0L && offEndTs >= offStartTs) {
+                samples.filter { it.timestamp in offStartTs..offEndTs }
+            } else {
+                samples.filter { !it.isScreenOn }
+            }.sortedBy { it.timestamp }
+
+            // 物理准则 A：若息屏时长极短（<= 15秒），Linux 内核来不及触发挂起，物理上为 100% 息屏唤醒
+            if (screenOffMs <= 15_000L) {
+                return Pair(screenOffMs, 0L)
+            }
+
+            // 物理准则 B：基于硬件瞬时物理采样点进行挂起断层与功耗特征诊断
+            if (offSamples.size >= 2) {
+                var totalSuspendMs = 0L
+                val sleepThresholdMs = 20_000L
+                var prevTs = offSamples.first().timestamp
+                for (i in 1 until offSamples.size) {
+                    val curTs = offSamples[i].timestamp
+                    val gap = curTs - prevTs
+                    if (gap > sleepThresholdMs) {
+                        // CPU 进入挂起状态导致采样停止，记录真实物理挂起断层
+                        totalSuspendMs += gap
+                    }
+                    prevTs = curTs
+                }
+
+                val avgWatts = offSamples.map { it.powerWatts }.filter { it > 0f }.average().toFloat()
+
+                // 若息屏期间采样点功率处于活跃放电水平（> MAX_STANDBY_COMPENSATION_WATTS，0.35W）且不存在显著的挂起断层：
+                // 物理上证明 CPU 始终保持活跃运行（如后台音频、持有唤醒锁等），未真正进入挂起休眠
+                if (avgWatts > MAX_STANDBY_COMPENSATION_WATTS && totalSuspendMs <= 0L) {
+                    return Pair(screenOffMs, 0L)
+                }
+
+                if (totalSuspendMs > 0L) {
+                    val resolvedSleep = totalSuspendMs.coerceIn(0L, screenOffMs)
+                    val resolvedAwake = (screenOffMs - resolvedSleep).coerceAtLeast(0L)
+                    return Pair(resolvedAwake, resolvedSleep)
+                }
+
+                // 若功耗极低（<= 0.15W 典型底噪）且无断层，预留灭屏初期十几秒过渡唤醒，其余为深度睡眠
+                if (avgWatts in 0.0001f..0.15f) {
+                    val transitionAwake = minOf(15_000L, screenOffMs)
+                    return Pair(transitionAwake, screenOffMs - transitionAwake)
+                }
+            }
+
+            // 3. 确实无底层数据且无充分采样点支持时，忠实反映未获取状态（0L, 0L），绝不捏造假数据
+            return Pair(0L, 0L)
+        }
+
+        /**
          * 在系统处于亮屏交互态（isInteractive = true）时，动态延伸屏幕点亮区间至最新查询终点，
          * 消除短时内存缓存导致的亮屏区间截断与息屏时间虚增回缩跳变。
          *
@@ -1190,10 +1290,10 @@ class PowerUsageManager private constructor(private val context: Context) {
                     result.add(ScreenEvent(cursor, pt.timestamp, isScreenOn = false, isDeepSleep = true))
                 } else if (gap > 0L) {
                     // 短时间连续采样：
-                    // 若功耗极低（<= 0.25W 待机底噪）且已渡过灭屏初期的过渡期，判定为深度睡眠；
-                    // 否则若处于活跃功耗（> 0.25W）或灭屏初期，判定为唤醒活跃
+                    // 若功耗极低（<= MAX_STANDBY_COMPENSATION_WATTS，0.35W 待机底噪）且已渡过灭屏初期的过渡期，判定为深度睡眠；
+                    // 否则若处于活跃功耗（> MAX_STANDBY_COMPENSATION_WATTS）或灭屏初期，判定为唤醒活跃
                     val elapsedFromStart = cursor - offStartTs
-                    val isSleep = (pt.powerWatts in 0.0001f..0.25f && elapsedFromStart >= targetAwakeMs) ||
+                    val isSleep = (pt.powerWatts in 0.0001f..MAX_STANDBY_COMPENSATION_WATTS && elapsedFromStart >= targetAwakeMs) ||
                             (pt.powerWatts in 0.0001f..0.15f)
                     result.add(ScreenEvent(cursor, pt.timestamp, isScreenOn = false, isDeepSleep = isSleep))
                 }
@@ -3972,23 +4072,23 @@ class PowerUsageManager private constructor(private val context: Context) {
                 val remBackgroundStr = if (enableBackgroundStats && bgWatts >= 0.05f && energy > 0f) formatHoursToText(energy / bgWatts) else "--"
                 val bgDurationStr = if (enableBackgroundStats) formatDuration(effectiveBgMs) else "--"
 
-                // 唤醒与深度睡眠分段统计
-                val awakeMs = if (stats.screenOffAwakeDurationMs > 0L) {
+                // 唤醒与深度睡眠分段统计（依据真实底层数据与瞬时硬件采样点科学决议，严禁过度兜底捏造假数据）
+                val rawAwake = if (stats.screenOffAwakeDurationMs > 0L) {
                     stats.screenOffAwakeDurationMs
-                } else if (localScreenOffAwakeDurationMs > 0L) {
+                } else {
                     localScreenOffAwakeDurationMs
-                } else {
-                    0L
                 }
-                val deepSleepMs = if (stats.screenOffDeepSleepDurationMs > 0L) {
+                val rawDeepSleep = if (stats.screenOffDeepSleepDurationMs > 0L) {
                     stats.screenOffDeepSleepDurationMs
-                } else if (localScreenOffDeepSleepDurationMs > 0L) {
-                    localScreenOffDeepSleepDurationMs
-                } else if (screenOffMs > awakeMs) {
-                    (screenOffMs - awakeMs).coerceAtLeast(0L)
                 } else {
-                    0L
+                    localScreenOffDeepSleepDurationMs
                 }
+                val (awakeMs, deepSleepMs) = resolveScreenOffAwakeAndDeepSleepDurations(
+                    screenOffMs = screenOffMs,
+                    rawAwakeMs = rawAwake,
+                    rawDeepSleepMs = rawDeepSleep,
+                    samples = recentSamples.ifEmpty { getDischargeRealtimeSamples() }
+                )
 
                 val decomposedOff = calculateScreenOffAwakeAndDeepSleepEnergy(
                     offEnergyWh = offEnergyWh,
@@ -6317,19 +6417,13 @@ class PowerUsageManager private constructor(private val context: Context) {
         val rawBgMs = screenOffMs.coerceIn(0L, totalMs)
         val bgDurationStr = formatDuration(rawBgMs)
 
-        // 唤醒与深度睡眠分段统计
-        val awakeMs = if (localScreenOffAwakeDurationMs > 0L) {
-            localScreenOffAwakeDurationMs
-        } else {
-            0L
-        }
-        val deepSleepMs = if (localScreenOffDeepSleepDurationMs > 0L) {
-            localScreenOffDeepSleepDurationMs
-        } else if (screenOffMs > awakeMs) {
-            (screenOffMs - awakeMs).coerceAtLeast(0L)
-        } else {
-            0L
-        }
+        // 唤醒与深度睡眠分段统计（依据真实底层数据与瞬时硬件采样点科学决议，严禁过度兜底捏造假数据）
+        val (awakeMs, deepSleepMs) = resolveScreenOffAwakeAndDeepSleepDurations(
+            screenOffMs = screenOffMs,
+            rawAwakeMs = localScreenOffAwakeDurationMs,
+            rawDeepSleepMs = localScreenOffDeepSleepDurationMs,
+            samples = recentSamples.ifEmpty { getDischargeRealtimeSamples() }
+        )
 
         val decomposedOff = calculateScreenOffAwakeAndDeepSleepEnergy(
             offEnergyWh = offEnergyWh,

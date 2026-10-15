@@ -9,6 +9,7 @@ import android.text.style.AbsoluteSizeSpan
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.CheckBox
 import android.widget.PopupWindow
 import android.widget.TextView
 import android.widget.Toast
@@ -27,6 +28,7 @@ import com.battery.analysis.databinding.ItemHistoryDetailHeaderBinding
 import com.battery.analysis.db.PowerUsageDbHelper
 import com.battery.analysis.manager.PowerOverviewStats
 import com.battery.analysis.manager.PowerUsageManager
+import com.battery.analysis.model.PowerDisplayUnit
 import com.battery.analysis.model.PowerUsageRecord
 import com.battery.analysis.model.SevenDaysDischargeStats
 import com.battery.analysis.timeline.presentation.AppEnergyDetailBottomSheetDialog
@@ -62,6 +64,7 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
     private var cachedTimelineState: BatteryTimelineState? = null
     private var cachedDisplayAppCount: Int = 0
     private var currentSortIndex: Int = 1
+    private var currentDisplayUnit: PowerDisplayUnit = PowerDisplayUnit.WH
 
     /**
      * 当前快照对应的核心功耗指标概览数据实体缓存。
@@ -179,6 +182,34 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
     }
 
     /**
+     * 界面恢复可见时的生命周期回调。
+     * 同步读取耗电主页设定的最新电量显示单位（Wh / mAh），若单位发生变更则自动重绘头部各指标看板与应用列表。
+     */
+    override fun onResume() {
+        super.onResume()
+        syncDisplayUnitFromPreferences()
+    }
+
+    /**
+     * 从持久化偏好设置中同步耗电主页设定的电量显示单位，并在发生变更时刷新界面各指标。
+     * 严格遵从耗电主页的电量显示单位设置，确保全应用展示完全一致。
+     */
+    private fun syncDisplayUnitFromPreferences() {
+        val prefs = getSharedPreferences(PowerDisplayUnit.PREFS_NAME, Context.MODE_PRIVATE)
+        val latestUnit = PowerDisplayUnit.fromId(prefs.getInt(PowerDisplayUnit.PREF_KEY_POWER_DISPLAY_UNIT, PowerDisplayUnit.WH.id))
+        if (latestUnit != currentDisplayUnit) {
+            currentDisplayUnit = latestUnit
+            appAdapter.updateDisplayUnit(latestUnit)
+            val record = currentRecord
+            val hBinding = headerBinding
+            if (record != null && hBinding != null) {
+                renderHeaderDetails(record, hBinding)
+                bindMetricsCards(hBinding)
+            }
+        }
+    }
+
+    /**
      * 根据当前日夜间主题适配状态栏明暗图标色彩。
      */
     private fun updateSystemBarAppearance() {
@@ -216,8 +247,11 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
             }
         )
 
+        val prefs = getSharedPreferences(PowerDisplayUnit.PREFS_NAME, Context.MODE_PRIVATE)
+        currentDisplayUnit = PowerDisplayUnit.fromId(prefs.getInt(PowerDisplayUnit.PREF_KEY_POWER_DISPLAY_UNIT, PowerDisplayUnit.WH.id))
         appAdapter = AppPowerUsageAdapter().apply {
             isPureAppListMode = true
+            updateDisplayUnit(currentDisplayUnit)
         }
         appAdapter.onListCountChangedListener = { count ->
             updateUsageListTitle(count)
@@ -314,7 +348,8 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
                 PowerDischargeMetricsViewBinder.updateCursorInspectionStats(
                     speedBinding = hBinding.layoutDischargeSpeed,
                     sleepBinding = hBinding.layoutSleepAwake,
-                    subStats = subStats
+                    subStats = subStats,
+                    unit = currentDisplayUnit
                 )
             }
 
@@ -511,7 +546,7 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
         hBinding.tvDetailLevel.text = "${record.levelPercent}%"
         hBinding.tvDetailTemp.text = String.format(Locale.getDefault(), "%.1f ℃", record.temperature)
         hBinding.tvDetailVoltage.text = String.format(Locale.getDefault(), "%.2f V", record.voltageVolts)
-        hBinding.tvDetailEnergy.text = String.format(Locale.getDefault(), "%.1f Wh", record.energyWh)
+        hBinding.tvDetailEnergy.text = BatteryEnergyCalculator.formatHistoryDetailOverviewEnergy(record.energyWh, currentDisplayUnit)
 
         // 2. 卡片 2：三维核心功耗与续航指标（按亮屏 / 息屏 / 全局三行呈现）
         val onEnergy = record.screenOnEnergyWh
@@ -571,20 +606,23 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
         }
 
         // 第一行：亮屏数据（前置亮色太阳图标，时长占比 / 能量占比 / 功耗 / 续航）
+        val onEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(onEnergy, currentDisplayUnit)
         hBinding.tvMetricScreenOnTime.text = formatValueWithSmallPercent(onDurationStr, onDurationRatioStr)
-        hBinding.tvMetricScreenOnEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", onEnergy), onEnergyRatioStr)
+        hBinding.tvMetricScreenOnEnergy.text = formatValueWithSmallPercent(onEnergyText, onEnergyRatioStr)
         hBinding.tvMetricScreenOnPower.text = onPowerStr
         hBinding.tvMetricScreenOnRemaining.text = record.remainingScreenOnText
 
         // 第二行：息屏数据（前置暗色太阳图标，时长占比 / 能量占比 / 功耗 / 续航）
+        val offEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(offEnergy, currentDisplayUnit)
         hBinding.tvMetricScreenOffTime.text = formatValueWithSmallPercent(offDurationStr, offDurationRatioStr)
-        hBinding.tvMetricScreenOffEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", offEnergy), offEnergyRatioStr)
+        hBinding.tvMetricScreenOffEnergy.text = formatValueWithSmallPercent(offEnergyText, offEnergyRatioStr)
         hBinding.tvMetricScreenOffPower.text = offPowerStr
         hBinding.tvMetricScreenOffRemaining.text = record.remainingScreenOffText
 
         // 第三行：全局数据（前置半亮半暗太阳图标，时长占比 / 能量占比 / 功耗 / 续航）
+        val totalEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(totalEnergy, currentDisplayUnit)
         hBinding.tvMetricGlobalTime.text = formatValueWithSmallPercent(totalDurationStr, "100%")
-        hBinding.tvMetricGlobalEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", totalEnergy), "100%")
+        hBinding.tvMetricGlobalEnergy.text = formatValueWithSmallPercent(totalEnergyText, "100%")
         hBinding.tvMetricGlobalPower.text = avgPowerStr
         hBinding.tvMetricGlobalRemaining.text = record.remainingCompositeText
 
@@ -704,20 +742,23 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
         }
 
         // 第一行：亮屏数据（时长占比 / 能量占比 / 功耗 / 阶段时长）
+        val onEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(subStats.screenOnEnergyWh, currentDisplayUnit)
         hBinding.tvMetricScreenOnTime.text = formatValueWithSmallPercent(onDurationStr, onDurationRatioStr)
-        hBinding.tvMetricScreenOnEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", subStats.screenOnEnergyWh), onEnergyRatioStr)
+        hBinding.tvMetricScreenOnEnergy.text = formatValueWithSmallPercent(onEnergyText, onEnergyRatioStr)
         hBinding.tvMetricScreenOnPower.text = onPowerStr
         hBinding.tvMetricScreenOnRemaining.text = onDurationStr
 
         // 第二行：息屏数据（时长占比 / 能量占比 / 功耗 / 阶段时长）
+        val offEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(subStats.screenOffEnergyWh, currentDisplayUnit)
         hBinding.tvMetricScreenOffTime.text = formatValueWithSmallPercent(offDurationStr, offDurationRatioStr)
-        hBinding.tvMetricScreenOffEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", subStats.screenOffEnergyWh), offEnergyRatioStr)
+        hBinding.tvMetricScreenOffEnergy.text = formatValueWithSmallPercent(offEnergyText, offEnergyRatioStr)
         hBinding.tvMetricScreenOffPower.text = offPowerStr
         hBinding.tvMetricScreenOffRemaining.text = offDurationStr
 
         // 第三行：全局数据（时长占比 / 能量占比 / 功耗 / 阶段时长）
+        val totalEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(subStats.totalEnergyWh, currentDisplayUnit)
         hBinding.tvMetricGlobalTime.text = formatValueWithSmallPercent(totalDurationStr, "100%")
-        hBinding.tvMetricGlobalEnergy.text = formatValueWithSmallPercent(String.format(Locale.getDefault(), "%.3fWh", subStats.totalEnergyWh), globalEnergyRatioStr)
+        hBinding.tvMetricGlobalEnergy.text = formatValueWithSmallPercent(totalEnergyText, globalEnergyRatioStr)
         hBinding.tvMetricGlobalPower.text = avgPowerStr
         hBinding.tvMetricGlobalRemaining.text = totalDurationStr
 
@@ -777,6 +818,7 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
         PowerDischargeMetricsViewBinder.bindSleepAwakeMetrics(
             binding = hBinding.layoutSleepAwake,
             overview = cachedOverviewStats,
+            unit = currentDisplayUnit,
             onCardClick = { anchorView, cardType ->
                 showSleepAwakeCardDetailBubble(anchorView, cardType)
             }

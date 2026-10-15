@@ -462,17 +462,28 @@ class PowerHistoryActivity : AppCompatActivity() {
     }
 
     /**
-     * 为自定义对话框应用居中、平滑弹窗动效、半透明背景及适屏宽度的窗口样式。
+     * 为自定义对话框应用居中、平滑弹窗动效、半透明背景及适屏宽度的窗口样式，支持指定弹窗屏幕高度占比。
      *
      * @param dialog 待配置样式的 [AlertDialog] 实例
      * @param widthRatio 对话框宽度相对屏幕可用物理宽度的比例（默认 0.92）
+     * @param heightRatio 对话框高度相对屏幕可用物理高度的比例（若为空则使用 WRAP_CONTENT）
      */
-    private fun applyDialogWindowStyle(dialog: AlertDialog, widthRatio: Double = 0.92) {
+    private fun applyDialogWindowStyle(
+        dialog: AlertDialog,
+        widthRatio: Double = 0.92,
+        heightRatio: Float? = null
+    ) {
         dialog.window?.let { window ->
             window.setWindowAnimations(R.style.Animation_Dialog_CenterPop)
             window.setBackgroundDrawableResource(android.R.color.transparent)
-            val width = (resources.displayMetrics.widthPixels * widthRatio).toInt()
-            window.setLayout(width, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+            val displayMetrics = resources.displayMetrics
+            val width = (displayMetrics.widthPixels * widthRatio).toInt()
+            val height = if (heightRatio != null && heightRatio > 0f) {
+                (displayMetrics.heightPixels * heightRatio).toInt()
+            } else {
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            }
+            window.setLayout(width, height)
             window.setGravity(android.view.Gravity.CENTER)
         }
     }
@@ -638,8 +649,13 @@ class PowerHistoryActivity : AppCompatActivity() {
 
         btnClose.setOnClickListener { dialog.dismiss() }
         dialog.show()
-        // 对话框卡片加宽至 95% 屏幕宽度，给予 4 列对比表格最舒展充裕的横向空间
-        applyDialogWindowStyle(dialog, widthRatio = 0.95)
+        // 对话框卡片加宽至 95% 屏幕宽度，智能自适应高度且最大高度设为 90%，给予 4 列对比表格最舒展充裕的纵横向空间并支持平滑滚动
+        com.battery.analysis.util.DialogWindowHelper.applyAdaptiveDialogWindowStyle(
+            dialog = dialog,
+            dialogView = dialogView,
+            widthRatio = 0.95,
+            maxHeightRatio = 0.90f
+        )
     }
 }
 
