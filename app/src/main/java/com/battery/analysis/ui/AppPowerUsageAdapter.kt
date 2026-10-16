@@ -933,11 +933,11 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
                 "--"
             }
             val maxTempStr = if (item.maxTemperature > 0f) {
-                String.format(Locale.getDefault(), "Max: %.1f℃", item.maxTemperature)
+                String.format(Locale.getDefault(), "Max:%.1f℃", item.maxTemperature)
             } else {
-                "Max: --"
+                "Max:--"
             }
-            tvAvgInfo.text = "AVG: $pwrStr, $avgTempStr|$maxTempStr"
+            tvAvgInfo.text = "AVG:$pwrStr, $avgTempStr | $maxTempStr"
 
             val effectiveTotalEnergy = if (cachedTotalAppEnergyWh > 0f) {
                 cachedTotalAppEnergyWh

@@ -881,9 +881,9 @@ object BatteryEnergyCalculator {
         val minutes = (totalSec % 3600L) / 60L
         val seconds = totalSec % 60L
         return when {
-            days > 0L -> String.format(Locale.getDefault(), "%02dd %02dh %02dm %02ds", days, hours, minutes, seconds)
-            hours > 0L -> String.format(Locale.getDefault(), "%02dh %02dm %02ds", hours, minutes, seconds)
-            minutes > 0L -> String.format(Locale.getDefault(), "%02dm %02ds", minutes, seconds)
+            days > 0L -> String.format(Locale.getDefault(), "%02dd%02dh%02dm%02ds", days, hours, minutes, seconds)
+            hours > 0L -> String.format(Locale.getDefault(), "%02dh%02dm%02ds", hours, minutes, seconds)
+            minutes > 0L -> String.format(Locale.getDefault(), "%02dm%02ds", minutes, seconds)
             else -> String.format(Locale.getDefault(), "%02ds", seconds)
         }
     }

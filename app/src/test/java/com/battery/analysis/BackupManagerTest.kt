@@ -291,6 +291,8 @@ class BackupManagerTest {
         assertEquals(2, data.settings.themeMode)
         assertNull(data.settings.languageMode)
         assertNull(data.settings.chargeDischargeStatsEnabled)
+        assertNull(data.settings.floatingEnabled)
+        assertNull(data.settings.currentCalibrationMultiplier)
         assertNotNull(data.historyRecords)
         assertTrue(data.historyRecords.isEmpty())
         assertNotNull(data.chargingRecords)
@@ -298,4 +300,159 @@ class BackupManagerTest {
         assertNotNull(data.powerUsageRecords)
         assertTrue(data.powerUsageRecords.isEmpty())
     }
+
+    /**
+     * 测试版本 3 全量偏好设置（包含桌面悬浮窗、硬件电流校准、耗电单位、趋势图指标）
+     * 与放电全量细分指标（息屏唤醒与深睡能耗/时长/电荷量、会话完结状态及 Checkpoint 时间戳）的无损反序列化。
+     */
+    @Test
+    fun testParseBackupJson_v3FullSettingsAndRecords() {
+        val testJson = """
+            {
+                "version": 3,
+                "app_version": "1.9.24",
+                "backup_time": "2026-10-16 10:00:00",
+                "backup_timestamp": 1792120000000,
+                "settings": {
+                    "language_mode": 1,
+                    "theme_mode": 2,
+                    "charge_discharge_stats_enabled": true,
+                    "charging_keep_screen_on": true,
+                    "power_stats_mode": 0,
+                    "power_mode_configured": true,
+                    "shizuku_user_disabled": false,
+                    "notification_display_enabled": true,
+                    "screen_on_interval_ms": 1000,
+                    "screen_off_interval_ms": 0,
+                    "boot_auto_start_enabled": true,
+                    "battery_service_enabled": true,
+                    "floating_enabled": true,
+                    "floating_show_power": true,
+                    "floating_show_temp": true,
+                    "floating_align_status_bar": true,
+                    "floating_pos_x": 120,
+                    "floating_pos_y": 50,
+                    "floating_pos_x_land": 240,
+                    "floating_pos_y_land": 30,
+                    "floating_horizontal_align": 2,
+                    "floating_opacity": 95,
+                    "floating_theme_mode": 1,
+                    "floating_font_size": 13,
+                    "floating_font_bold": false,
+                    "floating_show_unit": true,
+                    "floating_show_background": false,
+                    "floating_offset_x": -10,
+                    "floating_pos_percent_x": 0.45,
+                    "floating_pos_percent_y": 0.12,
+                    "current_calibration_multiplier": 10.0,
+                    "current_calibration_dual_cell": true,
+                    "current_calibration_invert_polarity": false,
+                    "current_calibration_coulomb_fallback": true,
+                    "power_display_unit": 1,
+                    "power_unit_dialog_donot_show": true,
+                    "enable_background_stats": true,
+                    "timeline_saved_metrics": ["POWER", "BATTERY", "TEMPERATURE"]
+                },
+                "history_records": [],
+                "charging_records": [],
+                "power_usage_records": [
+                    {
+                        "id": 1792110000000,
+                        "record_time": "2026-10-16 09:30:00",
+                        "level_percent": 75,
+                        "voltage_volts": 4.12,
+                        "temperature": 30.5,
+                        "energy_wh": 15.6,
+                        "is_charging": false,
+                        "avg_power_watts": 1.45,
+                        "screen_on_power_watts": 2.2,
+                        "screen_off_power_watts": 0.12,
+                        "screen_on_duration_text": "2h10m",
+                        "screen_off_duration_text": "6h30m",
+                        "total_duration_text": "8h40m",
+                        "rem_screen_on": "5h40m",
+                        "rem_composite": "11h20m",
+                        "rem_screen_off": "32h00m",
+                        "is_shizuku_real_data": true,
+                        "app_count": 8,
+                        "trend_points_json": "[]",
+                        "app_list_json": "[]",
+                        "background_power_watts": 0.18,
+                        "background_duration_text": "1h20m",
+                        "rem_background": "22h00m",
+                        "screen_on_energy_wh": 4.76,
+                        "total_energy_wh": 5.54,
+                        "screen_off_energy_wh": 0.78,
+                        "background_energy_wh": 0.24,
+                        "is_completed": true,
+                        "last_checkpoint_time": 1792119000000,
+                        "screen_off_awake_energy_wh": 0.58,
+                        "screen_off_deep_sleep_energy_wh": 0.20,
+                        "screen_off_awake_duration_ms": 1800000,
+                        "screen_off_deep_sleep_duration_ms": 21600000,
+                        "screen_off_awake_drain_mah": 140.5,
+                        "screen_off_deep_sleep_drain_mah": 48.2,
+                        "is_screen_off_decomposed": true
+                    }
+                ]
+            }
+        """.trimIndent()
+
+        val manager = BackupManager.getInstance()
+        val data = manager.parseBackupJson(testJson)
+
+        assertEquals(3, data.version)
+        assertEquals("1.9.24", data.appVersion)
+
+        // 验证悬浮窗设置项
+        val s = data.settings
+        assertEquals(true, s.batteryServiceEnabled)
+        assertEquals(true, s.floatingEnabled)
+        assertEquals(true, s.floatingShowPower)
+        assertEquals(true, s.floatingShowTemp)
+        assertEquals(true, s.floatingAlignStatusBar)
+        assertEquals(120, s.floatingPosX)
+        assertEquals(50, s.floatingPosY)
+        assertEquals(240, s.floatingPosXLand)
+        assertEquals(30, s.floatingPosYLand)
+        assertEquals(2, s.floatingHorizontalAlign)
+        assertEquals(95, s.floatingOpacity)
+        assertEquals(1, s.floatingThemeMode)
+        assertEquals(13, s.floatingFontSize)
+        assertEquals(false, s.floatingFontBold)
+        assertEquals(true, s.floatingShowUnit)
+        assertEquals(false, s.floatingShowBackground)
+        assertEquals(-10, s.floatingOffsetX)
+        assertEquals(0.45f, s.floatingPosPercentX!!, 0.001f)
+        assertEquals(0.12f, s.floatingPosPercentY!!, 0.001f)
+
+        // 验证电流校准设置项
+        assertEquals(10.0f, s.currentCalibrationMultiplier!!, 0.001f)
+        assertEquals(true, s.currentCalibrationDualCell)
+        assertEquals(false, s.currentCalibrationInvertPolarity)
+        assertEquals(true, s.currentCalibrationCoulombFallback)
+
+        // 验证耗电统计单位及指标
+        assertEquals(1, s.powerDisplayUnit)
+        assertEquals(true, s.powerUnitDialogDoNotShow)
+        assertEquals(true, s.enableBackgroundStats)
+        assertNotNull(s.timelineSavedMetrics)
+        assertEquals(3, s.timelineSavedMetrics!!.size)
+        assertTrue(s.timelineSavedMetrics!!.contains("POWER"))
+
+        // 验证放电记录细分与状态指标
+        assertEquals(1, data.powerUsageRecords.size)
+        val p = data.powerUsageRecords[0]
+        assertEquals(1792110000000L, p.id)
+        assertEquals(true, p.isCompleted)
+        assertEquals(1792119000000L, p.lastCheckpointTime)
+        assertEquals(0.58f, p.screenOffAwakeEnergyWh, 0.001f)
+        assertEquals(0.20f, p.screenOffDeepSleepEnergyWh, 0.001f)
+        assertEquals(1800000L, p.screenOffAwakeDurationMs)
+        assertEquals(21600000L, p.screenOffDeepSleepDurationMs)
+        assertEquals(140.5f, p.screenOffAwakeDrainMah, 0.001f)
+        assertEquals(48.2f, p.screenOffDeepSleepDrainMah, 0.001f)
+        assertTrue(p.isScreenOffDecomposedAvailable)
+    }
+
 }

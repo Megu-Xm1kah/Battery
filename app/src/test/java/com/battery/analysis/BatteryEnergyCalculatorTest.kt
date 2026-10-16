@@ -360,7 +360,7 @@ class BatteryEnergyCalculatorTest {
         assertTrue("包含当前放电速度", message.contains("• 当前放电速度：6.3%/h"))
         assertTrue("包含累积7天亮屏放电速度与统计时长", message.contains("• 累积7天亮屏放电速度：6.1%/h（统计时长 02d05h）"))
         assertTrue("包含满电亮屏续航", message.contains("• 满电亮屏续航：16h24m"))
-        assertTrue("包含当前剩余续航且精确到秒", message.contains("• 当前剩余续航：09h 15m 30s"))
+        assertTrue("包含当前剩余续航且精确到秒", message.contains("• 当前剩余续航：09h15m30s"))
         assertTrue("包含预测真实容量（多少Wh（多少mAh））", message.contains("• 预测真实容量：19.25 Wh (5000 mAh)"))
         assertTrue("包含说明模块", message.contains("💡 说明："))
     }
@@ -383,7 +383,7 @@ class BatteryEnergyCalculatorTest {
         assertTrue("当前息屏暂无数据展示--", message.contains("• 当前放电速度：--"))
         assertTrue("包含累积7天息屏放电速度与统计时长", message.contains("• 累积7天息屏放电速度：1.0%/h（统计时长 04d01h）"))
         assertTrue("包含满电待机时长", message.contains("• 满电待机时长：04d01h00m"))
-        assertTrue("包含当前剩余续航且精确到秒", message.contains("• 当前剩余续航：02d 03h 40m 15s"))
+        assertTrue("包含当前剩余续航且精确到秒", message.contains("• 当前剩余续航：02d03h40m15s"))
         assertTrue("包含说明模块", message.contains("💡 说明："))
     }
 
@@ -406,7 +406,7 @@ class BatteryEnergyCalculatorTest {
         assertTrue("标题包含全局放电速度", message.contains("【全局放电速度】"))
         assertTrue("包含当前放电速度", message.contains("• 当前放电速度：6.3%/h"))
         assertTrue("包含累积7天全局放电速度与统计时长", message.contains("• 累积7天全局放电速度：2.8%/h（统计时长 06d07h）"))
-        assertTrue("包含当前剩余续航且精确到秒", message.contains("• 当前剩余续航：01d 02h 10m 05s"))
+        assertTrue("包含当前剩余续航且精确到秒", message.contains("• 当前剩余续航：01d02h10m05s"))
         assertTrue("包含双模型标题", message.contains("📊 满电综合续航推算（双模型）："))
         assertTrue("包含模式1全局加权结果（精确到分）", message.contains("• 模式1（全局加权）：01d11h12m"))
         assertTrue("包含模式2场景融合结果（精确到分）", message.contains("• 模式2（场景融合）：01d15h35m"))
@@ -621,15 +621,15 @@ class BatteryEnergyCalculatorTest {
         assertEquals("45s", BatteryEnergyCalculator.formatDurationWithSeconds(45_000L))
 
         // 分秒级
-        assertEquals("01m 05s", BatteryEnergyCalculator.formatDurationWithSeconds(65_000L))
-        assertEquals("15m 30s", BatteryEnergyCalculator.formatDurationWithSeconds((15 * 60 + 30) * 1000L))
+        assertEquals("01m05s", BatteryEnergyCalculator.formatDurationWithSeconds(65_000L))
+        assertEquals("15m30s", BatteryEnergyCalculator.formatDurationWithSeconds((15 * 60 + 30) * 1000L))
 
         // 时分秒级
-        assertEquals("02h 05m 09s", BatteryEnergyCalculator.formatDurationWithSeconds((2 * 3600 + 5 * 60 + 9) * 1000L))
-        assertEquals("17h 46m 32s", BatteryEnergyCalculator.formatDurationWithSeconds((17 * 3600 + 46 * 60 + 32) * 1000L))
+        assertEquals("02h05m09s", BatteryEnergyCalculator.formatDurationWithSeconds((2 * 3600 + 5 * 60 + 9) * 1000L))
+        assertEquals("17h46m32s", BatteryEnergyCalculator.formatDurationWithSeconds((17 * 3600 + 46 * 60 + 32) * 1000L))
 
         // 天时分秒级
-        assertEquals("01d 04h 28m 10s", BatteryEnergyCalculator.formatDurationWithSeconds((86400 + 4 * 3600 + 28 * 60 + 10) * 1000L))
+        assertEquals("01d04h28m10s", BatteryEnergyCalculator.formatDurationWithSeconds((86400 + 4 * 3600 + 28 * 60 + 10) * 1000L))
     }
 
     /**

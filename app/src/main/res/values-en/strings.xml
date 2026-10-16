@@ -368,6 +368,8 @@
     <string name="floating_theme_light">Light Translucent</string>
     <string name="floating_font_size">Font Size</string>
     <string name="floating_font_size_desc">Adjust text size of power and temperature</string>
+    <string name="floating_font_bold">Bold Text</string>
+    <string name="floating_font_bold_desc">Display text and values in bold</string>
     <string name="floating_show_unit">Display Units</string>
     <string name="floating_show_unit_desc">Show unit symbols (W, ℃) after power and temperature</string>
     <string name="floating_show_background">Display Background &amp; Border</string>
@@ -456,6 +458,10 @@
     <string name="dialog_restore_mode_merge">Merge with existing data (deduplicate &amp; append)</string>
     <string name="dialog_restore_btn_confirm">Restore Now</string>
     <string name="restore_preview_records_format">Snapshots: %1$d · Charging: %2$d · Discharge: %3$d</string>
+    <string name="setting_restore_floating_window">Floating Window</string>
+    <string name="setting_restore_current_calibration">Current Calibration</string>
+    <string name="setting_restore_power_usage_pref">Power Usage Preferences</string>
+    <string name="setting_restore_timeline_metrics">Timeline Metrics</string>
 
     <!-- Health Calculation Guide Dialog -->
     <string name="guide_title">Battery Health Guide</string>

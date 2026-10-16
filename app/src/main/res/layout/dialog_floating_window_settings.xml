@@ -14,20 +14,19 @@
         android:layout_height="wrap_content"
         android:gravity="center_horizontal"
         android:orientation="vertical"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="14dp">
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="12dp">
 
-        <!-- 弹窗标题 -->
+        <!-- 弹窗标题与描述 -->
         <TextView
             android:id="@+id/tv_floating_dialog_title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/dialog_floating_window_title"
             android:textColor="?android:attr/textColorPrimary"
-            android:textSize="16.5sp"
+            android:textSize="15.5sp"
             android:textStyle="bold" />
 
-        <!-- 弹窗说明：一行精简展示 -->
         <TextView
             android:id="@+id/tv_floating_dialog_desc"
             android:layout_width="wrap_content"
@@ -38,66 +37,21 @@
             android:singleLine="true"
             android:text="@string/setting_floating_position_desc"
             android:textColor="?android:attr/textColorSecondary"
-            android:textSize="12sp" />
+            android:textSize="11.5sp" />
 
-        <!-- 1. 垂直位置设置卡片 -->
+        <!-- 1. 垂直位置设置卡片 (紧凑) -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
+            android:layout_marginTop="8dp"
             android:background="@drawable/bg_dialog_card"
             android:orientation="vertical"
-            android:paddingHorizontal="12dp"
-            android:paddingVertical="8dp">
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="7dp">
 
-            <!-- 显示在状态栏上 开关 -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/floating_align_status_bar"
-                        android:textColor="?android:attr/textColorPrimary"
-                        android:textSize="13sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="1dp"
-                        android:ellipsize="end"
-                        android:singleLine="true"
-                        android:text="@string/floating_align_status_bar_desc"
-                        android:textColor="?android:attr/textColorSecondary"
-                        android:textSize="11.5sp" />
-                </LinearLayout>
-
-                <com.google.android.material.materialswitch.MaterialSwitch
-                    android:id="@+id/switch_align_status_bar"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:scaleX="0.8"
-                    android:scaleY="0.8"
-                    app:thumbTint="@color/selector_switch_thumb"
-                    app:trackDecorationTint="@color/selector_switch_track_outline"
-                    app:trackTint="@color/selector_switch_track" />
-            </LinearLayout>
-
-            <!-- 垂直微调标题与当前数值 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
@@ -106,17 +60,18 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:text="@string/floating_vertical_pos"
-                    android:textColor="?android:attr/textColorSecondary"
-                    android:textSize="12sp" />
+                    android:textColor="?android:attr/textColorPrimary"
+                    android:textSize="12.5sp"
+                    android:textStyle="bold" />
 
                 <TextView
                     android:id="@+id/tv_vertical_pos_value"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textColor="#2196F3"
-                    android:textSize="12sp"
+                    android:textSize="11.5sp"
                     android:textStyle="bold"
-                    tools:text="Y: 33 px" />
+                    tools:text="Y: 63 px (状态栏)" />
             </LinearLayout>
 
             <LinearLayout
@@ -128,8 +83,8 @@
 
                 <TextView
                     android:id="@+id/btn_vertical_minus"
-                    android:layout_width="30dp"
-                    android:layout_height="30dp"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
                     android:background="@drawable/bg_floating_step_button"
                     android:clickable="true"
                     android:contentDescription="@string/floating_step_minus"
@@ -138,7 +93,7 @@
                     android:includeFontPadding="false"
                     android:text="-"
                     android:textColor="?android:attr/textColorPrimary"
-                    android:textSize="17sp"
+                    android:textSize="16sp"
                     android:textStyle="bold" />
 
                 <SeekBar
@@ -152,8 +107,8 @@
 
                 <TextView
                     android:id="@+id/btn_vertical_plus"
-                    android:layout_width="30dp"
-                    android:layout_height="30dp"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
                     android:background="@drawable/bg_floating_step_button"
                     android:clickable="true"
                     android:contentDescription="@string/floating_step_plus"
@@ -162,20 +117,20 @@
                     android:includeFontPadding="false"
                     android:text="+"
                     android:textColor="?android:attr/textColorPrimary"
-                    android:textSize="17sp"
+                    android:textSize="16sp"
                     android:textStyle="bold" />
             </LinearLayout>
         </LinearLayout>
 
-        <!-- 2. 水平位置设置卡片 -->
+        <!-- 2. 水平位置设置卡片 (紧凑) -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="6dp"
             android:background="@drawable/bg_dialog_card"
             android:orientation="vertical"
-            android:paddingHorizontal="12dp"
-            android:paddingVertical="8dp">
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="7dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -189,7 +144,7 @@
                     android:layout_weight="1"
                     android:text="@string/floating_horizontal_pos"
                     android:textColor="?android:attr/textColorPrimary"
-                    android:textSize="13sp"
+                    android:textSize="12.5sp"
                     android:textStyle="bold" />
 
                 <TextView
@@ -197,22 +152,22 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textColor="#2196F3"
-                    android:textSize="12sp"
+                    android:textSize="11.5sp"
                     android:textStyle="bold"
-                    tools:text="X: 居中" />
+                    tools:text="居中偏右 570 px" />
             </LinearLayout>
 
             <!-- 水平对齐快速单选胶囊 (靠左, 居中, 靠右) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="4dp"
                 android:orientation="horizontal">
 
                 <RadioButton
                     android:id="@+id/rb_align_left"
                     android:layout_width="0dp"
-                    android:layout_height="30dp"
+                    android:layout_height="26dp"
                     android:layout_marginEnd="3dp"
                     android:layout_weight="1"
                     android:background="@drawable/selector_calibration_multiplier"
@@ -220,13 +175,13 @@
                     android:gravity="center"
                     android:text="@string/floating_horizontal_align_left"
                     android:textColor="@color/selector_calibration_multiplier_text"
-                    android:textSize="11.5sp"
+                    android:textSize="11sp"
                     android:textStyle="bold" />
 
                 <RadioButton
                     android:id="@+id/rb_align_center"
                     android:layout_width="0dp"
-                    android:layout_height="30dp"
+                    android:layout_height="26dp"
                     android:layout_marginHorizontal="2dp"
                     android:layout_weight="1"
                     android:background="@drawable/selector_calibration_multiplier"
@@ -234,13 +189,13 @@
                     android:gravity="center"
                     android:text="@string/floating_horizontal_align_center"
                     android:textColor="@color/selector_calibration_multiplier_text"
-                    android:textSize="11.5sp"
+                    android:textSize="11sp"
                     android:textStyle="bold" />
 
                 <RadioButton
                     android:id="@+id/rb_align_right"
                     android:layout_width="0dp"
-                    android:layout_height="30dp"
+                    android:layout_height="26dp"
                     android:layout_marginStart="3dp"
                     android:layout_weight="1"
                     android:background="@drawable/selector_calibration_multiplier"
@@ -248,21 +203,21 @@
                     android:gravity="center"
                     android:text="@string/floating_horizontal_align_right"
                     android:textColor="@color/selector_calibration_multiplier_text"
-                    android:textSize="11.5sp"
+                    android:textSize="11sp"
                     android:textStyle="bold" />
             </LinearLayout>
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
+                android:layout_marginTop="3dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
                 <TextView
                     android:id="@+id/btn_horizontal_minus"
-                    android:layout_width="30dp"
-                    android:layout_height="30dp"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
                     android:background="@drawable/bg_floating_step_button"
                     android:clickable="true"
                     android:contentDescription="@string/floating_step_minus"
@@ -271,7 +226,7 @@
                     android:includeFontPadding="false"
                     android:text="-"
                     android:textColor="?android:attr/textColorPrimary"
-                    android:textSize="17sp"
+                    android:textSize="16sp"
                     android:textStyle="bold" />
 
                 <SeekBar
@@ -285,8 +240,8 @@
 
                 <TextView
                     android:id="@+id/btn_horizontal_plus"
-                    android:layout_width="30dp"
-                    android:layout_height="30dp"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
                     android:background="@drawable/bg_floating_step_button"
                     android:clickable="true"
                     android:contentDescription="@string/floating_step_plus"
@@ -295,269 +250,420 @@
                     android:includeFontPadding="false"
                     android:text="+"
                     android:textColor="?android:attr/textColorPrimary"
-                    android:textSize="17sp"
+                    android:textSize="16sp"
                     android:textStyle="bold" />
             </LinearLayout>
         </LinearLayout>
 
-        <!-- 3. 文字大小设置卡片 -->
+        <!-- 3. 双列并排滑块卡片：文字大小 (左) 与 透明度 (右) -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/bg_dialog_card"
-            android:orientation="vertical"
-            android:paddingHorizontal="12dp"
-            android:paddingVertical="8dp">
+            android:layout_marginTop="6dp"
+            android:baselineAligned="false"
+            android:orientation="horizontal">
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/floating_font_size"
-                    android:textColor="?android:attr/textColorPrimary"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/tv_font_size_value"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textColor="#2196F3"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    tools:text="11 sp" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="3dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:id="@+id/btn_font_size_minus"
-                    android:layout_width="30dp"
-                    android:layout_height="30dp"
-                    android:background="@drawable/bg_floating_step_button"
-                    android:clickable="true"
-                    android:contentDescription="@string/floating_step_minus"
-                    android:focusable="true"
-                    android:gravity="center"
-                    android:includeFontPadding="false"
-                    android:text="-"
-                    android:textColor="?android:attr/textColorPrimary"
-                    android:textSize="17sp"
-                    android:textStyle="bold" />
-
-                <SeekBar
-                    android:id="@+id/seekbar_font_size"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:max="15"
-                    android:paddingHorizontal="6dp"
-                    android:progress="6" />
-
-                <TextView
-                    android:id="@+id/btn_font_size_plus"
-                    android:layout_width="30dp"
-                    android:layout_height="30dp"
-                    android:background="@drawable/bg_floating_step_button"
-                    android:clickable="true"
-                    android:contentDescription="@string/floating_step_plus"
-                    android:focusable="true"
-                    android:gravity="center"
-                    android:includeFontPadding="false"
-                    android:text="+"
-                    android:textColor="?android:attr/textColorPrimary"
-                    android:textSize="17sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <!-- 4. 是否显示单位设置卡片 -->
-        <LinearLayout
-            android:id="@+id/layout_floating_show_unit"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/bg_dialog_card"
-            android:clickable="true"
-            android:focusable="true"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingHorizontal="12dp"
-            android:paddingVertical="8dp">
-
+            <!-- 左列：文字大小卡片 (带步进按钮与滑条) -->
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_marginEnd="3dp"
                 android:layout_weight="1"
-                android:orientation="vertical">
+                android:background="@drawable/bg_dialog_card"
+                android:orientation="vertical"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="7dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/floating_show_unit"
-                    android:textColor="?android:attr/textColorPrimary"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
-                <TextView
-                    android:layout_width="wrap_content"
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:singleLine="true"
+                        android:text="@string/floating_font_size"
+                        android:textColor="?android:attr/textColorPrimary"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tv_font_size_value"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="#2196F3"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        tools:text="11 sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="1dp"
-                    android:ellipsize="end"
-                    android:singleLine="true"
-                    android:text="@string/floating_show_unit_desc"
-                    android:textColor="?android:attr/textColorSecondary"
-                    android:textSize="11.5sp" />
+                    android:layout_marginTop="3dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/btn_font_size_minus"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:background="@drawable/bg_floating_step_button"
+                        android:clickable="true"
+                        android:contentDescription="@string/floating_step_minus"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:includeFontPadding="false"
+                        android:text="-"
+                        android:textColor="?android:attr/textColorPrimary"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <SeekBar
+                        android:id="@+id/seekbar_font_size"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:max="15"
+                        android:paddingHorizontal="4dp"
+                        android:progress="6" />
+
+                    <TextView
+                        android:id="@+id/btn_font_size_plus"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:background="@drawable/bg_floating_step_button"
+                        android:clickable="true"
+                        android:contentDescription="@string/floating_step_plus"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:includeFontPadding="false"
+                        android:text="+"
+                        android:textColor="?android:attr/textColorPrimary"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
             </LinearLayout>
 
-            <com.google.android.material.materialswitch.MaterialSwitch
-                android:id="@+id/switch_show_unit"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:scaleX="0.8"
-                android:scaleY="0.8"
-                app:thumbTint="@color/selector_switch_thumb"
-                app:trackDecorationTint="@color/selector_switch_track_outline"
-                app:trackTint="@color/selector_switch_track" />
-        </LinearLayout>
-
-        <!-- 5. 透明度设置卡片 -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/bg_dialog_card"
-            android:orientation="vertical"
-            android:paddingHorizontal="12dp"
-            android:paddingVertical="8dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/floating_opacity"
-                    android:textColor="?android:attr/textColorPrimary"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/tv_opacity_value"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textColor="#2196F3"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    tools:text="85%" />
-            </LinearLayout>
-
-            <SeekBar
-                android:id="@+id/seekbar_opacity"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="3dp"
-                android:max="100"
-                android:paddingHorizontal="6dp"
-                android:progress="85" />
-        </LinearLayout>
-
-        <!-- 6. 是否显示背景和边框设置卡片 -->
-        <LinearLayout
-            android:id="@+id/layout_floating_show_background"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/bg_dialog_card"
-            android:clickable="true"
-            android:focusable="true"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingHorizontal="12dp"
-            android:paddingVertical="8dp">
-
+            <!-- 右列：透明度卡片 (包含用户要求的 +,- 步进微调按钮) -->
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_marginStart="3dp"
                 android:layout_weight="1"
-                android:orientation="vertical">
+                android:background="@drawable/bg_dialog_card"
+                android:orientation="vertical"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="7dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/floating_show_background"
-                    android:textColor="?android:attr/textColorPrimary"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
-                <TextView
-                    android:layout_width="wrap_content"
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:singleLine="true"
+                        android:text="@string/floating_opacity"
+                        android:textColor="?android:attr/textColorPrimary"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tv_opacity_value"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="#2196F3"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        tools:text="85%" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="1dp"
-                    android:ellipsize="end"
-                    android:singleLine="true"
-                    android:text="@string/floating_show_background_desc"
-                    android:textColor="?android:attr/textColorSecondary"
-                    android:textSize="11.5sp" />
+                    android:layout_marginTop="3dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/btn_opacity_minus"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:background="@drawable/bg_floating_step_button"
+                        android:clickable="true"
+                        android:contentDescription="@string/floating_step_minus"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:includeFontPadding="false"
+                        android:text="-"
+                        android:textColor="?android:attr/textColorPrimary"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <SeekBar
+                        android:id="@+id/seekbar_opacity"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:max="100"
+                        android:paddingHorizontal="4dp"
+                        android:progress="85" />
+
+                    <TextView
+                        android:id="@+id/btn_opacity_plus"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:background="@drawable/bg_floating_step_button"
+                        android:clickable="true"
+                        android:contentDescription="@string/floating_step_plus"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:includeFontPadding="false"
+                        android:text="+"
+                        android:textColor="?android:attr/textColorPrimary"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
             </LinearLayout>
-
-            <com.google.android.material.materialswitch.MaterialSwitch
-                android:id="@+id/switch_show_background"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:scaleX="0.8"
-                android:scaleY="0.8"
-                app:thumbTint="@color/selector_switch_thumb"
-                app:trackDecorationTint="@color/selector_switch_track_outline"
-                app:trackTint="@color/selector_switch_track" />
         </LinearLayout>
 
-        <!-- 7. 主题明暗对应卡片 (精简为横向胶囊切换器) -->
+        <!-- 4. 双列 2×2 功能开关卡片 (状态栏、粗体、单位、背景) -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="6dp"
             android:background="@drawable/bg_dialog_card"
             android:orientation="vertical"
-            android:paddingHorizontal="12dp"
-            android:paddingVertical="8dp">
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="6dp">
+
+            <!-- 开关行 1：显示在状态栏上 (左) + 粗体显示 (右) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:baselineAligned="false"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <!-- 左项：置于状态栏 -->
+                <LinearLayout
+                    android:id="@+id/layout_floating_align_status_bar"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="4dp"
+                    android:layout_weight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="2dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:singleLine="true"
+                        android:text="@string/floating_align_status_bar"
+                        android:textColor="?android:attr/textColorPrimary"
+                        android:textSize="11.5sp"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switch_align_status_bar"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:focusable="false"
+                        android:scaleX="0.75"
+                        android:scaleY="0.75"
+                        app:thumbTint="@color/selector_switch_thumb"
+                        app:trackDecorationTint="@color/selector_switch_track_outline"
+                        app:trackTint="@color/selector_switch_track" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="0.8dp"
+                    android:layout_height="22dp"
+                    android:layout_marginHorizontal="2dp"
+                    android:background="#1A888888" />
+
+                <!-- 右项：粗体显示 (新增) -->
+                <LinearLayout
+                    android:id="@+id/layout_floating_font_bold"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:layout_weight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="2dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:singleLine="true"
+                        android:text="@string/floating_font_bold"
+                        android:textColor="?android:attr/textColorPrimary"
+                        android:textSize="11.5sp"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switch_font_bold"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:focusable="false"
+                        android:scaleX="0.75"
+                        android:scaleY="0.75"
+                        app:thumbTint="@color/selector_switch_thumb"
+                        app:trackDecorationTint="@color/selector_switch_track_outline"
+                        app:trackTint="@color/selector_switch_track" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- 细微横向分割线 -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="0.8dp"
+                android:layout_marginVertical="3dp"
+                android:background="#1A888888" />
+
+            <!-- 开关行 2：显示单位 (左) + 背景边框 (右) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:baselineAligned="false"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <!-- 左项：显示单位 -->
+                <LinearLayout
+                    android:id="@+id/layout_floating_show_unit"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="4dp"
+                    android:layout_weight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="2dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:singleLine="true"
+                        android:text="@string/floating_show_unit"
+                        android:textColor="?android:attr/textColorPrimary"
+                        android:textSize="11.5sp"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switch_show_unit"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:focusable="false"
+                        android:scaleX="0.75"
+                        android:scaleY="0.75"
+                        app:thumbTint="@color/selector_switch_thumb"
+                        app:trackDecorationTint="@color/selector_switch_track_outline"
+                        app:trackTint="@color/selector_switch_track" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="0.8dp"
+                    android:layout_height="22dp"
+                    android:layout_marginHorizontal="2dp"
+                    android:background="#1A888888" />
+
+                <!-- 右项：显示背景和边框 -->
+                <LinearLayout
+                    android:id="@+id/layout_floating_show_background"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:layout_weight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingVertical="2dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:singleLine="true"
+                        android:text="@string/floating_show_background"
+                        android:textColor="?android:attr/textColorPrimary"
+                        android:textSize="11.5sp"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switch_show_background"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:focusable="false"
+                        android:scaleX="0.75"
+                        android:scaleY="0.75"
+                        app:thumbTint="@color/selector_switch_thumb"
+                        app:trackDecorationTint="@color/selector_switch_track_outline"
+                        app:trackTint="@color/selector_switch_track" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 5. 主题明暗对应卡片 (横向紧凑单行排布) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/bg_dialog_card"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="6dp">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
                 android:text="@string/floating_theme_mode"
                 android:textColor="?android:attr/textColorPrimary"
-                android:textSize="13sp"
+                android:textSize="12sp"
                 android:textStyle="bold" />
 
             <RadioGroup
                 android:id="@+id/rg_theme_mode"
-                android:layout_width="match_parent"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
+                android:layout_weight="1"
                 android:orientation="horizontal">
 
                 <RadioButton
                     android:id="@+id/rb_theme_follow_system"
                     android:layout_width="0dp"
-                    android:layout_height="30dp"
-                    android:layout_marginEnd="3dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="2dp"
                     android:layout_weight="1"
                     android:background="@drawable/selector_calibration_multiplier"
                     android:button="@null"
@@ -565,13 +671,13 @@
                     android:gravity="center"
                     android:text="@string/floating_theme_follow_system"
                     android:textColor="@color/selector_calibration_multiplier_text"
-                    android:textSize="11.5sp"
+                    android:textSize="11sp"
                     android:textStyle="bold" />
 
                 <RadioButton
                     android:id="@+id/rb_theme_dark"
                     android:layout_width="0dp"
-                    android:layout_height="30dp"
+                    android:layout_height="26dp"
                     android:layout_marginHorizontal="2dp"
                     android:layout_weight="1"
                     android:background="@drawable/selector_calibration_multiplier"
@@ -579,49 +685,49 @@
                     android:gravity="center"
                     android:text="@string/floating_theme_dark"
                     android:textColor="@color/selector_calibration_multiplier_text"
-                    android:textSize="11.5sp"
+                    android:textSize="11sp"
                     android:textStyle="bold" />
 
                 <RadioButton
                     android:id="@+id/rb_theme_light"
                     android:layout_width="0dp"
-                    android:layout_height="30dp"
-                    android:layout_marginStart="3dp"
+                    android:layout_height="26dp"
+                    android:layout_marginStart="2dp"
                     android:layout_weight="1"
                     android:background="@drawable/selector_calibration_multiplier"
                     android:button="@null"
                     android:gravity="center"
                     android:text="@string/floating_theme_light"
                     android:textColor="@color/selector_calibration_multiplier_text"
-                    android:textSize="11.5sp"
+                    android:textSize="11sp"
                     android:textStyle="bold" />
             </RadioGroup>
         </LinearLayout>
 
-        <!-- 提示文案：精简并尽量一行展示 -->
+        <!-- 提示文案：精简一行展示 -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="6dp"
             android:ellipsize="end"
             android:gravity="center"
             android:singleLine="true"
             android:text="@string/floating_drag_hint"
             android:textColor="?android:attr/textColorSecondary"
-            android:textSize="11sp" />
+            android:textSize="10.5sp" />
 
-        <!-- 底部操作按钮栏（取消与确认按钮水平平分居中显示） -->
+        <!-- 底部操作按钮栏 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="8dp"
             android:gravity="center"
             android:orientation="horizontal">
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btn_floating_dialog_cancel"
                 android:layout_width="0dp"
-                android:layout_height="38dp"
+                android:layout_height="36dp"
                 android:layout_marginEnd="6dp"
                 android:layout_weight="1"
                 android:backgroundTint="#26888888"
@@ -629,14 +735,14 @@
                 android:insetBottom="0dp"
                 android:text="@string/cancel"
                 android:textColor="?android:attr/textColorPrimary"
-                android:textSize="13.5sp"
+                android:textSize="13sp"
                 app:cornerRadius="8dp"
                 app:elevation="0dp" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btn_floating_dialog_confirm"
                 android:layout_width="0dp"
-                android:layout_height="38dp"
+                android:layout_height="36dp"
                 android:layout_marginStart="6dp"
                 android:layout_weight="1"
                 android:backgroundTint="#2196F3"
@@ -644,7 +750,7 @@
                 android:insetBottom="0dp"
                 android:text="@string/confirm"
                 android:textColor="@android:color/white"
-                android:textSize="13.5sp"
+                android:textSize="13sp"
                 app:cornerRadius="8dp"
                 app:elevation="0dp" />
         </LinearLayout>

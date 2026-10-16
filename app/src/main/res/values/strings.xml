@@ -368,6 +368,8 @@
     <string name="floating_theme_light">亮色微透</string>
     <string name="floating_font_size">文字大小</string>
     <string name="floating_font_size_desc">调节悬浮窗内功率与温度文字字号</string>
+    <string name="floating_font_bold">粗体显示</string>
+    <string name="floating_font_bold_desc">文字与数值加粗呈现</string>
     <string name="floating_show_unit">显示单位</string>
     <string name="floating_show_unit_desc">在悬浮窗功率与温度后显示 W、℃ 单位符号</string>
     <string name="floating_show_background">显示背景和边框</string>
@@ -457,6 +459,10 @@
     <string name="dialog_restore_mode_merge">合并现有数据（保留现有并去重追加）</string>
     <string name="dialog_restore_btn_confirm">立即恢复</string>
     <string name="restore_preview_records_format">快照 %1$d 条 · 充电 %2$d 条 · 放电 %3$d 条</string>
+    <string name="setting_restore_floating_window">桌面悬浮窗</string>
+    <string name="setting_restore_current_calibration">硬件电流校准</string>
+    <string name="setting_restore_power_usage_pref">耗电统计偏好</string>
+    <string name="setting_restore_timeline_metrics">趋势图指标</string>
 
     <!-- 健康度指南说明弹窗 -->
     <string name="guide_title">电池健康度计算说明</string>

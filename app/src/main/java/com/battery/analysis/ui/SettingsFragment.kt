@@ -810,6 +810,10 @@ class SettingsFragment : Fragment() {
             }
             append(" · ").append(fontSize).append("sp字号")
             append(" · ").append(opacity).append("%透明度")
+            val isBold = com.battery.analysis.manager.FloatingWindowManager.isFontBold(ctx)
+            if (!isBold) {
+                append(" · 常规体")
+            }
             if (!showBackground) {
                 append(" · 无边框")
             }
@@ -893,6 +897,12 @@ class SettingsFragment : Fragment() {
 
         val seekOpacity = dialogView.findViewById<android.widget.SeekBar>(R.id.seekbar_opacity)
         val tvOpacityValue = dialogView.findViewById<TextView>(R.id.tv_opacity_value)
+        val btnOpacityMinus = dialogView.findViewById<TextView>(R.id.btn_opacity_minus)
+        val btnOpacityPlus = dialogView.findViewById<TextView>(R.id.btn_opacity_plus)
+
+        val layoutAlignStatusBar = dialogView.findViewById<android.view.View>(R.id.layout_floating_align_status_bar)
+        val layoutFontBold = dialogView.findViewById<android.view.View>(R.id.layout_floating_font_bold)
+        val switchFontBold = dialogView.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.switch_font_bold)
 
         val layoutShowUnit = dialogView.findViewById<android.view.View>(R.id.layout_floating_show_unit)
         val switchShowUnit = dialogView.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.switch_show_unit)
@@ -916,7 +926,10 @@ class SettingsFragment : Fragment() {
         val initialAlign = com.battery.analysis.manager.FloatingWindowManager.getHorizontalAlign(ctx)
         val initialX = com.battery.analysis.manager.FloatingWindowManager.getPosX(ctx)
         val initialOffsetX = com.battery.analysis.manager.FloatingWindowManager.getOffsetX(ctx)
+        val initialPercentX = com.battery.analysis.manager.FloatingWindowManager.getPercentX(ctx)
+        val initialPercentY = com.battery.analysis.manager.FloatingWindowManager.getPercentY(ctx)
         val initialFontSize = com.battery.analysis.manager.FloatingWindowManager.getFontSize(ctx)
+        val initialFontBold = com.battery.analysis.manager.FloatingWindowManager.isFontBold(ctx)
         val initialOpacity = com.battery.analysis.manager.FloatingWindowManager.getOpacity(ctx)
         val initialThemeMode = com.battery.analysis.manager.FloatingWindowManager.getThemeMode(ctx)
         val initialShowUnit = com.battery.analysis.manager.FloatingWindowManager.isShowUnit(ctx)
@@ -1152,6 +1165,20 @@ class SettingsFragment : Fragment() {
             }
         }
 
+        // 置于状态栏整行点击交互
+        layoutAlignStatusBar?.setOnClickListener {
+            switchStatusBar.toggle()
+        }
+
+        // 是否开启粗体显示开关交互
+        switchFontBold.isChecked = initialFontBold
+        switchFontBold.setOnCheckedChangeListener { _, isChecked ->
+            com.battery.analysis.manager.FloatingWindowManager.setFontBold(ctx, isChecked)
+        }
+        layoutFontBold?.setOnClickListener {
+            switchFontBold.toggle()
+        }
+
         // 是否显示单位开关交互
         switchShowUnit.isChecked = initialShowUnit
         switchShowUnit.setOnCheckedChangeListener { _, isChecked ->
@@ -1176,6 +1203,26 @@ class SettingsFragment : Fragment() {
             override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
         })
+
+        // 透明度加减步进微调按钮 (步长 5%)
+        btnOpacityMinus.setOnClickListener {
+            val current = seekOpacity.progress
+            val target = (current - 5).coerceIn(20, 100)
+            if (target != current) {
+                seekOpacity.progress = target
+                tvOpacityValue.text = "${target}%"
+                com.battery.analysis.manager.FloatingWindowManager.setOpacity(ctx, target)
+            }
+        }
+        btnOpacityPlus.setOnClickListener {
+            val current = seekOpacity.progress
+            val target = (current + 5).coerceIn(20, 100)
+            if (target != current) {
+                seekOpacity.progress = target
+                tvOpacityValue.text = "${target}%"
+                com.battery.analysis.manager.FloatingWindowManager.setOpacity(ctx, target)
+            }
+        }
 
         // 是否显示背景和边框开关交互
         switchShowBackground.isChecked = initialShowBackground
@@ -1216,7 +1263,10 @@ class SettingsFragment : Fragment() {
             com.battery.analysis.manager.FloatingWindowManager.setHorizontalAlign(ctx, initialAlign)
             com.battery.analysis.manager.FloatingWindowManager.setPosX(ctx, initialX)
             com.battery.analysis.manager.FloatingWindowManager.setOffsetX(ctx, initialOffsetX)
+            com.battery.analysis.manager.FloatingWindowManager.setPercentX(ctx, initialPercentX)
+            com.battery.analysis.manager.FloatingWindowManager.setPercentY(ctx, initialPercentY)
             com.battery.analysis.manager.FloatingWindowManager.setFontSize(ctx, initialFontSize)
+            com.battery.analysis.manager.FloatingWindowManager.setFontBold(ctx, initialFontBold)
             com.battery.analysis.manager.FloatingWindowManager.setShowUnit(ctx, initialShowUnit)
             com.battery.analysis.manager.FloatingWindowManager.setOpacity(ctx, initialOpacity)
             com.battery.analysis.manager.FloatingWindowManager.setShowBackground(ctx, initialShowBackground)
@@ -1553,10 +1603,22 @@ class SettingsFragment : Fragment() {
         if (s.chargeDischargeStatsEnabled != null) settingsList.add(getString(R.string.setting_charge_discharge_stats))
         if (s.chargingKeepScreenOn != null) settingsList.add(getString(R.string.setting_charging_keep_screen_on))
         if (s.powerStatsMode != null) settingsList.add(getString(R.string.setting_power_mode))
-        if (s.notificationDisplayEnabled != null || s.screenOnIntervalMs != null || s.screenOffIntervalMs != null) {
+        if (s.notificationDisplayEnabled != null || s.screenOnIntervalMs != null || s.screenOffIntervalMs != null || s.batteryServiceEnabled != null) {
             settingsList.add(getString(R.string.settings_keep_alive_category))
         }
         if (s.bootAutoStartEnabled != null) settingsList.add(getString(R.string.settings_boot_start_title))
+        if (s.floatingEnabled != null || s.floatingShowPower != null || s.floatingShowTemp != null || s.floatingOpacity != null || s.floatingFontSize != null || s.floatingFontBold != null || s.floatingPosPercentX != null || s.floatingPosPercentY != null) {
+            settingsList.add(getString(R.string.setting_restore_floating_window))
+        }
+        if (s.currentCalibrationMultiplier != null || s.currentCalibrationDualCell != null || s.currentCalibrationInvertPolarity != null || s.currentCalibrationCoulombFallback != null) {
+            settingsList.add(getString(R.string.setting_restore_current_calibration))
+        }
+        if (s.powerDisplayUnit != null || s.enableBackgroundStats != null || s.powerUnitDialogDoNotShow != null) {
+            settingsList.add(getString(R.string.setting_restore_power_usage_pref))
+        }
+        if (s.timelineSavedMetrics != null && s.timelineSavedMetrics.isNotEmpty()) {
+            settingsList.add(getString(R.string.setting_restore_timeline_metrics))
+        }
 
         if (settingsList.isNotEmpty()) {
             tvSettingsInfo.text = settingsList.joinToString("、")
@@ -1637,8 +1699,13 @@ class SettingsFragment : Fragment() {
         binding.switchBootAutoStart.isChecked = com.battery.analysis.service.BatteryMonitorService.isBootAutoStartEnabled(requireContext())
         updateKeepAliveIntervalDisplay()
 
+        // 同步悬浮窗与硬件电流校准控件展示
+        updateFloatingWindowDisplay()
+        updateCurrentCalibrationDisplay()
+
         AppCompatDelegate.setDefaultNightMode(currentThemeMode)
     }
+
 
     /**
      * 初始化关于信息与应用版本号展示。

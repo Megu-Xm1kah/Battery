@@ -12,7 +12,9 @@ import com.battery.analysis.model.BackupSettings
 import com.battery.analysis.model.ChargingHistoryRecord
 import com.battery.analysis.model.HistoryRecord
 import com.battery.analysis.model.PowerUsageRecord
+import com.battery.analysis.model.PowerDisplayUnit
 import com.battery.analysis.service.BatteryMonitorService
+import com.battery.analysis.ui.PowerUsageFragment
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -63,6 +65,9 @@ class BackupManager private constructor() {
         val servicePrefs = context.getSharedPreferences("battery_service_prefs", Context.MODE_PRIVATE)
         val chargingPrefs = context.getSharedPreferences("charging_stats_prefs", Context.MODE_PRIVATE)
         val powerPrefs = context.getSharedPreferences("power_stats_prefs", Context.MODE_PRIVATE)
+        val floatingPrefs = context.getSharedPreferences("floating_window_prefs", Context.MODE_PRIVATE)
+        val calibPrefs = context.getSharedPreferences("current_calibration_prefs", Context.MODE_PRIVATE)
+        val timelinePrefs = context.getSharedPreferences("timeline_metrics_prefs", Context.MODE_PRIVATE)
 
         val now = Date()
         val timeFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
@@ -109,6 +114,101 @@ class BackupManager private constructor() {
         if (servicePrefs.contains("pref_battery_boot_auto_start")) {
             settingsJson.put("boot_auto_start_enabled", servicePrefs.getBoolean("pref_battery_boot_auto_start", true))
         }
+        if (servicePrefs.contains("pref_battery_service_enabled")) {
+            settingsJson.put("battery_service_enabled", servicePrefs.getBoolean("pref_battery_service_enabled", true))
+        }
+
+        // 桌面全局悬浮窗配置
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_ENABLED)) {
+            settingsJson.put("floating_enabled", floatingPrefs.getBoolean(FloatingWindowManager.KEY_ENABLED, false))
+        }
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_SHOW_POWER)) {
+            settingsJson.put("floating_show_power", floatingPrefs.getBoolean(FloatingWindowManager.KEY_SHOW_POWER, true))
+        }
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_SHOW_TEMP)) {
+            settingsJson.put("floating_show_temp", floatingPrefs.getBoolean(FloatingWindowManager.KEY_SHOW_TEMP, true))
+        }
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_ALIGN_STATUS_BAR)) {
+            settingsJson.put("floating_align_status_bar", floatingPrefs.getBoolean(FloatingWindowManager.KEY_ALIGN_STATUS_BAR, true))
+        }
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_POS_X)) {
+            settingsJson.put("floating_pos_x", floatingPrefs.getInt(FloatingWindowManager.KEY_POS_X, 0))
+        }
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_POS_Y)) {
+            settingsJson.put("floating_pos_y", floatingPrefs.getInt(FloatingWindowManager.KEY_POS_Y, 0))
+        }
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_POS_X_LAND)) {
+            settingsJson.put("floating_pos_x_land", floatingPrefs.getInt(FloatingWindowManager.KEY_POS_X_LAND, 0))
+        }
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_POS_Y_LAND)) {
+            settingsJson.put("floating_pos_y_land", floatingPrefs.getInt(FloatingWindowManager.KEY_POS_Y_LAND, 0))
+        }
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_HORIZONTAL_ALIGN)) {
+            settingsJson.put("floating_horizontal_align", floatingPrefs.getInt(FloatingWindowManager.KEY_HORIZONTAL_ALIGN, FloatingWindowManager.ALIGN_RIGHT))
+        }
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_OPACITY)) {
+            settingsJson.put("floating_opacity", floatingPrefs.getInt(FloatingWindowManager.KEY_OPACITY, 90))
+        }
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_THEME_MODE)) {
+            settingsJson.put("floating_theme_mode", floatingPrefs.getInt(FloatingWindowManager.KEY_THEME_MODE, FloatingWindowManager.THEME_FOLLOW_SYSTEM))
+        }
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_FONT_SIZE)) {
+            settingsJson.put("floating_font_size", floatingPrefs.getInt(FloatingWindowManager.KEY_FONT_SIZE, FloatingWindowManager.DEFAULT_FONT_SIZE))
+        }
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_FONT_BOLD)) {
+            settingsJson.put("floating_font_bold", floatingPrefs.getBoolean(FloatingWindowManager.KEY_FONT_BOLD, true))
+        }
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_SHOW_UNIT)) {
+            settingsJson.put("floating_show_unit", floatingPrefs.getBoolean(FloatingWindowManager.KEY_SHOW_UNIT, true))
+        }
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_SHOW_BACKGROUND)) {
+            settingsJson.put("floating_show_background", floatingPrefs.getBoolean(FloatingWindowManager.KEY_SHOW_BACKGROUND, true))
+        }
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_OFFSET_X)) {
+            settingsJson.put("floating_offset_x", floatingPrefs.getInt(FloatingWindowManager.KEY_OFFSET_X, 0))
+        }
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_POS_PERCENT_X)) {
+            settingsJson.put("floating_pos_percent_x", floatingPrefs.getFloat(FloatingWindowManager.KEY_POS_PERCENT_X, 0.5f).toDouble())
+        }
+        if (floatingPrefs.contains(FloatingWindowManager.KEY_POS_PERCENT_Y)) {
+            settingsJson.put("floating_pos_percent_y", floatingPrefs.getFloat(FloatingWindowManager.KEY_POS_PERCENT_Y, 0f).toDouble())
+        }
+
+        // 硬件电流校准配置
+        if (calibPrefs.contains("key_calibration_multiplier")) {
+            settingsJson.put("current_calibration_multiplier", calibPrefs.getFloat("key_calibration_multiplier", 1.0f).toDouble())
+        }
+        if (calibPrefs.contains("key_dual_cell")) {
+            settingsJson.put("current_calibration_dual_cell", calibPrefs.getBoolean("key_dual_cell", false))
+        }
+        if (calibPrefs.contains("key_invert_polarity")) {
+            settingsJson.put("current_calibration_invert_polarity", calibPrefs.getBoolean("key_invert_polarity", false))
+        }
+        if (calibPrefs.contains("key_coulomb_fallback")) {
+            settingsJson.put("current_calibration_coulomb_fallback", calibPrefs.getBoolean("key_coulomb_fallback", true))
+        }
+
+        // 耗电统计偏好配置
+        if (powerPrefs.contains(PowerDisplayUnit.PREF_KEY_POWER_DISPLAY_UNIT)) {
+            settingsJson.put("power_display_unit", powerPrefs.getInt(PowerDisplayUnit.PREF_KEY_POWER_DISPLAY_UNIT, PowerDisplayUnit.WH.id))
+        }
+        if (powerPrefs.contains(PowerDisplayUnit.PREF_KEY_POWER_UNIT_DIALOG_DONOT_SHOW)) {
+            settingsJson.put("power_unit_dialog_donot_show", powerPrefs.getBoolean(PowerDisplayUnit.PREF_KEY_POWER_UNIT_DIALOG_DONOT_SHOW, false))
+        }
+        if (powerPrefs.contains(PowerUsageFragment.PREF_KEY_ENABLE_BACKGROUND_STATS)) {
+            settingsJson.put("enable_background_stats", powerPrefs.getBoolean(PowerUsageFragment.PREF_KEY_ENABLE_BACKGROUND_STATS, false))
+        }
+
+        // 趋势图指标配置
+        if (timelinePrefs.contains("saved_timeline_metrics")) {
+            val metricsSet = timelinePrefs.getStringSet("saved_timeline_metrics", null)
+            if (metricsSet != null) {
+                val array = JSONArray()
+                metricsSet.forEach { array.put(it) }
+                settingsJson.put("timeline_saved_metrics", array)
+            }
+        }
+
         rootJson.put("settings", settingsJson)
 
         // 2. 电池检测历史记录列表打包
@@ -163,7 +263,7 @@ class BackupManager private constructor() {
         }
         rootJson.put("charging_records", chargingArray)
 
-        // 4. 放电耗电历史记录列表打包
+        // 4. 放电耗电历史记录列表打包（全量无损包含息屏细分与会话状态指标）
         val powerArray = JSONArray()
         for (p in powerUsageRecords) {
             val pJson = JSONObject()
@@ -194,12 +294,22 @@ class BackupManager private constructor() {
             pJson.put("total_energy_wh", p.totalEnergyWh.toDouble())
             pJson.put("screen_off_energy_wh", p.screenOffEnergyWh.toDouble())
             pJson.put("background_energy_wh", p.backgroundEnergyWh.toDouble())
+            pJson.put("is_completed", p.isCompleted)
+            pJson.put("last_checkpoint_time", p.lastCheckpointTime)
+            pJson.put("screen_off_awake_energy_wh", p.screenOffAwakeEnergyWh.toDouble())
+            pJson.put("screen_off_deep_sleep_energy_wh", p.screenOffDeepSleepEnergyWh.toDouble())
+            pJson.put("screen_off_awake_duration_ms", p.screenOffAwakeDurationMs)
+            pJson.put("screen_off_deep_sleep_duration_ms", p.screenOffDeepSleepDurationMs)
+            pJson.put("screen_off_awake_drain_mah", p.screenOffAwakeDrainMah.toDouble())
+            pJson.put("screen_off_deep_sleep_drain_mah", p.screenOffDeepSleepDrainMah.toDouble())
+            pJson.put("is_screen_off_decomposed", p.isScreenOffDecomposedAvailable)
             powerArray.put(pJson)
         }
         rootJson.put("power_usage_records", powerArray)
 
         return rootJson.toString(2)
     }
+
 
     /**
      * 将 JSON 字符串解析为 [BackupData] 实体对象。
@@ -218,6 +328,17 @@ class BackupManager private constructor() {
 
         val settingsJson = rootJson.optJSONObject("settings")
         val settings = if (settingsJson != null) {
+            val timelineMetrics = if (settingsJson.has("timeline_saved_metrics")) {
+                val array = settingsJson.optJSONArray("timeline_saved_metrics")
+                if (array != null) {
+                    val list = mutableListOf<String>()
+                    for (i in 0 until array.length()) {
+                        list.add(array.getString(i))
+                    }
+                    list
+                } else null
+            } else null
+
             BackupSettings(
                 languageMode = if (settingsJson.has("language_mode")) settingsJson.getInt("language_mode") else null,
                 themeMode = if (settingsJson.has("theme_mode")) settingsJson.getInt("theme_mode") else null,
@@ -231,11 +352,39 @@ class BackupManager private constructor() {
                 notificationDisplayEnabled = if (settingsJson.has("notification_display_enabled")) settingsJson.getBoolean("notification_display_enabled") else null,
                 screenOnIntervalMs = if (settingsJson.has("screen_on_interval_ms")) settingsJson.getLong("screen_on_interval_ms") else null,
                 screenOffIntervalMs = if (settingsJson.has("screen_off_interval_ms")) settingsJson.getLong("screen_off_interval_ms") else null,
-                bootAutoStartEnabled = if (settingsJson.has("boot_auto_start_enabled")) settingsJson.getBoolean("boot_auto_start_enabled") else null
+                bootAutoStartEnabled = if (settingsJson.has("boot_auto_start_enabled")) settingsJson.getBoolean("boot_auto_start_enabled") else null,
+                batteryServiceEnabled = if (settingsJson.has("battery_service_enabled")) settingsJson.getBoolean("battery_service_enabled") else null,
+                floatingEnabled = if (settingsJson.has("floating_enabled")) settingsJson.getBoolean("floating_enabled") else null,
+                floatingShowPower = if (settingsJson.has("floating_show_power")) settingsJson.getBoolean("floating_show_power") else null,
+                floatingShowTemp = if (settingsJson.has("floating_show_temp")) settingsJson.getBoolean("floating_show_temp") else null,
+                floatingAlignStatusBar = if (settingsJson.has("floating_align_status_bar")) settingsJson.getBoolean("floating_align_status_bar") else null,
+                floatingPosX = if (settingsJson.has("floating_pos_x")) settingsJson.getInt("floating_pos_x") else null,
+                floatingPosY = if (settingsJson.has("floating_pos_y")) settingsJson.getInt("floating_pos_y") else null,
+                floatingPosXLand = if (settingsJson.has("floating_pos_x_land")) settingsJson.getInt("floating_pos_x_land") else null,
+                floatingPosYLand = if (settingsJson.has("floating_pos_y_land")) settingsJson.getInt("floating_pos_y_land") else null,
+                floatingHorizontalAlign = if (settingsJson.has("floating_horizontal_align")) settingsJson.getInt("floating_horizontal_align") else null,
+                floatingOpacity = if (settingsJson.has("floating_opacity")) settingsJson.getInt("floating_opacity") else null,
+                floatingThemeMode = if (settingsJson.has("floating_theme_mode")) settingsJson.getInt("floating_theme_mode") else null,
+                floatingFontSize = if (settingsJson.has("floating_font_size")) settingsJson.getInt("floating_font_size") else null,
+                floatingFontBold = if (settingsJson.has("floating_font_bold")) settingsJson.getBoolean("floating_font_bold") else null,
+                floatingShowUnit = if (settingsJson.has("floating_show_unit")) settingsJson.getBoolean("floating_show_unit") else null,
+                floatingShowBackground = if (settingsJson.has("floating_show_background")) settingsJson.getBoolean("floating_show_background") else null,
+                floatingOffsetX = if (settingsJson.has("floating_offset_x")) settingsJson.getInt("floating_offset_x") else null,
+                floatingPosPercentX = if (settingsJson.has("floating_pos_percent_x")) settingsJson.getDouble("floating_pos_percent_x").toFloat() else null,
+                floatingPosPercentY = if (settingsJson.has("floating_pos_percent_y")) settingsJson.getDouble("floating_pos_percent_y").toFloat() else null,
+                currentCalibrationMultiplier = if (settingsJson.has("current_calibration_multiplier")) settingsJson.getDouble("current_calibration_multiplier").toFloat() else null,
+                currentCalibrationDualCell = if (settingsJson.has("current_calibration_dual_cell")) settingsJson.getBoolean("current_calibration_dual_cell") else null,
+                currentCalibrationInvertPolarity = if (settingsJson.has("current_calibration_invert_polarity")) settingsJson.getBoolean("current_calibration_invert_polarity") else null,
+                currentCalibrationCoulombFallback = if (settingsJson.has("current_calibration_coulomb_fallback")) settingsJson.getBoolean("current_calibration_coulomb_fallback") else null,
+                powerDisplayUnit = if (settingsJson.has("power_display_unit")) settingsJson.getInt("power_display_unit") else null,
+                powerUnitDialogDoNotShow = if (settingsJson.has("power_unit_dialog_donot_show")) settingsJson.getBoolean("power_unit_dialog_donot_show") else null,
+                enableBackgroundStats = if (settingsJson.has("enable_background_stats")) settingsJson.getBoolean("enable_background_stats") else null,
+                timelineSavedMetrics = timelineMetrics
             )
         } else {
             BackupSettings()
         }
+
 
         // 解析检测历史快照
         val historyRecords = mutableListOf<HistoryRecord>()
@@ -353,7 +502,16 @@ class BackupManager private constructor() {
                         screenOnEnergyWh = item.optDouble("screen_on_energy_wh", 0.0).toFloat(),
                         totalEnergyWh = item.optDouble("total_energy_wh", 0.0).toFloat(),
                         screenOffEnergyWh = item.optDouble("screen_off_energy_wh", 0.0).toFloat(),
-                        backgroundEnergyWh = item.optDouble("background_energy_wh", 0.0).toFloat()
+                        backgroundEnergyWh = item.optDouble("background_energy_wh", 0.0).toFloat(),
+                        isCompleted = item.optBoolean("is_completed", true),
+                        lastCheckpointTime = item.optLong("last_checkpoint_time", 0L),
+                        screenOffAwakeEnergyWh = item.optDouble("screen_off_awake_energy_wh", 0.0).toFloat(),
+                        screenOffDeepSleepEnergyWh = item.optDouble("screen_off_deep_sleep_energy_wh", 0.0).toFloat(),
+                        screenOffAwakeDurationMs = item.optLong("screen_off_awake_duration_ms", 0L),
+                        screenOffDeepSleepDurationMs = item.optLong("screen_off_deep_sleep_duration_ms", 0L),
+                        screenOffAwakeDrainMah = item.optDouble("screen_off_awake_drain_mah", 0.0).toFloat(),
+                        screenOffDeepSleepDrainMah = item.optDouble("screen_off_deep_sleep_drain_mah", 0.0).toFloat(),
+                        isScreenOffDecomposedAvailable = item.optBoolean("is_screen_off_decomposed", true)
                     )
                 )
             }
@@ -523,20 +681,93 @@ class BackupManager private constructor() {
                 }
                 BatteryMonitorService.updateNotificationVisibility(context)
 
+                // 服务总开关
+                settings.batteryServiceEnabled?.let {
+                    BatteryMonitorService.setServiceEnabled(context, it)
+                }
+
                 // 充电常亮开关
                 settings.chargingKeepScreenOn?.let {
                     val chargingPrefs = context.getSharedPreferences("charging_stats_prefs", Context.MODE_PRIVATE)
                     chargingPrefs.edit().putBoolean("pref_charging_keep_screen_on", it).apply()
                 }
 
-                // 耗电统计模式
+                // 耗电统计模式与单位偏好
                 settings.powerStatsMode?.let {
                     val powerManager = PowerUsageManager.getInstance(context)
                     powerManager.setSelectedMode(it)
                 }
+                val powerPrefs = context.getSharedPreferences("power_stats_prefs", Context.MODE_PRIVATE)
+                val powerEditor = powerPrefs.edit()
                 settings.powerModeConfigured?.let {
-                    val powerPrefs = context.getSharedPreferences("power_stats_prefs", Context.MODE_PRIVATE)
-                    powerPrefs.edit().putBoolean("pref_power_mode_configured", it).apply()
+                    powerEditor.putBoolean("pref_power_mode_configured", it)
+                }
+                settings.powerDisplayUnit?.let {
+                    powerEditor.putInt(PowerDisplayUnit.PREF_KEY_POWER_DISPLAY_UNIT, it)
+                }
+                settings.powerUnitDialogDoNotShow?.let {
+                    powerEditor.putBoolean(PowerDisplayUnit.PREF_KEY_POWER_UNIT_DIALOG_DONOT_SHOW, it)
+                }
+                settings.enableBackgroundStats?.let {
+                    powerEditor.putBoolean(PowerUsageFragment.PREF_KEY_ENABLE_BACKGROUND_STATS, it)
+                }
+                powerEditor.apply()
+
+                // 桌面全局悬浮窗配置
+                val floatingPrefs = context.getSharedPreferences("floating_window_prefs", Context.MODE_PRIVATE)
+                val floatingEditor = floatingPrefs.edit()
+                settings.floatingEnabled?.let { floatingEditor.putBoolean(FloatingWindowManager.KEY_ENABLED, it) }
+                settings.floatingShowPower?.let { floatingEditor.putBoolean(FloatingWindowManager.KEY_SHOW_POWER, it) }
+                settings.floatingShowTemp?.let { floatingEditor.putBoolean(FloatingWindowManager.KEY_SHOW_TEMP, it) }
+                settings.floatingAlignStatusBar?.let { floatingEditor.putBoolean(FloatingWindowManager.KEY_ALIGN_STATUS_BAR, it) }
+                settings.floatingPosX?.let { floatingEditor.putInt(FloatingWindowManager.KEY_POS_X, it) }
+                settings.floatingPosY?.let { floatingEditor.putInt(FloatingWindowManager.KEY_POS_Y, it) }
+                settings.floatingPosXLand?.let { floatingEditor.putInt(FloatingWindowManager.KEY_POS_X_LAND, it) }
+                settings.floatingPosYLand?.let { floatingEditor.putInt(FloatingWindowManager.KEY_POS_Y_LAND, it) }
+                settings.floatingHorizontalAlign?.let { floatingEditor.putInt(FloatingWindowManager.KEY_HORIZONTAL_ALIGN, it) }
+                settings.floatingOpacity?.let { floatingEditor.putInt(FloatingWindowManager.KEY_OPACITY, it) }
+                settings.floatingThemeMode?.let { floatingEditor.putInt(FloatingWindowManager.KEY_THEME_MODE, it) }
+                settings.floatingFontSize?.let { floatingEditor.putInt(FloatingWindowManager.KEY_FONT_SIZE, it) }
+                settings.floatingFontBold?.let { floatingEditor.putBoolean(FloatingWindowManager.KEY_FONT_BOLD, it) }
+                settings.floatingShowUnit?.let { floatingEditor.putBoolean(FloatingWindowManager.KEY_SHOW_UNIT, it) }
+                settings.floatingShowBackground?.let { floatingEditor.putBoolean(FloatingWindowManager.KEY_SHOW_BACKGROUND, it) }
+                settings.floatingOffsetX?.let { floatingEditor.putInt(FloatingWindowManager.KEY_OFFSET_X, it) }
+                settings.floatingPosPercentX?.let { floatingEditor.putFloat(FloatingWindowManager.KEY_POS_PERCENT_X, it) }
+                settings.floatingPosPercentY?.let { floatingEditor.putFloat(FloatingWindowManager.KEY_POS_PERCENT_Y, it) }
+                floatingEditor.apply()
+
+                // 若具备悬浮窗系统权限，按恢复的开关状态安全驱动悬浮窗
+                if (FloatingWindowManager.canDrawOverlays(context)) {
+                    val isFloatingActive = settings.floatingEnabled ?: FloatingWindowManager.isFloatingEnabled(context)
+                    if (isFloatingActive) {
+                        FloatingWindowManager.show(context)
+                        FloatingWindowManager.updatePositionAndAppearance(context)
+                        if (BatteryMonitorService.shouldServiceRun(context)) {
+                            BatteryMonitorService.start(context)
+                        }
+                    } else {
+                        FloatingWindowManager.hide(context)
+                    }
+                }
+
+                // 硬件电流校准配置
+                settings.currentCalibrationMultiplier?.let {
+                    CurrentCalibrationManager.setMultiplier(context, it)
+                }
+                settings.currentCalibrationDualCell?.let {
+                    CurrentCalibrationManager.setDualCellEnabled(context, it)
+                }
+                settings.currentCalibrationInvertPolarity?.let {
+                    CurrentCalibrationManager.setInvertPolarity(context, it)
+                }
+                settings.currentCalibrationCoulombFallback?.let {
+                    CurrentCalibrationManager.setCoulombFallbackEnabled(context, it)
+                }
+
+                // 趋势图指标配置
+                settings.timelineSavedMetrics?.let { metricsList ->
+                    val timelinePrefs = context.getSharedPreferences("timeline_metrics_prefs", Context.MODE_PRIVATE)
+                    timelinePrefs.edit().putStringSet("saved_timeline_metrics", metricsList.toSet()).apply()
                 }
             }
 
@@ -553,7 +784,7 @@ class BackupManager private constructor() {
     }
 
     companion object {
-        private const val BACKUP_SCHEMA_VERSION = 2
+        private const val BACKUP_SCHEMA_VERSION = 3
 
         @Volatile
         private var instance: BackupManager? = null
@@ -570,3 +801,4 @@ class BackupManager private constructor() {
         }
     }
 }
+

@@ -8,6 +8,7 @@ import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -53,6 +54,9 @@ object FloatingWindowManager {
     const val KEY_SHOW_UNIT = "pref_floating_show_unit"
     const val KEY_SHOW_BACKGROUND = "pref_floating_show_background"
     const val KEY_OFFSET_X = "pref_floating_offset_x"
+    const val KEY_FONT_BOLD = "pref_floating_font_bold"
+    const val KEY_POS_PERCENT_X = "pref_floating_pos_percent_x"
+    const val KEY_POS_PERCENT_Y = "pref_floating_pos_percent_y"
 
     const val DEFAULT_FONT_SIZE = 11
     const val MIN_FONT_SIZE = 5
@@ -318,106 +322,157 @@ object FloatingWindowManager {
     }
 
     /**
+     * 获取悬浮窗相对屏幕水平可活动区间的百分比位置（0.0 表示最左侧，0.5 表示居中，1.0 表示最右侧）。
+     * 解决横竖屏旋转切换时固定像素偏移导致的比例失调与错位问题。
+     *
+     * @param context 运行上下文
+     * @return 水平百分比浮点数，范围 0.0f 至 1.0f
+     */
+    fun getPercentX(context: Context): Float {
+        val prefs = getPrefs(context)
+        if (prefs.contains(KEY_POS_PERCENT_X)) {
+            return prefs.getFloat(KEY_POS_PERCENT_X, 0.5f).coerceIn(0f, 1f)
+        }
+        val (w, h) = getRealScreenSize(context)
+        val portWidth = minOf(w, h)
+        val density = context.resources.displayMetrics.density
+        val defaultViewWidth = (120 * density).toInt()
+        val currentViewWidth = floatingView?.width?.takeIf { it > 0 } ?: defaultViewWidth
+        val maxX = (portWidth - currentViewWidth).coerceAtLeast(1)
+        val alignMode = getHorizontalAlign(context)
+        val percent = when (alignMode) {
+            ALIGN_LEFT -> 0f
+            ALIGN_CENTER -> 0.5f
+            ALIGN_RIGHT -> 1f
+            else -> {
+                val posX = prefs.getInt(KEY_POS_X, -1)
+                if (posX >= 0) {
+                    (posX.toFloat() / maxX).coerceIn(0f, 1f)
+                } else {
+                    0.5f
+                }
+            }
+        }
+        prefs.edit().putFloat(KEY_POS_PERCENT_X, percent).apply()
+        return percent
+    }
+
+    /**
+     * 设置并持久化悬浮窗相对屏幕水平可活动区间的百分比位置。
+     *
+     * @param context 运行上下文
+     * @param percent 水平百分比浮点数（范围 0.0f 至 1.0f）
+     */
+    fun setPercentX(context: Context, percent: Float) {
+        val valid = percent.coerceIn(0f, 1f)
+        getPrefs(context).edit().putFloat(KEY_POS_PERCENT_X, valid).apply()
+    }
+
+    /**
+     * 获取悬浮窗相对屏幕垂直有效可活动区间的百分比位置（0.0 表示最顶端，1.0 表示最底端）。
+     * 自动适配状态栏是否允许进入及横竖屏下状态栏高度差异，防止横屏溢出或越界。
+     *
+     * @param context 运行上下文
+     * @return 垂直有效区间百分比浮点数，范围 0.0f 至 1.0f
+     */
+    fun getPercentY(context: Context): Float {
+        val prefs = getPrefs(context)
+        if (prefs.contains(KEY_POS_PERCENT_Y)) {
+            return prefs.getFloat(KEY_POS_PERCENT_Y, 0f).coerceIn(0f, 1f)
+        }
+        val (w, h) = getRealScreenSize(context)
+        val portHeight = maxOf(w, h)
+        val statusBarHeight = getStatusBarHeight(context)
+        val density = context.resources.displayMetrics.density
+        val defaultViewHeight = (26 * density).toInt()
+        val currentViewHeight = floatingView?.height?.takeIf { it > 0 } ?: defaultViewHeight
+        val isAlignStatusBar = isAlignStatusBar(context)
+        val minY = if (isAlignStatusBar) 0 else statusBarHeight
+        val maxY = (portHeight - currentViewHeight).coerceAtLeast(minY)
+        val availH = (maxY - minY).coerceAtLeast(1)
+        val posY = prefs.getInt(KEY_POS_Y, 0)
+        val percent = ((posY - minY).toFloat() / availH).coerceIn(0f, 1f)
+        prefs.edit().putFloat(KEY_POS_PERCENT_Y, percent).apply()
+        return percent
+    }
+
+    /**
+     * 设置并持久化悬浮窗相对屏幕垂直有效可活动区间的百分比位置。
+     *
+     * @param context 运行上下文
+     * @param percent 垂直百分比浮点数（范围 0.0f 至 1.0f）
+     */
+    fun setPercentY(context: Context, percent: Float) {
+        val valid = percent.coerceIn(0f, 1f)
+        getPrefs(context).edit().putFloat(KEY_POS_PERCENT_Y, valid).apply()
+    }
+
+    /**
      * 获取悬浮窗相对屏幕水平中心基准线的偏移量（单位：像素）。
-     * 0 表示严格居中，负数表示居中偏左偏移，正数表示居中偏右偏移。
-     * 自适应横屏与竖屏切换，确保无论屏幕方向如何旋转，居中偏左或偏右的物理相对间距均始终精准保持。
      *
      * @param context 运行上下文
      * @return 相对屏幕水平中心的偏移量像素值
      */
     fun getOffsetX(context: Context): Int {
-        val prefs = getPrefs(context)
-        if (prefs.contains(KEY_OFFSET_X)) {
-            return prefs.getInt(KEY_OFFSET_X, 0)
-        }
-        val savedX = prefs.getInt(KEY_POS_X, -1)
-        if (savedX >= 0) {
-            val (w, h) = getRealScreenSize(context)
-            val portWidth = minOf(w, h)
-            val density = context.resources.displayMetrics.density
-            val defaultViewWidth = (120 * density).toInt()
-            val currentViewWidth = floatingView?.width?.takeIf { it > 0 } ?: defaultViewWidth
-            val portCenter = (portWidth - currentViewWidth) / 2
-            val calculatedOffset = savedX - portCenter
-            prefs.edit().putInt(KEY_OFFSET_X, calculatedOffset).apply()
-            return calculatedOffset
-        }
-        return 0
+        val (w, h) = getRealScreenSize(context)
+        val isLand = isLandscape(context)
+        val screenWidth = if (isLand) maxOf(w, h) else minOf(w, h)
+        val density = context.resources.displayMetrics.density
+        val defaultViewWidth = (120 * density).toInt()
+        val currentViewWidth = floatingView?.width?.takeIf { it > 0 } ?: defaultViewWidth
+        val maxX = (screenWidth - currentViewWidth).coerceAtLeast(1)
+        val centerX = (screenWidth - currentViewWidth) / 2
+        val percentX = getPercentX(context)
+        val currentX = (percentX * maxX).toInt()
+        return currentX - centerX
     }
 
     /**
      * 设置并持久化悬浮窗相对屏幕水平中心基准线的偏移量（单位：像素）。
-     * 同步刷新并推导保存横竖屏各自对应的绝对 X 坐标缓存。
      *
      * @param context 运行上下文
      * @param offset 相对屏幕水平中心的偏移量（0 居中，负数居中偏左，正数居中偏右）
      */
     fun setOffsetX(context: Context, offset: Int) {
-        val prefs = getPrefs(context)
         val (w, h) = getRealScreenSize(context)
-        val portWidth = minOf(w, h)
-        val landWidth = maxOf(w, h)
+        val isLand = isLandscape(context)
+        val screenWidth = if (isLand) maxOf(w, h) else minOf(w, h)
         val density = context.resources.displayMetrics.density
         val defaultViewWidth = (120 * density).toInt()
         val currentViewWidth = floatingView?.width?.takeIf { it > 0 } ?: defaultViewWidth
-        val portCenter = (portWidth - currentViewWidth) / 2
-        val landCenter = (landWidth - currentViewWidth) / 2
-        val portMaxX = (portWidth - currentViewWidth).coerceAtLeast(0)
-        val landMaxX = (landWidth - currentViewWidth).coerceAtLeast(0)
-
-        prefs.edit()
+        val maxX = (screenWidth - currentViewWidth).coerceAtLeast(1)
+        val centerX = (screenWidth - currentViewWidth) / 2
+        val targetX = (centerX + offset).coerceIn(0, maxX)
+        val percentX = targetX.toFloat() / maxX
+        setPercentX(context, percentX)
+        getPrefs(context).edit()
             .putInt(KEY_OFFSET_X, offset)
-            .putInt(KEY_POS_X, (portCenter + offset).coerceIn(0, portMaxX))
-            .putInt(KEY_POS_X_LAND, (landCenter + offset).coerceIn(0, landMaxX))
+            .putInt(KEY_POS_X, targetX)
             .apply()
     }
 
     /**
      * 获取指定或当前屏幕方向下持久化的水平位置 X 坐标（像素）。
-     * 若处于横屏模式且未单独保存过横屏坐标，智能根据相对居中偏移量自适应转换为横屏对应最佳坐标。
+     * 基于百分占比实时换算，保证横屏与竖屏几何比例无缝贴合。
      *
      * @param context 运行上下文
      * @param isLandscape 是否为横屏方向（默认依据当前屏幕动态判定）
-     * @return X 坐标值，-1 表示未设置/默认
+     * @return 当前屏幕下的 X 坐标物理像素值
      */
     fun getPosX(context: Context, isLandscape: Boolean = isLandscape(context)): Int {
-        val prefs = getPrefs(context)
         val (w, h) = getRealScreenSize(context)
         val screenWidth = if (isLandscape) maxOf(w, h) else minOf(w, h)
         val density = context.resources.displayMetrics.density
         val defaultViewWidth = (120 * density).toInt()
         val currentViewWidth = floatingView?.width?.takeIf { it > 0 } ?: defaultViewWidth
-        val centerX = (screenWidth - currentViewWidth) / 2
-        val maxX = (screenWidth - currentViewWidth).coerceAtLeast(0)
-
-        if (prefs.contains(KEY_OFFSET_X)) {
-            val offset = prefs.getInt(KEY_OFFSET_X, 0)
-            return (centerX + offset).coerceIn(0, maxX)
-        }
-
-        return if (isLandscape) {
-            val landX = prefs.getInt(KEY_POS_X_LAND, -1)
-            if (landX >= 0) {
-                landX
-            } else {
-                val portX = prefs.getInt(KEY_POS_X, -1)
-                if (portX >= 0) {
-                    val portWidth = minOf(w, h)
-                    val portCenter = (portWidth - currentViewWidth) / 2
-                    val offset = portX - portCenter
-                    (centerX + offset).coerceIn(0, maxX)
-                } else {
-                    -1
-                }
-            }
-        } else {
-            prefs.getInt(KEY_POS_X, -1)
-        }
+        val maxX = (screenWidth - currentViewWidth).coerceAtLeast(1)
+        val percent = getPercentX(context)
+        return (percent * maxX).toInt().coerceIn(0, maxX)
     }
 
     /**
      * 设置并持久化指定或当前屏幕方向下的水平位置 X 坐标（像素）。
-     * 自动推导并同步相对居中偏移量，保证横屏与竖屏自适应联动。
+     * 自动转换为全局百分占比并持久化，保证横竖屏切换时自适应。
      *
      * @param context 运行上下文
      * @param x X 坐标像素值
@@ -429,38 +484,82 @@ object FloatingWindowManager {
         val density = context.resources.displayMetrics.density
         val defaultViewWidth = (120 * density).toInt()
         val currentViewWidth = floatingView?.width?.takeIf { it > 0 } ?: defaultViewWidth
-        val centerX = (screenWidth - currentViewWidth) / 2
-        val offset = x - centerX
-        setOffsetX(context, offset)
+        val maxX = (screenWidth - currentViewWidth).coerceAtLeast(1)
+        val validX = x.coerceIn(0, maxX)
+        val percent = validX.toFloat() / maxX
+        setPercentX(context, percent)
+        val key = if (isLandscape) KEY_POS_X_LAND else KEY_POS_X
+        getPrefs(context).edit().putInt(key, validX).apply()
     }
 
     /**
      * 获取指定或当前屏幕方向下持久化的垂直位置 Y 坐标（像素）。
+     * 基于垂直可用区间百分比推导，横屏下自适应压缩，绝不越界或顶栏溢出。
      *
      * @param context 运行上下文
      * @param isLandscape 是否为横屏方向（默认依据当前屏幕动态判定）
-     * @return Y 坐标值（默认 0，即置于状态栏位置）
+     * @return 当前屏幕下的 Y 坐标物理像素值
      */
     fun getPosY(context: Context, isLandscape: Boolean = isLandscape(context)): Int {
-        val prefs = getPrefs(context)
-        return if (isLandscape) {
-            val landY = prefs.getInt(KEY_POS_Y_LAND, -1)
-            if (landY >= 0) landY else prefs.getInt(KEY_POS_Y, 0)
-        } else {
-            prefs.getInt(KEY_POS_Y, 0)
-        }
+        val (w, h) = getRealScreenSize(context)
+        val screenHeight = if (isLandscape) minOf(w, h) else maxOf(w, h)
+        val statusBarHeight = getStatusBarHeight(context)
+        val density = context.resources.displayMetrics.density
+        val defaultViewHeight = (26 * density).toInt()
+        val currentViewHeight = floatingView?.height?.takeIf { it > 0 } ?: defaultViewHeight
+        val isAlignStatusBar = isAlignStatusBar(context)
+        val minY = if (isAlignStatusBar) 0 else statusBarHeight
+        val maxY = (screenHeight - currentViewHeight).coerceAtLeast(minY)
+        val availHeight = (maxY - minY).coerceAtLeast(1)
+        val percent = getPercentY(context)
+        return (minY + percent * availHeight).toInt().coerceIn(minY, maxY)
     }
 
     /**
      * 设置并持久化指定或当前屏幕方向下的垂直位置 Y 坐标（像素）。
+     * 自动转换为可用区间百分占比并持久化，保证横竖屏自适应联动。
      *
      * @param context 运行上下文
      * @param y Y 坐标像素值
      * @param isLandscape 是否为横屏方向（默认依据当前屏幕动态判定）
      */
     fun setPosY(context: Context, y: Int, isLandscape: Boolean = isLandscape(context)) {
+        val (w, h) = getRealScreenSize(context)
+        val screenHeight = if (isLandscape) minOf(w, h) else maxOf(w, h)
+        val statusBarHeight = getStatusBarHeight(context)
+        val density = context.resources.displayMetrics.density
+        val defaultViewHeight = (26 * density).toInt()
+        val currentViewHeight = floatingView?.height?.takeIf { it > 0 } ?: defaultViewHeight
+        val isAlignStatusBar = isAlignStatusBar(context)
+        val minY = if (isAlignStatusBar) 0 else statusBarHeight
+        val maxY = (screenHeight - currentViewHeight).coerceAtLeast(minY)
+        val availHeight = (maxY - minY).coerceAtLeast(1)
+        val validY = y.coerceIn(minY, maxY)
+        val percent = (validY - minY).toFloat() / availHeight
+        setPercentY(context, percent)
         val key = if (isLandscape) KEY_POS_Y_LAND else KEY_POS_Y
-        getPrefs(context).edit().putInt(key, y).apply()
+        getPrefs(context).edit().putInt(key, validY).apply()
+    }
+
+    /**
+     * 获取是否开启文字粗体显示。
+     *
+     * @param context 运行上下文
+     * @return 若开启粗体返回 true（默认开启以增强数字可读性），否则返回 false
+     */
+    fun isFontBold(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_FONT_BOLD, true)
+    }
+
+    /**
+     * 设置并持久化是否开启文字粗体显示，并立即刷新悬浮窗外观。
+     *
+     * @param context 运行上下文
+     * @param isBold 是否启用粗体
+     */
+    fun setFontBold(context: Context, isBold: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_FONT_BOLD, isBold).apply()
+        updatePositionAndAppearance(context)
     }
 
     /**
@@ -792,7 +891,6 @@ object FloatingWindowManager {
     private fun applyLayoutPosition(context: Context, view: View, params: WindowManager.LayoutParams) {
         val (screenWidth, screenHeight) = getRealScreenSize(context)
         val statusBarHeight = getStatusBarHeight(context)
-        val isLand = isLandscape(context)
 
         // 测量 View 实际宽高
         view.measure(
@@ -804,29 +902,26 @@ object FloatingWindowManager {
         val viewHeight = if (view.measuredHeight > 0) view.measuredHeight else (26 * density).toInt()
 
         // 垂直 Y 坐标计算：
-        // 开关打开时：代表可以显示在状态栏上，但不要自动贴齐屏幕状态栏，忠实采用保存的坐标；
-        // 开关关闭时：不允许显示在状态栏位置上，垂直位置必须位于状态栏下方。
+        // 基于垂直可用区间百分比推导，横屏与竖屏均能自适应贴合，绝不越界或顶栏溢出。
         val isAlignStatusBar = isAlignStatusBar(context)
-        val savedY = getPosY(context, isLand)
-        val maxY = (screenHeight - viewHeight).coerceAtLeast(0)
-        params.y = if (isAlignStatusBar) {
-            savedY.coerceIn(0, maxY)
-        } else {
-            savedY.coerceIn(statusBarHeight, maxY.coerceAtLeast(statusBarHeight))
-        }
+        val percentY = getPercentY(context)
+        val minY = if (isAlignStatusBar) 0 else statusBarHeight
+        val maxY = (screenHeight - viewHeight).coerceAtLeast(minY)
+        val availHeight = (maxY - minY).coerceAtLeast(1)
+        params.y = (minY + percentY * availHeight).toInt().coerceIn(minY, maxY)
 
         // 水平 X 坐标计算
         val alignMode = getHorizontalAlign(context)
         val edgePadding = (16 * density).toInt()
-        val maxX = (screenWidth - viewWidth).coerceAtLeast(0)
+        val maxX = (screenWidth - viewWidth).coerceAtLeast(1)
         val centerX = ((screenWidth - viewWidth) / 2).coerceAtLeast(0)
         params.x = when (alignMode) {
             ALIGN_LEFT -> edgePadding.coerceIn(0, maxX)
             ALIGN_CENTER -> centerX
             ALIGN_RIGHT -> (screenWidth - viewWidth - edgePadding).coerceAtLeast(0)
             ALIGN_CUSTOM -> {
-                val offset = getOffsetX(context)
-                (centerX + offset).coerceIn(0, maxX)
+                val percentX = getPercentX(context)
+                (percentX * maxX).toInt().coerceIn(0, maxX)
             }
             else -> centerX
         }
@@ -865,11 +960,17 @@ object FloatingWindowManager {
         val ivPower = vh.ivPower
         val ivTemp = vh.ivTemp
 
-        // 动态应用用户设置的文字大小
+        // 动态应用用户设置的文字大小与粗体
         val fontSize = getFontSize(context).toFloat()
         tvPower.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize)
         tvTemp.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize)
         tvDivider.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize + 0.5f)
+
+        val isBold = isFontBold(context)
+        val typeface = if (isBold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+        tvPower.typeface = typeface
+        tvTemp.typeface = typeface
+        tvDivider.typeface = typeface
 
         val showBg = isShowBackground(context)
         if (showBg) {
@@ -985,10 +1086,18 @@ object FloatingWindowManager {
                         val finalX = params.x.coerceIn(0, maxX)
                         params.y = finalY
                         params.x = finalX
+                        val currentPercentX = (finalX.toFloat() / maxX.coerceAtLeast(1)).coerceIn(0f, 1f)
+                        val availH = (maxY - minY).coerceAtLeast(1)
+                        val currentPercentY = ((finalY - minY).toFloat() / availH).coerceIn(0f, 1f)
+                        setPercentX(context, currentPercentX)
+                        setPercentY(context, currentPercentY)
                         val currentCenterX = ((screenWidth - viewW) / 2).coerceAtLeast(0)
                         val currentOffset = finalX - currentCenterX
-                        setOffsetX(context, currentOffset)
-                        setPosY(context, finalY, isLand)
+                        getPrefs(context).edit()
+                            .putInt(KEY_OFFSET_X, currentOffset)
+                            .putInt(if (isLand) KEY_POS_X_LAND else KEY_POS_X, finalX)
+                            .putInt(if (isLand) KEY_POS_Y_LAND else KEY_POS_Y, finalY)
+                            .apply()
                         setHorizontalAlign(context, ALIGN_CUSTOM)
                     }
                     true
