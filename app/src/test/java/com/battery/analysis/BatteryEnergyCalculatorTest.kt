@@ -341,7 +341,7 @@ class BatteryEnergyCalculatorTest {
     }
 
     /**
-     * 测试亮屏放电速度卡片弹框详细格式化，验证包含“累积7天亮屏放电速度”、满电续航及“预测真实容量：多少Wh（多少mAh）”。
+     * 测试亮屏放电速度卡片弹框详细格式化，验证包含“累积7天亮屏放电速度”、满电续航、精确到秒的“当前剩余续航”及“预测真实容量：多少Wh（多少mAh）”。
      */
     @Test
     fun testFormatScreenOnDischargeSpeedDetailMessage() {
@@ -352,19 +352,21 @@ class BatteryEnergyCalculatorTest {
             sevenDaysDurationMs = (2 * 86400 + 5 * 3600) * 1000L, // 02d05h
             fullDurationMs = (16 * 3600 + 24 * 60) * 1000L, // 16h24m
             predictedCapacityWh = 19.25f,
-            predictedCapacityMah = 5000f
+            predictedCapacityMah = 5000f,
+            remainingDurationMs = (9 * 3600 + 15 * 60 + 30) * 1000L // 09h 15m 30s
         )
 
         assertTrue("标题包含亮屏放电速度", message.contains("【亮屏放电速度】"))
         assertTrue("包含当前放电速度", message.contains("• 当前放电速度：6.3%/h"))
         assertTrue("包含累积7天亮屏放电速度与统计时长", message.contains("• 累积7天亮屏放电速度：6.1%/h（统计时长 02d05h）"))
         assertTrue("包含满电亮屏续航", message.contains("• 满电亮屏续航：16h24m"))
+        assertTrue("包含当前剩余续航且精确到秒", message.contains("• 当前剩余续航：09h 15m 30s"))
         assertTrue("包含预测真实容量（多少Wh（多少mAh））", message.contains("• 预测真实容量：19.25 Wh (5000 mAh)"))
         assertTrue("包含说明模块", message.contains("💡 说明："))
     }
 
     /**
-     * 测试息屏放电速度卡片弹框详细格式化，验证包含“累积7天息屏放电速度”与对应数值。
+     * 测试息屏放电速度卡片弹框详细格式化，验证包含“累积7天息屏放电速度”、满电待机时长及精确到秒的“当前剩余续航”。
      */
     @Test
     fun testFormatScreenOffDischargeSpeedDetailMessage() {
@@ -373,18 +375,20 @@ class BatteryEnergyCalculatorTest {
             currentRatePercentPerHour = null, // 暂无数据 "--"
             sevenDaysRatePercentPerHour = 1.0f,
             sevenDaysDurationMs = (4 * 86400 + 1 * 3600) * 1000L, // 04d01h
-            fullDurationMs = (4 * 86400 + 1 * 3600) * 1000L // 04d01h
+            fullDurationMs = (4 * 86400 + 1 * 3600) * 1000L, // 04d01h
+            remainingDurationMs = (2 * 86400 + 3 * 3600 + 40 * 60 + 15) * 1000L // 02d 03h 40m 15s
         )
 
         assertTrue("标题包含息屏放电速度", message.contains("【息屏放电速度】"))
         assertTrue("当前息屏暂无数据展示--", message.contains("• 当前放电速度：--"))
         assertTrue("包含累积7天息屏放电速度与统计时长", message.contains("• 累积7天息屏放电速度：1.0%/h（统计时长 04d01h）"))
         assertTrue("包含满电待机时长", message.contains("• 满电待机时长：04d01h00m"))
+        assertTrue("包含当前剩余续航且精确到秒", message.contains("• 当前剩余续航：02d 03h 40m 15s"))
         assertTrue("包含说明模块", message.contains("💡 说明："))
     }
 
     /**
-     * 测试全局放电速度卡片弹框详细格式化，验证包含“累积7天全局放电速度”、模式1（全局加权）与模式2（场景融合）双模型推算（精确到分钟）。
+     * 测试全局放电速度卡片弹框详细格式化，验证包含“累积7天全局放电速度”、精确到秒的“当前剩余续航”、模式1（全局加权）与模式2（场景融合）双模型推算（精确到分钟）。
      */
     @Test
     fun testFormatGlobalDischargeSpeedDetailMessage() {
@@ -395,12 +399,14 @@ class BatteryEnergyCalculatorTest {
             sevenDaysDurationMs = (6 * 86400 + 7 * 3600) * 1000L, // 06d07h
             fullDurationMs = (1 * 86400 + 11 * 3600 + 12 * 60) * 1000L, // 01d11h12m
             sceneScreenOnRatio = 0.25f,
-            sceneFullDurationMs = (1 * 86400 + 15 * 3600 + 35 * 60) * 1000L // 01d15h35m
+            sceneFullDurationMs = (1 * 86400 + 15 * 3600 + 35 * 60) * 1000L, // 01d15h35m
+            remainingDurationMs = (1 * 86400 + 2 * 3600 + 10 * 60 + 5) * 1000L // 01d 02h 10m 05s
         )
 
         assertTrue("标题包含全局放电速度", message.contains("【全局放电速度】"))
         assertTrue("包含当前放电速度", message.contains("• 当前放电速度：6.3%/h"))
         assertTrue("包含累积7天全局放电速度与统计时长", message.contains("• 累积7天全局放电速度：2.8%/h（统计时长 06d07h）"))
+        assertTrue("包含当前剩余续航且精确到秒", message.contains("• 当前剩余续航：01d 02h 10m 05s"))
         assertTrue("包含双模型标题", message.contains("📊 满电综合续航推算（双模型）："))
         assertTrue("包含模式1全局加权结果（精确到分）", message.contains("• 模式1（全局加权）：01d11h12m"))
         assertTrue("包含模式2场景融合结果（精确到分）", message.contains("• 模式2（场景融合）：01d15h35m"))
@@ -599,5 +605,170 @@ class BatteryEnergyCalculatorTest {
         val convertedWh = BatteryEnergyCalculator.convertMahToWh(mah, 3.85f)
         assertEquals(energyWh, convertedWh, 0.01f)
     }
+
+    /**
+     * 测试 formatDurationWithSeconds 精确到秒的时间字符串格式化逻辑，验证不同时间量级及边界空值防御。
+     */
+    @Test
+    fun testFormatDurationWithSeconds() {
+        // 无效值与边界
+        assertEquals("--", BatteryEnergyCalculator.formatDurationWithSeconds(null))
+        assertEquals("--", BatteryEnergyCalculator.formatDurationWithSeconds(0L))
+        assertEquals("--", BatteryEnergyCalculator.formatDurationWithSeconds(-1000L))
+
+        // 纯秒级
+        assertEquals("05s", BatteryEnergyCalculator.formatDurationWithSeconds(5_000L))
+        assertEquals("45s", BatteryEnergyCalculator.formatDurationWithSeconds(45_000L))
+
+        // 分秒级
+        assertEquals("01m 05s", BatteryEnergyCalculator.formatDurationWithSeconds(65_000L))
+        assertEquals("15m 30s", BatteryEnergyCalculator.formatDurationWithSeconds((15 * 60 + 30) * 1000L))
+
+        // 时分秒级
+        assertEquals("02h 05m 09s", BatteryEnergyCalculator.formatDurationWithSeconds((2 * 3600 + 5 * 60 + 9) * 1000L))
+        assertEquals("17h 46m 32s", BatteryEnergyCalculator.formatDurationWithSeconds((17 * 3600 + 46 * 60 + 32) * 1000L))
+
+        // 天时分秒级
+        assertEquals("01d 04h 28m 10s", BatteryEnergyCalculator.formatDurationWithSeconds((86400 + 4 * 3600 + 28 * 60 + 10) * 1000L))
+    }
+
+    /**
+     * 测试 formatCardRemainingDuration 卡片紧凑剩余时间格式化逻辑，验证天、小时、分钟分级紧凑呈现与微弱时长兜底保护。
+     */
+    @Test
+    fun testFormatCardRemainingDuration() {
+        // 无效值与边界
+        assertEquals("--", BatteryEnergyCalculator.formatCardRemainingDuration(null))
+        assertEquals("--", BatteryEnergyCalculator.formatCardRemainingDuration(0L))
+        assertEquals("--", BatteryEnergyCalculator.formatCardRemainingDuration(-500L))
+
+        // 不足 1 分钟保底展示 01m
+        assertEquals("01m", BatteryEnergyCalculator.formatCardRemainingDuration(30_000L))
+
+        // 分钟级
+        assertEquals("25m", BatteryEnergyCalculator.formatCardRemainingDuration(25 * 60 * 1000L))
+
+        // 时分级
+        assertEquals("02h15m", BatteryEnergyCalculator.formatCardRemainingDuration((2 * 3600 + 15 * 60) * 1000L))
+        assertEquals("17h46m", BatteryEnergyCalculator.formatCardRemainingDuration((17 * 3600 + 46 * 60) * 1000L))
+
+        // 天时级
+        assertEquals("03d09h", BatteryEnergyCalculator.formatCardRemainingDuration((3 * 86400 + 9 * 3600) * 1000L))
+    }
+
+    /**
+     * 测试 calculateEstimatedRemainingDurationMs 自适应置信度动态加权算法：
+     * 验证统计时长小于 5 分钟、5 至 30 分钟过渡期、大于 30 分钟饱和期的权重分配与防毛刺效果。
+     */
+    @Test
+    fun testCalculateEstimatedRemainingDurationMs_ConfidenceWeighting() {
+        val curRate = 10.0f // 当前放电速度 10%/h
+        val sevenDaysRate = 5.0f // 7天大样本基准 5%/h
+        val batteryPercent = 50.0f // 剩余电量 50%
+
+        // 1. 统计时长 < 5分钟 (如 2分钟 = 120,000ms): 权重 0.15 依靠历史基准
+        // 融合速度: 10 * 0.15 + 5 * 0.85 = 1.5 + 4.25 = 5.75%/h
+        // 理论续航: 50 / 5.75 = 8.69565 小时 -> 8.69565 * 3600 * 1000 ≈ 31304348 ms
+        val shortMs = BatteryEnergyCalculator.calculateEstimatedRemainingDurationMs(
+            currentRatePercentPerHour = curRate,
+            sevenDaysRatePercentPerHour = sevenDaysRate,
+            currentDurationMs = 120_000L,
+            remainingBatteryPercent = batteryPercent
+        )
+        org.junit.Assert.assertNotNull(shortMs)
+        assertEquals(31_304_348L, shortMs!!)
+
+        // 2. 统计时长 >= 30分钟 (如 40分钟 = 2,400,000ms): 权重 0.70 紧跟实测
+        // 融合速度: 10 * 0.70 + 5 * 0.30 = 7.0 + 1.5 = 8.50%/h
+        // 理论续航: 50 / 8.50 = 5.88235 小时 -> 5.88235 * 3600 * 1000 ≈ 21176471 ms
+        val longMs = BatteryEnergyCalculator.calculateEstimatedRemainingDurationMs(
+            currentRatePercentPerHour = curRate,
+            sevenDaysRatePercentPerHour = sevenDaysRate,
+            currentDurationMs = 2_400_000L,
+            remainingBatteryPercent = batteryPercent
+        )
+        org.junit.Assert.assertNotNull(longMs)
+        assertEquals(21_176_471L, longMs!!)
+
+        // 3. 统计时长 17.5分钟 (1,050,000ms): 线性过渡点进度 0.5，权重 0.15 + 0.55 * 0.5 = 0.425
+        // 融合速度: 10 * 0.425 + 5 * 0.575 = 4.25 + 2.875 = 7.125%/h
+        // 理论续航: 50 / 7.125 = 7.01754 小时 -> 7.01754 * 3600 * 1000 ≈ 25263158 ms
+        val midMs = BatteryEnergyCalculator.calculateEstimatedRemainingDurationMs(
+            currentRatePercentPerHour = curRate,
+            sevenDaysRatePercentPerHour = sevenDaysRate,
+            currentDurationMs = 1_050_000L,
+            remainingBatteryPercent = batteryPercent
+        )
+        org.junit.Assert.assertNotNull(midMs)
+        assertEquals(25_263_158L, midMs!!)
+
+        // 4. 单一数据源支持：仅有当前速度时直接按当前速度推算 (50% / 10%/h = 5h = 18,000,000ms)
+        val onlyCurMs = BatteryEnergyCalculator.calculateEstimatedRemainingDurationMs(
+            currentRatePercentPerHour = 10.0f,
+            sevenDaysRatePercentPerHour = null,
+            currentDurationMs = 60_000L,
+            remainingBatteryPercent = 50.0f
+        )
+        assertEquals(18_000_000L, onlyCurMs)
+
+        // 5. 单一数据源支持：仅有7天速度时直接按7天速度推算 (50% / 5%/h = 10h = 36,000,000ms)
+        val only7dMs = BatteryEnergyCalculator.calculateEstimatedRemainingDurationMs(
+            currentRatePercentPerHour = null,
+            sevenDaysRatePercentPerHour = 5.0f,
+            currentDurationMs = 0L,
+            remainingBatteryPercent = 50.0f
+        )
+        assertEquals(36_000_000L, only7dMs)
+
+        // 6. 无电量百分比但有剩余能量与总容量时自动换算推算 (9.625Wh / 19.25Wh = 50%)
+        val energyFallbackMs = BatteryEnergyCalculator.calculateEstimatedRemainingDurationMs(
+            currentRatePercentPerHour = 10.0f,
+            sevenDaysRatePercentPerHour = null,
+            currentDurationMs = 60_000L,
+            remainingBatteryPercent = null,
+            remainingEnergyWh = 9.625f,
+            totalCapacityWh = 19.25f
+        )
+        assertEquals(18_000_000L, energyFallbackMs)
+
+        // 7. 缺失必要数据返回 null
+        val nullResult = BatteryEnergyCalculator.calculateEstimatedRemainingDurationMs(
+            currentRatePercentPerHour = null,
+            sevenDaysRatePercentPerHour = null,
+            currentDurationMs = 0L,
+            remainingBatteryPercent = 50.0f
+        )
+        org.junit.Assert.assertNull(nullResult)
+    }
+
+    /**
+     * 测试 calculateCompositeRemainingDurationMs 场景占空比融合综合续航算法与异常回退行为。
+     */
+    @Test
+    fun testCalculateCompositeRemainingDurationMs() {
+        // 日常习惯 25% 亮屏 (8.0%/h) + 75% 息屏 (1.0%/h)
+        // 综合放电速率: 0.25 * 8.0 + 0.75 * 1.0 = 2.0 + 0.75 = 2.75%/h
+        // 当前剩余电量 55% -> 理论续航 55 / 2.75 = 20.0 小时 -> 72,000,000 ms
+        val compositeMs = BatteryEnergyCalculator.calculateCompositeRemainingDurationMs(
+            screenOnRate = 8.0f,
+            screenOffRate = 1.0f,
+            sceneScreenOnRatio = 0.25f,
+            remainingBatteryPercent = 55.0f,
+            fallbackGlobalRemainingMs = 50_000_000L
+        )
+        org.junit.Assert.assertNotNull(compositeMs)
+        assertEquals(72_000_000L, compositeMs!!)
+
+        // 场景数据无效或异常比例时，安全降级至 fallbackGlobalRemainingMs
+        val fallbackMs = BatteryEnergyCalculator.calculateCompositeRemainingDurationMs(
+            screenOnRate = null,
+            screenOffRate = 1.0f,
+            sceneScreenOnRatio = 0.25f,
+            remainingBatteryPercent = 55.0f,
+            fallbackGlobalRemainingMs = 50_000_000L
+        )
+        assertEquals(50_000_000L, fallbackMs)
+    }
 }
+
 

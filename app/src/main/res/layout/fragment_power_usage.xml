@@ -106,7 +106,6 @@
                             android:id="@+id/tv_power_unit_badge"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_marginStart="2dp"
                             android:text="Wh"
                             android:textColor="?android:attr/textColorPrimary"
                             android:textSize="8sp"
@@ -193,10 +192,10 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:paddingStart="5dp"
-                android:paddingTop="10dp"
-                android:paddingEnd="5dp"
-                android:paddingBottom="10dp">
+                android:paddingStart="3dp"
+                android:paddingTop="8dp"
+                android:paddingEnd="3dp"
+                android:paddingBottom="8dp">
 
                 <!-- 第一行：亮屏数据（前置亮色太阳图标，时长占比 / 功耗 / 能量占比 / 续航） -->
                 <LinearLayout
@@ -213,7 +212,7 @@
                         android:id="@+id/iv_icon_screen_on"
                         android:layout_width="12dp"
                         android:layout_height="12dp"
-                        android:layout_marginEnd="5dp"
+                        android:layout_marginEnd="2dp"
                         android:contentDescription="@string/power_header_screen_on"
                         android:src="@drawable/ic_power_screen_on" />
 
@@ -221,7 +220,7 @@
                         android:id="@+id/tv_metric_screen_on_time"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1.2"
+                        android:layout_weight="1"
                         android:ellipsize="end"
                         android:gravity="start|center_vertical"
                         android:singleLine="true"
@@ -234,9 +233,10 @@
                         android:id="@+id/tv_metric_screen_on_power"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_weight="0.8"
+                        android:layout_weight="1"
                         android:ellipsize="end"
                         android:gravity="start|center_vertical"
+                        android:paddingStart="20dp"
                         android:singleLine="true"
                         android:textColor="?android:attr/textColorPrimary"
                         android:textSize="12sp"
@@ -247,7 +247,7 @@
                         android:id="@+id/tv_metric_screen_on_energy"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1.3"
+                        android:layout_weight="1"
                         android:background="?attr/selectableItemBackground"
                         android:ellipsize="end"
                         android:gravity="start|center_vertical"
@@ -256,19 +256,6 @@
                         android:textSize="12sp"
                         android:textStyle="bold"
                         tools:text="0.406Wh(45.1%)" />
-
-                    <TextView
-                        android:id="@+id/tv_metric_screen_on_remaining"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="0.7"
-                        android:ellipsize="end"
-                        android:gravity="start|center_vertical"
-                        android:singleLine="true"
-                        android:textColor="?android:attr/textColorPrimary"
-                        android:textSize="12sp"
-                        android:textStyle="bold"
-                        tools:text="9h19m" />
                 </LinearLayout>
 
                 <!-- 第二行：息屏数据（前置暗色太阳图标，时长占比 / 功耗 / 能量占比 / 续航） -->
@@ -287,7 +274,7 @@
                         android:id="@+id/iv_icon_screen_off"
                         android:layout_width="12dp"
                         android:layout_height="12dp"
-                        android:layout_marginEnd="5dp"
+                        android:layout_marginEnd="2dp"
                         android:contentDescription="@string/power_header_screen_off"
                         android:src="@drawable/ic_power_screen_off" />
 
@@ -295,7 +282,7 @@
                         android:id="@+id/tv_metric_screen_off_time"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1.2"
+                        android:layout_weight="1"
                         android:ellipsize="end"
                         android:gravity="start|center_vertical"
                         android:singleLine="true"
@@ -308,7 +295,8 @@
                         android:id="@+id/tv_metric_screen_off_power"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_weight="0.8"
+                        android:layout_weight="1"
+                        android:paddingStart="20dp"
                         android:ellipsize="end"
                         android:gravity="start|center_vertical"
                         android:singleLine="true"
@@ -321,7 +309,7 @@
                         android:id="@+id/tv_metric_screen_off_energy"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1.3"
+                        android:layout_weight="1"
                         android:background="?attr/selectableItemBackground"
                         android:ellipsize="end"
                         android:gravity="start|center_vertical"
@@ -330,19 +318,6 @@
                         android:textSize="12sp"
                         android:textStyle="bold"
                         tools:text="0.494Wh(54.9%)" />
-
-                    <TextView
-                        android:id="@+id/tv_metric_screen_off_remaining"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="0.7"
-                        android:ellipsize="end"
-                        android:gravity="start|center_vertical"
-                        android:singleLine="true"
-                        android:textColor="?android:attr/textColorPrimary"
-                        android:textSize="12sp"
-                        android:textStyle="bold"
-                        tools:text="1d03h" />
                 </LinearLayout>
 
                 <!-- 第三行：全局数据（前置半亮半暗太阳图标，时长占比 / 功耗 / 能量占比 / 续航） -->
@@ -361,7 +336,7 @@
                         android:id="@+id/iv_icon_global"
                         android:layout_width="12dp"
                         android:layout_height="12dp"
-                        android:layout_marginEnd="5dp"
+                        android:layout_marginEnd="2dp"
                         android:contentDescription="@string/power_header_global"
                         android:src="@drawable/ic_power_global" />
 
@@ -369,7 +344,7 @@
                         android:id="@+id/tv_metric_global_time"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1.2"
+                        android:layout_weight="1"
                         android:ellipsize="end"
                         android:gravity="start|center_vertical"
                         android:singleLine="true"
@@ -382,7 +357,8 @@
                         android:id="@+id/tv_metric_global_power"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_weight="0.8"
+                        android:layout_weight="1"
+                        android:paddingStart="20dp"
                         android:ellipsize="end"
                         android:gravity="start|center_vertical"
                         android:singleLine="true"
@@ -395,7 +371,7 @@
                         android:id="@+id/tv_metric_global_energy"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1.3"
+                        android:layout_weight="1"
                         android:background="?attr/selectableItemBackground"
                         android:ellipsize="end"
                         android:gravity="start|center_vertical"
@@ -404,19 +380,6 @@
                         android:textSize="12sp"
                         android:textStyle="bold"
                         tools:text="0.900Wh(100%)" />
-
-                    <TextView
-                        android:id="@+id/tv_metric_global_remaining"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="0.7"
-                        android:ellipsize="end"
-                        android:gravity="start|center_vertical"
-                        android:singleLine="true"
-                        android:textColor="?android:attr/textColorPrimary"
-                        android:textSize="12sp"
-                        android:textStyle="bold"
-                        tools:text="19h26m" />
                 </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>

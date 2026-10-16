@@ -612,36 +612,33 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
             "--"
         }
 
-        // 第一行：亮屏数据（前置亮色太阳图标，时长占比 / 能量占比 / 功耗 / 续航）
+        // 第一行：亮屏数据（前置亮色太阳图标，时长占比 / 能量占比 / 功耗）
         val onEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(onEnergy, currentDisplayUnit)
         hBinding.tvMetricScreenOnTime.text = formatValueWithSmallPercent(onDurationStr, onDurationRatioStr)
         hBinding.tvMetricScreenOnEnergy.text = formatValueWithSmallPercent(onEnergyText, onEnergyRatioStr)
         hBinding.tvMetricScreenOnPower.text = onPowerStr
-        hBinding.tvMetricScreenOnRemaining.text = record.remainingScreenOnText
 
-        // 第二行：息屏数据（前置暗色太阳图标，时长占比 / 能量占比 / 功耗 / 续航）
+        // 第二行：息屏数据（前置暗色太阳图标，时长占比 / 能量占比 / 功耗）
         val offEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(offEnergy, currentDisplayUnit)
         hBinding.tvMetricScreenOffTime.text = formatValueWithSmallPercent(offDurationStr, offDurationRatioStr)
         hBinding.tvMetricScreenOffEnergy.text = formatValueWithSmallPercent(offEnergyText, offEnergyRatioStr)
         hBinding.tvMetricScreenOffPower.text = offPowerStr
-        hBinding.tvMetricScreenOffRemaining.text = record.remainingScreenOffText
 
-        // 第三行：全局数据（前置半亮半暗太阳图标，时长占比 / 能量占比 / 功耗 / 续航）
+        // 第三行：全局数据（前置半亮半暗太阳图标，时长占比 / 能量占比 / 功耗）
         val totalEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(totalEnergy, currentDisplayUnit)
         hBinding.tvMetricGlobalTime.text = formatValueWithSmallPercent(totalDurationStr, "100%")
         hBinding.tvMetricGlobalEnergy.text = formatValueWithSmallPercent(totalEnergyText, "100%")
         hBinding.tvMetricGlobalPower.text = avgPowerStr
-        hBinding.tvMetricGlobalRemaining.text = record.remainingCompositeText
 
         // 指标卡片三行点击气泡提示（亮屏 / 息屏 / 全局）
         hBinding.layoutMetricScreenOnRow.setOnClickListener {
-            showBubbleTooltip(hBinding.layoutMetricScreenOnRow, "亮屏：时间、平均功耗、能量、剩余续航时间")
+            showBubbleTooltip(hBinding.layoutMetricScreenOnRow, "亮屏：时间、平均功耗、能量")
         }
         hBinding.layoutMetricScreenOffRow.setOnClickListener {
-            showBubbleTooltip(hBinding.layoutMetricScreenOffRow, "息屏：时间、平均功耗、能量、剩余续航时间")
+            showBubbleTooltip(hBinding.layoutMetricScreenOffRow, "息屏：时间、平均功耗、能量")
         }
         hBinding.layoutMetricGlobalRow.setOnClickListener {
-            showBubbleTooltip(hBinding.layoutMetricGlobalRow, "全局：时间、平均功耗、能量、剩余续航时间")
+            showBubbleTooltip(hBinding.layoutMetricGlobalRow, "全局：时间、平均功耗、能量")
         }
 
         // 核心功耗指标卡片能量数值点击弹出等效电量（mAh）详细说明气泡弹框
@@ -748,26 +745,23 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
             "--"
         }
 
-        // 第一行：亮屏数据（时长占比 / 能量占比 / 功耗 / 阶段时长）
+        // 第一行：亮屏数据（时长占比 / 能量占比 / 功耗）
         val onEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(subStats.screenOnEnergyWh, currentDisplayUnit)
         hBinding.tvMetricScreenOnTime.text = formatValueWithSmallPercent(onDurationStr, onDurationRatioStr)
         hBinding.tvMetricScreenOnEnergy.text = formatValueWithSmallPercent(onEnergyText, onEnergyRatioStr)
         hBinding.tvMetricScreenOnPower.text = onPowerStr
-        hBinding.tvMetricScreenOnRemaining.text = onDurationStr
 
-        // 第二行：息屏数据（时长占比 / 能量占比 / 功耗 / 阶段时长）
+        // 第二行：息屏数据（时长占比 / 能量占比 / 功耗）
         val offEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(subStats.screenOffEnergyWh, currentDisplayUnit)
         hBinding.tvMetricScreenOffTime.text = formatValueWithSmallPercent(offDurationStr, offDurationRatioStr)
         hBinding.tvMetricScreenOffEnergy.text = formatValueWithSmallPercent(offEnergyText, offEnergyRatioStr)
         hBinding.tvMetricScreenOffPower.text = offPowerStr
-        hBinding.tvMetricScreenOffRemaining.text = offDurationStr
 
-        // 第三行：全局数据（时长占比 / 能量占比 / 功耗 / 阶段时长）
+        // 第三行：全局数据（时长占比 / 能量占比 / 功耗）
         val totalEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(subStats.totalEnergyWh, currentDisplayUnit)
         hBinding.tvMetricGlobalTime.text = formatValueWithSmallPercent(totalDurationStr, "100%")
         hBinding.tvMetricGlobalEnergy.text = formatValueWithSmallPercent(totalEnergyText, globalEnergyRatioStr)
         hBinding.tvMetricGlobalPower.text = avgPowerStr
-        hBinding.tvMetricGlobalRemaining.text = totalDurationStr
 
         // 动态指示当前查看阶段的时间点，在耗电详情标题后方单行展示
         val timeStr = threadLocalCursorTimeFormatter.get()?.format(Date(subStats.targetTimestamp)) ?: ""
@@ -813,11 +807,15 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
      * @param hBinding 头部组合视图绑定对象
      */
     private fun bindMetricsCards(hBinding: ItemHistoryDetailHeaderBinding) {
+        val batteryLevel = currentRecord?.levelPercent?.toFloat()
+        val remainingEnergyWh = currentRecord?.energyWh
         PowerDischargeMetricsViewBinder.bindDischargeSpeed(
             binding = hBinding.layoutDischargeSpeed,
             overview = cachedOverviewStats,
             totalCapacityWh = cachedTotalCapacityWh,
             sevenDaysStats = cachedSevenDaysStats,
+            batteryLevelPercent = batteryLevel,
+            remainingEnergyWh = remainingEnergyWh,
             onCardClick = { anchorView, rowType ->
                 showDischargeSpeedDetailBubble(anchorView, rowType)
             }
@@ -835,7 +833,7 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
 
     /**
      * 弹出放电速度卡片（亮屏、息屏、全局）的详细信息说明气泡弹框。
-     * 呈现当前放电速度、历史快照截止前 7 天统计放电速度与有效时长、满电可用时长以及对应原理说明；
+     * 呈现当前放电速度、历史快照截止前 7 天统计放电速度与有效时长、满电可用时长、当前剩余续航（精确到秒）以及对应原理说明；
      * 并在亮屏卡片弹框中呈现电池真实总容量（Wh 与 mAh）。气泡弹窗不自动超时关闭，需用户手动轻触关闭。
      *
      * @param anchorView 触发气泡弹窗的目标锚点卡片视图
@@ -889,6 +887,24 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
             else -> Triple(null, null, null)
         }
 
+        val batteryPercent = currentRecord?.levelPercent?.toFloat()
+        val remainingEnergyWh = currentRecord?.energyWh
+        val tripleResult = BatteryEnergyCalculator.estimateTripleRuntimes(
+            overview = overview,
+            sevenDaysStats = sevenDays,
+            batteryLevelPercent = batteryPercent,
+            remainingEnergyWh = remainingEnergyWh,
+            totalCapacityWh = totalCapacityWh,
+            tempCelsius = currentRecord?.temperature
+        )
+
+        val remDurationMs = when (rowType) {
+            BatteryEnergyCalculator.ROW_SCREEN_ON -> tripleResult.screenOnEstimate.remainingMs
+            BatteryEnergyCalculator.ROW_SCREEN_OFF -> tripleResult.screenOffEstimate.remainingMs
+            BatteryEnergyCalculator.ROW_GLOBAL -> tripleResult.globalEstimate.remainingMs
+            else -> null
+        }
+
         val message = BatteryEnergyCalculator.formatDischargeSpeedCardDetailMessage(
             rowType = rowType,
             currentRatePercentPerHour = currentRate,
@@ -898,7 +914,8 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
             predictedCapacityWh = totalCapacityWh,
             predictedCapacityMah = capacityMah,
             sceneScreenOnRatio = if (rowType == BatteryEnergyCalculator.ROW_GLOBAL) sevenDays?.sceneScreenOnRatio else null,
-            sceneFullDurationMs = if (rowType == BatteryEnergyCalculator.ROW_GLOBAL) sevenDays?.fullChargeSceneCompositeDurationMs else null
+            sceneFullDurationMs = if (rowType == BatteryEnergyCalculator.ROW_GLOBAL) sevenDays?.fullChargeSceneCompositeDurationMs else null,
+            remainingDurationMs = remDurationMs
         )
         if (message.isNotBlank()) {
             showBubbleTooltip(anchorView, message, autoDismissMs = 0L)

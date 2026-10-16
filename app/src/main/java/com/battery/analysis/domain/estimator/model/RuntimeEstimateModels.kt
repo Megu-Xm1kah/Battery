@@ -1,0 +1,67 @@
+package com.battery.analysis.domain.estimator.model
+
+/**
+ * 屏幕及供电状态枚举，用于区分不同的功耗工作模式。
+ */
+enum class ScreenPowerState {
+    /** 亮屏活跃工作状态 */
+    SCREEN_ON,
+    /** 息屏待机状态 */
+    SCREEN_OFF,
+    /** 充电输入状态（充电期间不得更新放电功耗模型） */
+    CHARGING
+}
+
+/**
+ * 剩余续航预测采用的模型类型枚举。
+ */
+enum class RuntimeModelType {
+    /** 仅基于当前有效周期的直接测量推算 */
+    CURRENT,
+    /** 基于 Fast/Medium/Long 三时间尺度自适应加权与 EWMA 融合推算 */
+    MULTI_TIMESCALE,
+    /** 基于亮屏与息屏解构及用户作息场景占空比融合推算 */
+    GLOBAL_COMPOSITE,
+    /** 采样数据缺失或不足，无法推算理论续航（界面如实展示未知占位符） */
+    INSUFFICIENT_DATA
+}
+
+/**
+ * 电池物理采样快照数据模型。
+ * 记录单次采样周期中捕获的电荷、电压、电流、功率与时间戳等底层物理参数。
+ *
+ * @property timestampMs 采样时刻的系统时间戳（单位：毫秒）
+ * @property voltageVolts 采样时刻的电池端电压（单位：伏特 V）
+ * @property currentAmperes 采样时刻的瞬时放电电流（单位：安培 A，若不可用传入 null）
+ * @property powerWatts 采样周期内的放电功率（单位：瓦特 W）
+ * @property batteryLevelPercent 采样时刻的电池电量百分比（取值 0.0f ~ 100.0f）
+ * @property state 采样时刻的屏幕与供电状态 [ScreenPowerState]
+ */
+data class PowerSample(
+    val timestampMs: Long,
+    val voltageVolts: Float,
+    val currentAmperes: Float? = null,
+    val powerWatts: Float,
+    val batteryLevelPercent: Float,
+    val state: ScreenPowerState
+)
+
+/**
+ * 剩余续航预测输出结果实体类。
+ * 封装推算的理论物理可用毫秒数、预测综合功耗、剩余物理能量以及置信度指标。
+ *
+ * @property remainingMs 预测的设备物理可用剩余时间（单位：毫秒，数据不足时为 null）
+ * @property predictedPowerWatts 算法融合预测的未来放电平均功率（单位：瓦特 W，数据不足时为 null）
+ * @property remainingEnergyWh 计算采用的电池有效剩余能量（单位：瓦时 Wh，数据不足时为 null）
+ * @property confidence 预测结果的综合可信度指数（取值范围 0.0 至 1.0）
+ * @property modelType 产生本次预测结果的算法模型分类 [RuntimeModelType]
+ * @property sampleCount 纳入本次预测的有效物理样本总数
+ */
+data class RuntimeEstimate(
+    val remainingMs: Long?,
+    val predictedPowerWatts: Double?,
+    val remainingEnergyWh: Double?,
+    val confidence: Double,
+    val modelType: RuntimeModelType,
+    val sampleCount: Int = 0
+)

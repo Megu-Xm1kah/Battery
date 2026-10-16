@@ -48,6 +48,8 @@ object PowerDischargeMetricsViewBinder {
      * @param overview 核心功耗指标概览数据实体 [PowerOverviewStats]，若无数据传入 null
      * @param totalCapacityWh 设备满电总能量（单位：Wh），若不可用传入 null
      * @param sevenDaysStats 累积 7 天统计放电速度数据实体 [SevenDaysDischargeStats]，若无数据传入 null
+     * @param batteryLevelPercent 当前电池剩余电量百分比（0.0f ~ 100.0f），若不可用传入 null
+     * @param remainingEnergyWh 当前电池剩余能量（单位：Wh），若不可用传入 null
      * @param onCardClick 卡片点击事件监听回调，参数依次为被点击卡片视图与行分类标识（[BatteryEnergyCalculator.ROW_SCREEN_ON] 等）
      */
     fun bindDischargeSpeed(
@@ -55,59 +57,43 @@ object PowerDischargeMetricsViewBinder {
         overview: PowerOverviewStats?,
         totalCapacityWh: Float?,
         sevenDaysStats: SevenDaysDischargeStats?,
+        batteryLevelPercent: Float? = null,
+        remainingEnergyWh: Float? = null,
         onCardClick: ((anchorView: View, rowType: Int) -> Unit)? = null
     ) {
         val context = binding.root.context
         with(binding) {
+            val totalDurationMs = if (overview != null) {
+                if (overview.totalDurationMs > 0L) overview.totalDurationMs else parseDurationTextToMs(overview.totalDurationText)
+            } else 0L
+            val onDurationMs = if (overview != null) {
+                if (overview.screenOnDurationMs > 0L) overview.screenOnDurationMs else parseDurationTextToMs(overview.screenOnDurationText)
+            } else 0L
+            val offDurationMs = if (overview != null) {
+                if (overview.screenOffDurationMs > 0L) overview.screenOffDurationMs else parseDurationTextToMs(overview.screenOffDurationText)
+            } else 0L
+
+            val onRate = if (overview != null) calculateDischargeRatePercentPerHour(overview.screenOnPowerWatts, totalCapacityWh, onDurationMs) else null
+            val offRate = if (overview != null) calculateDischargeRatePercentPerHour(overview.screenOffPowerWatts, totalCapacityWh, offDurationMs) else null
+            val globalRate = if (overview != null) calculateDischargeRatePercentPerHour(overview.avgPowerWatts, totalCapacityWh, totalDurationMs) else null
+
             // --- 1. 第一行：当前放电速度百分比速率 ---
-            if (overview == null) {
-                tvScreenOnSpeed.text = "--"
-                tvScreenOffSpeed.text = "--"
-                tvGlobalSpeed.text = "--"
-            } else {
-                val totalDurationMs = if (overview.totalDurationMs > 0L) overview.totalDurationMs else parseDurationTextToMs(overview.totalDurationText)
-                val onDurationMs = if (overview.screenOnDurationMs > 0L) overview.screenOnDurationMs else parseDurationTextToMs(overview.screenOnDurationText)
-                val offDurationMs = if (overview.screenOffDurationMs > 0L) overview.screenOffDurationMs else parseDurationTextToMs(overview.screenOffDurationText)
+            tvScreenOnSpeed.text = formatDischargeRateSpannable(onRate)
+            tvScreenOffSpeed.text = formatDischargeRateSpannable(offRate)
+            tvGlobalSpeed.text = formatDischargeRateSpannable(globalRate)
 
-                val onRate = calculateDischargeRatePercentPerHour(overview.screenOnPowerWatts, totalCapacityWh, onDurationMs)
-                val offRate = calculateDischargeRatePercentPerHour(overview.screenOffPowerWatts, totalCapacityWh, offDurationMs)
-                val globalRate = calculateDischargeRatePercentPerHour(overview.avgPowerWatts, totalCapacityWh, totalDurationMs)
-
-                tvScreenOnSpeed.text = formatDischargeRateSpannable(onRate)
-                tvScreenOffSpeed.text = formatDischargeRateSpannable(offRate)
-                tvGlobalSpeed.text = formatDischargeRateSpannable(globalRate)
-            }
-
-            // --- 2. 第二行：实际统计放电速度与时长 ---
-            tvScreenOn7daysSpeed.text = formatSecondaryDischargeRateSpannable(
-                context = context,
-                rate = sevenDaysStats?.screenOnDischargeRatePercentPerHour,
-                durationMs = sevenDaysStats?.screenOnDurationMs
-            )
-            tvScreenOff7daysSpeed.text = formatSecondaryDischargeRateSpannable(
-                context = context,
-                rate = sevenDaysStats?.screenOffDischargeRatePercentPerHour,
-                durationMs = sevenDaysStats?.screenOffDurationMs
-            )
-            tvGlobal7daysSpeed.text = formatSecondaryDischargeRateSpannable(
-                context = context,
-                rate = sevenDaysStats?.globalDischargeRatePercentPerHour,
-                durationMs = sevenDaysStats?.globalDurationMs
+            // --- 2. 第二行：剩余续航时间（基于自适应多时间尺度与物理能量模型计算） ---
+            val tripleResult = BatteryEnergyCalculator.estimateTripleRuntimes(
+                overview = overview,
+                sevenDaysStats = sevenDaysStats,
+                batteryLevelPercent = batteryLevelPercent,
+                remainingEnergyWh = remainingEnergyWh,
+                totalCapacityWh = totalCapacityWh
             )
 
-            // --- 3. 第三行：充满电使用时间 ---
-            tvScreenOnFullDuration.text = formatFullDurationTextWithSuffix(
-                context = context,
-                ms = sevenDaysStats?.fullChargeScreenOnDurationMs
-            )
-            tvScreenOffFullDuration.text = formatFullDurationTextWithSuffix(
-                context = context,
-                ms = sevenDaysStats?.fullChargeScreenOffDurationMs
-            )
-            tvGlobalFullDuration.text = formatFullDurationTextWithSuffix(
-                context = context,
-                ms = sevenDaysStats?.fullChargeGlobalDurationMs
-            )
+            tvScreenOnRemaining.text = formatRemainingDurationTextWithSuffix(context, tripleResult.screenOnEstimate.remainingMs)
+            tvScreenOffRemaining.text = formatRemainingDurationTextWithSuffix(context, tripleResult.screenOffEstimate.remainingMs)
+            tvGlobalRemaining.text = formatRemainingDurationTextWithSuffix(context, tripleResult.globalEstimate.remainingMs)
 
             // 卡片点击事件监听
             if (onCardClick != null) {
@@ -577,6 +563,52 @@ object PowerDischargeMetricsViewBinder {
         val labelStart = durText.length + 1
         spannable.setSpan(
             AbsoluteSizeSpan(10, true),
+            labelStart,
+            fullText.length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        return spannable
+    }
+
+    /**
+     * 将预测剩余续航时长与剩余说明标签组合格式化为紧凑富文本。
+     * 时长数值位于前面（如 "17h46m"），剩余说明标签位于后面（如 "17h46m 剩余续航"）。
+     * 若时长无效或数据缺失则展示 "--"。
+     *
+     * @param context Android 上下文对象
+     * @param ms 预测剩余可用物理时长毫秒数
+     * @return 格式化后的富文本对象 [CharSequence]
+     */
+    fun formatRemainingDurationTextWithSuffix(context: Context, ms: Long?): CharSequence {
+        if (ms == null || ms <= 0L) {
+            return "--"
+        }
+        val durText = BatteryEnergyCalculator.formatCardRemainingDuration(ms)
+        if (durText == "--") return "--"
+        val label = context.getString(R.string.power_discharge_remaining_label)
+        val fullText = "$durText $label"
+        val spannable = SpannableString(fullText)
+
+        // 时长数值加粗突出
+        spannable.setSpan(
+            StyleSpan(Typeface.BOLD),
+            0,
+            durText.length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        // 剩余标签微缩至 10sp 并应用次要文本颜色
+        val labelStart = durText.length + 1
+        spannable.setSpan(
+            AbsoluteSizeSpan(10, true),
+            labelStart,
+            fullText.length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        val typedArray = context.obtainStyledAttributes(intArrayOf(android.R.attr.textColorSecondary))
+        val secondaryColor = typedArray.getColor(0, 0x8A000000.toInt())
+        typedArray.recycle()
+        spannable.setSpan(
+            ForegroundColorSpan(secondaryColor),
             labelStart,
             fullText.length,
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE

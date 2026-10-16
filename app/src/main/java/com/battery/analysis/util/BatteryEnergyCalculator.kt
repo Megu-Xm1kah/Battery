@@ -687,6 +687,7 @@ object BatteryEnergyCalculator {
      * @param predictedCapacityMah 预测电池真实容量电荷值（单位：mAh，若不可用传入 null）
      * @param sceneScreenOnRatio 统计窗口内真实日常亮屏时间占比（取值 0.0f ~ 1.0f，无数据时为 null）
      * @param sceneFullDurationMs 模式2基于日常场景占空比融合推算的充满电理论综合续航（单位：毫秒，缺失时为 null）
+     * @param remainingDurationMs 预测当前剩余续航物理时长（精确到秒，单位：毫秒，缺失时为 null）
      * @return 格式化后的详细气泡说明字符串
      */
     fun formatDischargeSpeedCardDetailMessage(
@@ -698,7 +699,8 @@ object BatteryEnergyCalculator {
         predictedCapacityWh: Float? = null,
         predictedCapacityMah: Float? = null,
         sceneScreenOnRatio: Float? = null,
-        sceneFullDurationMs: Long? = null
+        sceneFullDurationMs: Long? = null,
+        remainingDurationMs: Long? = null
     ): String {
         val currentRateStr = if (currentRatePercentPerHour != null && currentRatePercentPerHour > 0f) {
             String.format(Locale.getDefault(), "%.1f%%/h", currentRatePercentPerHour)
@@ -714,6 +716,7 @@ object BatteryEnergyCalculator {
 
         val sevenDaysDurStr = formatStatsDuration(sevenDaysDurationMs)
         val fullDurationStr = formatFullDuration(fullDurationMs)
+        val remainingDurStr = formatDurationWithSeconds(remainingDurationMs)
 
         return when (rowType) {
             ROW_SCREEN_ON -> {
@@ -727,6 +730,7 @@ object BatteryEnergyCalculator {
                         append("• 累积7天亮屏放电速度：$sevenDaysRateStr\n")
                     }
                     append("• 满电亮屏续航：$fullDurationStr\n")
+                    append("• 当前剩余续航：$remainingDurStr\n")
                     append("• 预测真实容量：$capacityStr\n\n")
                     append("💡 说明：\n")
                     append("• 速度由亮屏硬件功耗与电池总容量折算；\n")
@@ -743,7 +747,8 @@ object BatteryEnergyCalculator {
                     } else {
                         append("• 累积7天息屏放电速度：$sevenDaysRateStr\n")
                     }
-                    append("• 满电待机时长：$fullDurationStr\n\n")
+                    append("• 满电待机时长：$fullDurationStr\n")
+                    append("• 当前剩余续航：$remainingDurStr\n\n")
                     append("💡 说明：\n")
                     append("• 速度反映熄屏待机电量消耗；\n")
                     append("• 待机时长按累积7天实际待机时间加权推算；\n")
@@ -756,10 +761,11 @@ object BatteryEnergyCalculator {
                     append("【全局放电速度】\n")
                     append("• 当前放电速度：$currentRateStr\n")
                     if (sevenDaysDurStr.isNotBlank()) {
-                        append("• 累积7天全局放电速度：$sevenDaysRateStr（统计时长 $sevenDaysDurStr）\n\n")
+                        append("• 累积7天全局放电速度：$sevenDaysRateStr（统计时长 $sevenDaysDurStr）\n")
                     } else {
-                        append("• 累积7天全局放电速度：$sevenDaysRateStr\n\n")
+                        append("• 累积7天全局放电速度：$sevenDaysRateStr\n")
                     }
+                    append("• 当前剩余续航：$remainingDurStr\n\n")
                     append("📊 满电综合续航推算（双模型）：\n")
                     append("• 模式1（全局加权）：$fullDurationStr\n")
                     append("  基于累积7天全局真实放电功耗线性推算\n")
@@ -859,6 +865,179 @@ object BatteryEnergyCalculator {
             else -> String.format(Locale.getDefault(), "%02dm", minutes)
         }
     }
+
+    /**
+     * 将剩余续航物理时长格式化为高精度字符串，精确到秒（如 "17h 46m 32s"、"01d 04h 28m 10s"、"45m 12s"、"30s"）。
+     * 忠实反映时间物理值，若时长为 null 或小于等于 0 毫秒，返回 "--"。
+     *
+     * @param ms 剩余续航物理时长（单位：毫秒，若无数据传入 null）
+     * @return 格式化后的精确到秒时长字符串，无数据时返回 "--"
+     */
+    fun formatDurationWithSeconds(ms: Long?): String {
+        if (ms == null || ms <= 0L) return "--"
+        val totalSec = ms / 1000L
+        val days = totalSec / 86400L
+        val hours = (totalSec % 86400L) / 3600L
+        val minutes = (totalSec % 3600L) / 60L
+        val seconds = totalSec % 60L
+        return when {
+            days > 0L -> String.format(Locale.getDefault(), "%02dd %02dh %02dm %02ds", days, hours, minutes, seconds)
+            hours > 0L -> String.format(Locale.getDefault(), "%02dh %02dm %02ds", hours, minutes, seconds)
+            minutes > 0L -> String.format(Locale.getDefault(), "%02dm %02ds", minutes, seconds)
+            else -> String.format(Locale.getDefault(), "%02ds", seconds)
+        }
+    }
+
+    /**
+     * 将卡片剩余续航可用时长格式化为紧凑友好字符串，精确到分钟（如 "17h46m"、"03d09h"、"25m"）。
+     *
+     * @param ms 剩余可用物理时长毫秒数
+     * @return 格式化后的紧凑时长字符串，数据无效或缺失时返回 "--"
+     */
+    fun formatCardRemainingDuration(ms: Long?): String {
+        if (ms == null || ms <= 0L) return "--"
+        val totalSec = ms / 1000L
+        val days = totalSec / 86400L
+        val hours = (totalSec % 86400L) / 3600L
+        val minutes = (totalSec % 3600L) / 60L
+        return when {
+            days > 0L -> String.format(Locale.getDefault(), "%02dd%02dh", days, hours)
+            hours > 0L -> String.format(Locale.getDefault(), "%02dh%02dm", hours, minutes)
+            else -> String.format(Locale.getDefault(), "%02dm", minutes.coerceAtLeast(1L))
+        }
+    }
+
+    /** 自适应多时间尺度剩余续航估计引擎单例委托 */
+    val runtimeEstimator by lazy { com.battery.analysis.domain.estimator.RuntimeEstimator() }
+
+    /**
+     * 运用自适应多时间尺度剩余续航估计模型 (v1.0) 一站式计算亮屏、息屏与全局三维剩余续航。
+     *
+     * @param overview 当前放电会话统计数据实体
+     * @param sevenDaysStats 过去 7 天核心统计指标实体
+     * @param batteryLevelPercent 当前电池电量百分比
+     * @param remainingEnergyWh 当前电池剩余能量（单位：Wh）
+     * @param totalCapacityWh 设备满充总能量（单位：Wh）
+     * @param tempCelsius 当前电池温度（单位：℃）
+     * @return 包含三维度剩余续航预测结果的数据聚合实体 [com.battery.analysis.domain.estimator.TripleRuntimeResult]
+     */
+    fun estimateTripleRuntimes(
+        overview: com.battery.analysis.manager.PowerOverviewStats?,
+        sevenDaysStats: com.battery.analysis.model.SevenDaysDischargeStats?,
+        batteryLevelPercent: Float?,
+        remainingEnergyWh: Float? = null,
+        totalCapacityWh: Float? = null,
+        tempCelsius: Float? = null
+    ): com.battery.analysis.domain.estimator.TripleRuntimeResult {
+        return runtimeEstimator.estimateTripleRuntimes(
+            overview = overview,
+            sevenDaysStats = sevenDaysStats,
+            batteryLevelPercent = batteryLevelPercent,
+            remainingEnergyWh = remainingEnergyWh,
+            totalCapacityWh = totalCapacityWh,
+            tempCelsius = tempCelsius
+        )
+    }
+
+    /**
+     * 基于自适应置信度动态加权融合模型计算理论剩余续航物理毫秒数。
+     * 结合当前放电会话的实测放电速度与近 7 天累计历史大样本基准放电速度，
+     * 根据当前放电周期的实际统计时长动态计算置信度权重，平滑过滤瞬态噪声与启动尖峰，
+     * 并根据剩余电量（或剩余能量）严谨推算剩余续航时长。
+     * 严格遵循物理守恒与零虚构原则，数据不足时忠实返回 null。
+     *
+     * @param currentRatePercentPerHour 当前周期放电速度（单位：%/h，缺失时为 null）
+     * @param sevenDaysRatePercentPerHour 过去7天累计使用时间加权放电速度（单位：%/h，缺失时为 null）
+     * @param currentDurationMs 当前周期已持续的有效统计时长（单位：毫秒）
+     * @param remainingBatteryPercent 当前电池剩余电量百分比（取值 0.0f ~ 100.0f，缺失时为 null）
+     * @param remainingEnergyWh 当前电池剩余能量（单位：Wh，可选）
+     * @param totalCapacityWh 电池满电总能量容量（单位：Wh，可选）
+     * @return 预测的理论剩余续航物理毫秒数，若无法计算则返回 null
+     */
+    fun calculateEstimatedRemainingDurationMs(
+        currentRatePercentPerHour: Float?,
+        sevenDaysRatePercentPerHour: Float?,
+        currentDurationMs: Long,
+        remainingBatteryPercent: Float?,
+        remainingEnergyWh: Float? = null,
+        totalCapacityWh: Float? = null
+    ): Long? {
+        val effectivePercent = if (remainingBatteryPercent != null && remainingBatteryPercent > 0f) {
+            remainingBatteryPercent
+        } else if (remainingEnergyWh != null && remainingEnergyWh > 0f && totalCapacityWh != null && totalCapacityWh > 0f) {
+            (remainingEnergyWh / totalCapacityWh) * 100f
+        } else {
+            null
+        } ?: return null
+
+        val curRate = currentRatePercentPerHour?.takeIf { it > 0f }
+        val sevenDaysRate = sevenDaysRatePercentPerHour?.takeIf { it > 0f }
+
+        if (curRate == null && sevenDaysRate == null) {
+            return null
+        }
+
+        val effectiveRate = if (curRate != null && sevenDaysRate != null) {
+            // 当前统计时长置信度平滑加权函数：
+            // < 5分钟: 置信度为 0.15 (抑制刚拔电/刚亮屏瞬态毛刺)
+            // 5~30分钟: 0.15 至 0.70 线性平滑过渡
+            // >= 30分钟: 置信度饱和在 0.70 (70% 紧跟当前真实工况，30% 保留长期习惯基线)
+            val weightCurrent = when {
+                currentDurationMs < 300_000L -> 0.15f
+                currentDurationMs >= 1_800_000L -> 0.70f
+                else -> {
+                    val progress = (currentDurationMs - 300_000L).toFloat() / 1_500_000f
+                    0.15f + 0.55f * progress
+                }
+            }
+            (curRate * weightCurrent) + (sevenDaysRate * (1.0f - weightCurrent))
+        } else {
+            curRate ?: sevenDaysRate!!
+        }
+
+        if (effectiveRate <= 0f) {
+            return null
+        }
+
+        val remainingHours = effectivePercent.toDouble() / effectiveRate.toDouble()
+        val remainingMs = Math.round(remainingHours * 3600.0 * 1000.0)
+        return if (remainingMs > 0L) remainingMs else null
+    }
+
+    /**
+     * 基于日常作息场景占空比融合推算全局综合剩余续航物理毫秒数。
+     * 结合亮屏与息屏融合放电速度，按照真实统计的日常亮屏占空比动态加权得出综合放电速率，
+     * 进而推算当前剩余电量下的综合可用续航时间。
+     *
+     * @param screenOnRate 融合后的亮屏放电速度（单位：%/h，缺失时为 null）
+     * @param screenOffRate 融合后的息屏放电速度（单位：%/h，缺失时为 null）
+     * @param sceneScreenOnRatio 日常亮屏时间占总时间比例（取值 0.0f ~ 1.0f，缺失时为 null）
+     * @param remainingBatteryPercent 当前电池剩余电量百分比（取值 0.0f ~ 100.0f，缺失时为 null）
+     * @param fallbackGlobalRemainingMs 兜底的全局直接融合剩余续航物理毫秒数（缺失时为 null）
+     * @return 综合场景理论剩余续航毫秒数，若无法计算则返回 fallbackGlobalRemainingMs
+     */
+    fun calculateCompositeRemainingDurationMs(
+        screenOnRate: Float?,
+        screenOffRate: Float?,
+        sceneScreenOnRatio: Float?,
+        remainingBatteryPercent: Float?,
+        fallbackGlobalRemainingMs: Long?
+    ): Long? {
+        if (screenOnRate != null && screenOnRate > 0f &&
+            screenOffRate != null && screenOffRate > 0f &&
+            sceneScreenOnRatio != null && sceneScreenOnRatio in 0.0f..1.0f &&
+            remainingBatteryPercent != null && remainingBatteryPercent > 0f
+        ) {
+            val compositeRate = (sceneScreenOnRatio * screenOnRate) + ((1.0f - sceneScreenOnRatio) * screenOffRate)
+            if (compositeRate > 0f) {
+                val remainingHours = remainingBatteryPercent.toDouble() / compositeRate.toDouble()
+                val remainingMs = Math.round(remainingHours * 3600.0 * 1000.0)
+                if (remainingMs > 0L) return remainingMs
+            }
+        }
+        return fallbackGlobalRemainingMs
+    }
+
     /**
      * 根据指定的显示单位统一格式化能量/电量数值。
      * 若单位为 Wh，格式化为 "0.250Wh"（数值介于 0.00001Wh 与 0.0005Wh 之间时显示 "<0.001Wh"）；

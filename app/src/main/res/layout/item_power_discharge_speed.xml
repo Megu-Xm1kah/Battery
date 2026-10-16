@@ -60,30 +60,18 @@
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <!-- 第二行：实际统计放电速度与时长（百分比在前，实际统计时长在后） -->
+            <!-- 第二行：剩余续航时间（时长在前，剩余续航标签在后） -->
             <TextView
-                android:id="@+id/tv_screen_on_7days_speed"
+                android:id="@+id/tv_screen_on_remaining"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
                 android:ellipsize="end"
                 android:letterSpacing="-0.01"
                 android:singleLine="true"
                 android:textColor="?android:attr/textColorPrimary"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                tools:text="5.2%/h 1d08h" />
-
-            <!-- 第三行：充满电使用时间（时长在前，满电标签在后） -->
-            <TextView
-                android:id="@+id/tv_screen_on_full_duration"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:letterSpacing="-0.01"
-                android:singleLine="true"
-                android:textColor="?android:attr/textColorSecondary"
-                android:textSize="10.5sp"
-                tools:text="19h14m 满电" />
+                android:textSize="11.5sp"
+                tools:text="17h46m 剩余" />
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
@@ -137,30 +125,18 @@
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <!-- 第二行：实际统计放电速度与时长（百分比在前，实际统计时长在后） -->
+            <!-- 第二行：剩余续航时间（时长在前，剩余续航标签在后） -->
             <TextView
-                android:id="@+id/tv_screen_off_7days_speed"
+                android:id="@+id/tv_screen_off_remaining"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
                 android:ellipsize="end"
                 android:letterSpacing="-0.01"
                 android:singleLine="true"
                 android:textColor="?android:attr/textColorPrimary"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                tools:text="0.8%/h 3d12h" />
-
-            <!-- 第三行：充满电使用时间（时长在前，满电标签在后） -->
-            <TextView
-                android:id="@+id/tv_screen_off_full_duration"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:letterSpacing="-0.01"
-                android:singleLine="true"
-                android:textColor="?android:attr/textColorSecondary"
-                android:textSize="10.5sp"
-                tools:text="125h00m 满电" />
+                android:textSize="11.5sp"
+                tools:text="03d09h 剩余" />
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
@@ -213,30 +189,18 @@
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <!-- 第二行：实际统计放电速度与时长（百分比在前，实际统计时长在后） -->
+            <!-- 第二行：剩余续航时间（时长在前，剩余续航标签在后） -->
             <TextView
-                android:id="@+id/tv_global_7days_speed"
+                android:id="@+id/tv_global_remaining"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
                 android:ellipsize="end"
                 android:letterSpacing="-0.01"
                 android:singleLine="true"
                 android:textColor="?android:attr/textColorPrimary"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                tools:text="3.1%/h 5d06h" />
-
-            <!-- 第三行：充满电使用时间（时长在前，满电标签在后） -->
-            <TextView
-                android:id="@+id/tv_global_full_duration"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:letterSpacing="-0.01"
-                android:singleLine="true"
-                android:textColor="?android:attr/textColorSecondary"
-                android:textSize="10.5sp"
-                tools:text="32h15m 满电" />
+                android:textSize="11.5sp"
+                tools:text="01d04h 剩余" />
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 </LinearLayout>

@@ -150,6 +150,9 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     private var cachedOverviewStats: PowerOverviewStats? = null
     // 过去 7 天放电统计速度与充满电使用时间最新缓存数据
     private var cachedSevenDaysStats: SevenDaysDischargeStats? = null
+    // 当前电池电量百分比与剩余能量
+    private var cachedBatteryLevelPercent: Float? = null
+    private var cachedRemainingEnergyWh: Float? = null
 
     // 弱保持当前活跃的卡片 ViewHolder 引用以提供平滑桥接
     var dischargeSpeedHolder: DischargeSpeedViewHolder? = null
@@ -537,6 +540,8 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
             overview = cachedOverviewStats,
             totalCapacityWh = cachedTotalEnergyWh,
             sevenDaysStats = cachedSevenDaysStats,
+            batteryLevelPercent = cachedBatteryLevelPercent,
+            remainingEnergyWh = cachedRemainingEnergyWh,
             onCardClick = { anchorView, rowType ->
                 onMetricModuleClickedListener?.invoke(anchorView, rowType)
             }
@@ -991,7 +996,7 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
             null
         }
         return if (percentText != null) {
-            "$energyStr·$percentText"
+            "$energyStr · $percentText"
         } else {
             "--"
         }
@@ -1318,11 +1323,15 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
      * @param overviewStats 最新的放电核心指标数据实体
      * @param totalCapacityWh 设备有效满充总能量容量（单位：Wh），若为 null 则尝试复用已缓存容量
      * @param sevenDaysStats 过去 7 天核心放电统计指标实体（可选），若传入则一并更新
+     * @param batteryLevelPercent 当前电池电量百分比（可选）
+     * @param remainingEnergyWh 当前电池剩余能量（Wh，可选）
      */
     fun updateOverviewStats(
         overviewStats: PowerOverviewStats?,
         totalCapacityWh: Float? = null,
-        sevenDaysStats: SevenDaysDischargeStats? = null
+        sevenDaysStats: SevenDaysDischargeStats? = null,
+        batteryLevelPercent: Float? = null,
+        remainingEnergyWh: Float? = null
     ) {
         cachedOverviewStats = overviewStats
         if (totalCapacityWh != null && totalCapacityWh > 0f) {
@@ -1330,6 +1339,12 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         }
         if (sevenDaysStats != null) {
             cachedSevenDaysStats = sevenDaysStats
+        }
+        if (batteryLevelPercent != null && batteryLevelPercent > 0f) {
+            cachedBatteryLevelPercent = batteryLevelPercent
+        }
+        if (remainingEnergyWh != null && remainingEnergyWh > 0f) {
+            cachedRemainingEnergyWh = remainingEnergyWh
         }
         dischargeSpeedHolder?.let { bindDischargeSpeed(it) }
         sleepAwakeHolder?.let { bindSleepAwakeMetrics(it) }
