@@ -1440,12 +1440,13 @@ class PowerUsageFragment : Fragment() {
             tempCelsius = pkg?.batterySnapshot?.temperature
         )
 
-        val remDurationMs = when (rowType) {
-            ROW_SCREEN_ON -> tripleResult.screenOnEstimate.remainingMs
-            ROW_SCREEN_OFF -> tripleResult.screenOffEstimate.remainingMs
-            ROW_GLOBAL -> tripleResult.globalEstimate.remainingMs
+        val remEstimate = when (rowType) {
+            ROW_SCREEN_ON -> tripleResult.screenOnEstimate
+            ROW_SCREEN_OFF -> tripleResult.screenOffEstimate
+            ROW_GLOBAL -> tripleResult.globalEstimate
             else -> null
         }
+        val remDurationMs = remEstimate?.remainingMs
 
         val message = BatteryEnergyCalculator.formatDischargeSpeedCardDetailMessage(
             rowType = rowType,
@@ -1457,7 +1458,9 @@ class PowerUsageFragment : Fragment() {
             predictedCapacityMah = capacityMah,
             sceneScreenOnRatio = if (rowType == ROW_GLOBAL) sevenDays?.sceneScreenOnRatio else null,
             sceneFullDurationMs = if (rowType == ROW_GLOBAL) sevenDays?.fullChargeSceneCompositeDurationMs else null,
-            remainingDurationMs = remDurationMs
+            remainingDurationMs = remDurationMs,
+            v2Result = sevenDays?.v2Result,
+            remainingEstimate = remEstimate
         )
         if (message.isNotBlank()) {
             showBubbleTooltip(anchorView, message, autoDismissMs = 0L)

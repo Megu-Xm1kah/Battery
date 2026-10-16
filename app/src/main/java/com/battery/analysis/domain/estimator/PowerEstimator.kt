@@ -120,16 +120,17 @@ class PowerEstimator(
         totalSessionDurationMs += (deltaSec * 1000.0).toLong()
         sampleCount++
 
-        // 2. MAD 异常检验与置信度权重计算
-        val sampleWeight = anomalyDetector.getSampleWeight(power, recentSamples)
+        // 2. 工况迁移检测（先识别是否已处于跃迁或发生跃迁触发）
+        stateDetector.update(power)
+        val isChanging = stateDetector.isRegimeChanging
+        val responsiveness = stateDetector.getResponsivenessMultiplier()
+
+        // 3. MAD 异常检验与置信度权重计算（联动工况跃迁标志，跃迁激活期不将持续高负载误杀为尖峰）
+        val sampleWeight = anomalyDetector.getSampleWeight(power, recentSamples, isChanging)
         recentSamples.add(power)
         if (recentSamples.size > MAX_WINDOW_SIZE) {
             recentSamples.removeAt(0)
         }
-
-        // 3. 工况迁移检测
-        stateDetector.update(power)
-        val responsiveness = stateDetector.getResponsivenessMultiplier()
 
         // 4. Fast 模型更新（EWMA，动态 alpha = 1 - exp(-dt / tau)）
         val alphaFast = (1.0 - exp(-deltaSec / TAU_FAST_SEC)).coerceIn(0.05, 0.60) * sampleWeight * responsiveness
@@ -174,6 +175,7 @@ class PowerEstimator(
     /**
      * 结合当前已积累的数据量、多尺度间方差稳定性与工况迁移状态，
      * 自适应计算 Fast/Medium/Long 三个模型的动态归一化权重。
+     * 满足 w_fast + w_medium + w_long == 1.0 且均 >= 0.0。
      *
      * @return 包含 (w_fast, w_medium, w_long) 且和为 1.0 的权重三元组 [Triple]
      */
@@ -192,8 +194,13 @@ class PowerEstimator(
             return Triple(0.40 / total, 0.60 / total, 0.0)
         } else if (!hasLong && hasFast) {
             return Triple(1.0, 0.0, 0.0)
+        } else if (!hasLong && hasMedium) {
+            return Triple(0.0, 1.0, 0.0)
         } else if (hasLong && !hasFast && !hasMedium) {
             return Triple(0.0, 0.0, 1.0)
+        } else if (hasLong && hasFast && !hasMedium) {
+            val total = 0.60 + 0.40
+            return Triple(0.60 / total, 0.0, 0.40 / total)
         }
 
         // 基础时间分级权重分配（依据当前会话持续时长）
@@ -204,13 +211,14 @@ class PowerEstimator(
             else -> Triple(0.30, 0.50, 0.20) // >= 60min: 稳态主导
         }
 
-        // 稳定性修正：若 Fast 与 Medium 偏差极大且检测到工况跃迁，提升 Fast 响应
+        // 稳定性修正与工况突变响应：
+        // 若检测到工况跃迁激活（如进入 3D 游戏或相机），大幅提升 Fast 敏捷度并压制 Long 习惯惯性
         if (stateDetector.isRegimeChanging) {
-            rawWf *= stateDetector.getResponsivenessMultiplier()
-            rawWm *= 1.2
-            rawWl *= 0.5
+            rawWf *= 2.5 * stateDetector.getResponsivenessMultiplier()
+            rawWm *= 1.5
+            rawWl *= 0.15
         } else {
-            // 稳态下若 Fast 与 Medium 与 Long 差异很小，进一步降低 Long 依赖
+            // 稳态下若 Fast 与 Medium 差异很小，进一步降低 Long 依赖
             val f = fastPowerWatts ?: 0.0
             val m = mediumPowerWatts ?: 0.0
             if (f > 0.0 && m > 0.0 && abs(f - m) / m < 0.15) {
@@ -218,7 +226,7 @@ class PowerEstimator(
             }
         }
 
-        // 归一化权重满足 wf + wm + wl = 1.0
+        // 严格归一化权重满足 wf + wm + wl = 1.0
         val sum = rawWf + rawWm + rawWl
         return if (sum > 0.0) {
             Triple(rawWf / sum, rawWm / sum, rawWl / sum)

@@ -177,8 +177,10 @@ object BubbleTooltipHelper {
 
     /**
      * 将气泡说明文本格式化为包含优雅悬挂缩进的富文本对象。
-     * 当段落以标识符号（如 "• "、"💡 "、"- "、"* " 等）开头且内容发生折行时，
-     * 折行后的后续行文本自动向右缩进避开首行标识符号，与首行的正文字符完美垂直对齐。
+     * 1. 当段落以标识符号（如 "• "、"💡 "、"- "、"* " 等）开头且内容发生自动折行时，
+     *    折行后的后续行文本自动向右缩进避开首行标识符号，与首行的正文字符完美垂直对齐；
+     * 2. 当段落以前导空格（如以两个空格 "  " 开头的子级描述行、工况范围行等）开头且内容发生折行时，
+     *    折行后的后续行文本自动向右缩进相同的空格像素宽度，与上一行的首字符（正文文字）完全垂直左对齐。
      *
      * @param textView 目标呈现提示文本的 [TextView] 实例，用于测量字体排版像素宽度
      * @param text 待处理的原始文本内容
@@ -197,21 +199,27 @@ object BubbleTooltipHelper {
             val lineLength = line.length
             val lineEnd = currentStart + lineLength
 
-            // 识别段落开头的标识符号（如 "• "、"•"、"💡 "、"- " 等）
-            val prefixLength = when {
-                line.startsWith("• ") -> 2
-                line.startsWith("•") -> 1
-                line.startsWith("💡 ") -> 2
-                line.startsWith("💡") -> 1
-                line.startsWith("- ") -> 2
-                line.startsWith("* ") -> 2
+            val leadingSpaces = line.takeWhile { it == ' ' }.length
+            val contentAfterSpaces = line.substring(leadingSpaces)
+
+            // 识别符号前缀长度（紧随前导空格之后）
+            val bulletPrefixLength = when {
+                contentAfterSpaces.startsWith("• ") -> 2
+                contentAfterSpaces.startsWith("•") -> 1
+                contentAfterSpaces.startsWith("💡 ") -> 2
+                contentAfterSpaces.startsWith("💡") -> 1
+                contentAfterSpaces.startsWith("- ") -> 2
+                contentAfterSpaces.startsWith("* ") -> 2
                 else -> 0
             }
 
-            if (prefixLength > 0 && lineLength > prefixLength) {
-                val prefixStr = line.substring(0, prefixLength)
+            val totalPrefixLength = leadingSpaces + bulletPrefixLength
+
+            if (totalPrefixLength > 0 && lineLength > totalPrefixLength) {
+                val prefixStr = line.substring(0, totalPrefixLength)
                 val indentWidth = paint.measureText(prefixStr).toInt()
-                // 为该段落应用悬挂缩进：首行 0 缩进，折行后的文本自动缩进 indentWidth 像素与首行正文对齐
+                // 为该段落应用悬挂缩进：首行 0 缩进（前导空格或符号已在首行字符流中占位），
+                // 自动折行后的后续行文本自动向右缩进 indentWidth 像素，与首行正文字符完美垂直左对齐
                 spannable.setSpan(
                     LeadingMarginSpan.Standard(0, indentWidth),
                     currentStart,

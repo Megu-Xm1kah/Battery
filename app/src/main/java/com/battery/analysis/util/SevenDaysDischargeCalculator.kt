@@ -260,6 +260,25 @@ object SevenDaysDischargeCalculator {
             null
         }
 
+        // 4. 执行阶段一满电续航算法升级（v2.0）影子模式计算
+        val v2Result = try {
+            val v2Estimator = com.battery.analysis.domain.estimator.FullChargeRuntimeEstimator()
+            val v2EnergyEstimate = com.battery.analysis.domain.estimator.model.FullChargeEnergyEstimate(
+                energyWh = totalCapacityWh.toDouble(),
+                source = com.battery.analysis.domain.estimator.model.EnergySource.FCC_TIMES_NOMINAL_VOLTAGE,
+                quality = com.battery.analysis.domain.estimator.model.DataQuality.VALID
+            )
+            val v2Normalizer = com.battery.analysis.domain.estimator.PowerSampleNormalizer()
+            val v2Intervals = v2Normalizer.extractDischargeIntervals(
+                currentOverview = currentOverview,
+                allRecords = allRecords,
+                baseTimestamp = baseTimestamp
+            )
+            v2Estimator.estimateFromIntervals(v2Intervals, v2EnergyEstimate)
+        } catch (_: Exception) {
+            null
+        }
+
         return SevenDaysDischargeStats(
             screenOnDischargeRatePercentPerHour = screenOnRate,
             screenOffDischargeRatePercentPerHour = screenOffRate,
@@ -272,7 +291,8 @@ object SevenDaysDischargeCalculator {
             fullChargeGlobalDurationMs = fullGlobalDuration,
             sceneScreenOnRatio = sceneRatio,
             sceneCompositeRatePercentPerHour = sceneRate,
-            fullChargeSceneCompositeDurationMs = sceneFullDuration
+            fullChargeSceneCompositeDurationMs = sceneFullDuration,
+            v2Result = v2Result
         )
     }
 

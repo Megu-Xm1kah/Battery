@@ -11,7 +11,9 @@ import kotlin.math.roundToLong
  * 并集成电芯温度修正系数（K_T）与低电量低置信度自适应评估。
  * 严格秉承零虚构原则：无有效数据时忠实返回 null，严禁硬编码保底。
  */
-class RuntimeEstimator {
+class RuntimeEstimator(
+    private val remainingEnergyEstimator: RemainingEnergyEstimator = RemainingEnergyEstimator()
+) {
 
     companion object {
         /**
@@ -23,25 +25,13 @@ class RuntimeEstimator {
          * @return 介于 0.70 至 1.0 之间的可用能量温度修正系数
          */
         fun calculateTemperatureFactor(tempCelsius: Float?): Double {
-            if (tempCelsius == null) return 1.0
-            return when {
-                tempCelsius in 15.0f..35.0f -> 1.0
-                tempCelsius < 15.0f -> {
-                    // 15℃ 下降至 -10℃，系数由 1.0 线性过渡至 0.75
-                    val clamped = tempCelsius.coerceIn(-10.0f, 15.0f)
-                    0.75 + ((clamped - (-10.0f)) / 25.0f) * 0.25
-                }
-                tempCelsius > 45.0f -> {
-                    // 超过 45℃ 高温内阻发热损耗，轻度衰减至 0.95
-                    0.95
-                }
-                else -> 1.0
-            }
+            return RemainingEnergyEstimator.calculateTemperatureFactor(tempCelsius)
         }
     }
 
     /**
      * 计算并获得有效的电池剩余可用物理能量（单位：Wh）。
+     * 委托给高精度物理能量估算器 [RemainingEnergyEstimator]，严格遵循零虚构数据原则。
      *
      * @param remainingEnergyWh 硬件原生计步器或直接换算的剩余能量（Wh）
      * @param batteryLevelPercent 当前电池电量百分比（0.0 ~ 100.0）
@@ -55,17 +45,51 @@ class RuntimeEstimator {
         totalCapacityWh: Float?,
         tempCelsius: Float? = null
     ): Double? {
-        val baseEnergyWh = if (remainingEnergyWh != null && remainingEnergyWh > 0f) {
-            remainingEnergyWh.toDouble()
-        } else if (batteryLevelPercent != null && batteryLevelPercent > 0f && totalCapacityWh != null && totalCapacityWh > 0f) {
-            (totalCapacityWh * (batteryLevelPercent / 100.0f)).toDouble()
-        } else {
-            null
-        } ?: return null
+        val effectiveCapacityMah = if (totalCapacityWh != null && totalCapacityWh > 0f) {
+            (totalCapacityWh * 1000.0f) / RemainingEnergyEstimator.DEFAULT_NOMINAL_VOLTAGE.toFloat()
+        } else null
 
-        val kt = calculateTemperatureFactor(tempCelsius)
-        val usableWh = baseEnergyWh * kt
-        return if (usableWh > 0.0) usableWh else null
+        val estimate = remainingEnergyEstimator.estimateUsableRemainingEnergy(
+            remainingEnergyWh = remainingEnergyWh,
+            batteryLevelPercent = batteryLevelPercent,
+            effectiveCapacityMah = effectiveCapacityMah,
+            tempCelsius = tempCelsius,
+            nominalVoltage = RemainingEnergyEstimator.DEFAULT_NOMINAL_VOLTAGE
+        )
+        return estimate.usableEnergyWh
+    }
+
+    /**
+     * 高阶物理级可用能量估算重载方法。
+     * 直接返回封装完整数据质量、获取来源与温度系数的可用物理能量结果实体 [UsableRemainingEnergyEstimate]。
+     *
+     * @param remainingEnergyWh 硬件直接换算或上报的剩余能量（单位：Wh，可选）
+     * @param nativeEnergyNwh 硬件底层能量计数器（单位：纳瓦时 nWh，可选）
+     * @param chargeCounterUah 硬件底层电荷计数器（单位：微安时 uAh，可选）
+     * @param batteryLevelPercent 当前电池剩余电量百分比（0.0 ~ 100.0）
+     * @param effectiveCapacityMah 设备有效基准容量（单位：mAh，可选）
+     * @param tempCelsius 电池当前温度（单位：℃，可选）
+     * @param nominalVoltage 电池标称工作平台电压（单位：V，默认 3.85V）
+     * @return 剩余可用物理能量估算实体 [UsableRemainingEnergyEstimate]
+     */
+    fun estimateUsableRemainingEnergy(
+        remainingEnergyWh: Float? = null,
+        nativeEnergyNwh: Long? = null,
+        chargeCounterUah: Int? = null,
+        batteryLevelPercent: Float? = null,
+        effectiveCapacityMah: Float? = null,
+        tempCelsius: Float? = null,
+        nominalVoltage: Double = RemainingEnergyEstimator.DEFAULT_NOMINAL_VOLTAGE
+    ): UsableRemainingEnergyEstimate {
+        return remainingEnergyEstimator.estimateUsableRemainingEnergy(
+            remainingEnergyWh = remainingEnergyWh,
+            nativeEnergyNwh = nativeEnergyNwh,
+            chargeCounterUah = chargeCounterUah,
+            batteryLevelPercent = batteryLevelPercent,
+            effectiveCapacityMah = effectiveCapacityMah,
+            tempCelsius = tempCelsius,
+            nominalVoltage = nominalVoltage
+        )
     }
 
     /**
@@ -95,6 +119,14 @@ class RuntimeEstimator {
         val hours = usableEnergyWh / predictedPower
         val remainingMs = (hours * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
 
+        // 亮屏工况预期范围：
+        // 重载工况（大型 3D 游戏/相机录像，功率通常不低于 3.5W，或约为典型功率的 1.8~2.2 倍）
+        // 轻载工况（纯静态文本/电子书阅读，功率通常在 1.0W~1.2W，或约为典型功率的 0.75~0.80 倍）
+        val pHeavyOn = kotlin.math.max(predictedPower * 1.80, 3.50)
+        val pLightOn = kotlin.math.min(predictedPower * 0.80, kotlin.math.max(1.00, predictedPower * 0.75))
+        val minOnMs = ((usableEnergyWh / pHeavyOn) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
+        val maxOnMs = ((usableEnergyWh / pLightOn) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(minOnMs)
+
         var confidence = onPowerEstimator.getConfidence()
         if (batteryLevelPercent != null && batteryLevelPercent < 10.0f) {
             confidence *= 0.80 // 低电量区域压降变化剧烈，降低预测置信度
@@ -106,7 +138,9 @@ class RuntimeEstimator {
             remainingEnergyWh = usableEnergyWh,
             confidence = confidence,
             modelType = if (onPowerEstimator.totalSessionDurationMs > 0L) RuntimeModelType.MULTI_TIMESCALE else RuntimeModelType.CURRENT,
-            sampleCount = onPowerEstimator.sampleCount
+            sampleCount = onPowerEstimator.sampleCount,
+            minRemainingMs = if (minOnMs > 0L) minOnMs else null,
+            maxRemainingMs = if (maxOnMs > 0L) maxOnMs else null
         )
     }
 
@@ -137,6 +171,14 @@ class RuntimeEstimator {
         val hours = usableEnergyWh / predictedPower
         val remainingMs = (hours * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
 
+        // 息屏工况预期范围：
+        // 唤醒活跃工况（后台下载/定位/媒体，功率通常约 0.70W 以上，或约为典型待机的 1.8~2.2 倍）
+        // 深度休眠底噪（纯静置无唤醒锁，功率约为 0.15W~0.30W，或约为典型待机的 0.75 倍）
+        val pHeavyOff = kotlin.math.max(predictedPower * 1.80, 0.70)
+        val pLightOff = kotlin.math.max(0.15, predictedPower * 0.75)
+        val minOffMs = ((usableEnergyWh / pHeavyOff) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
+        val maxOffMs = ((usableEnergyWh / pLightOff) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(minOffMs)
+
         var confidence = offPowerEstimator.getConfidence()
         if (batteryLevelPercent != null && batteryLevelPercent < 10.0f) {
             confidence *= 0.80
@@ -148,7 +190,9 @@ class RuntimeEstimator {
             remainingEnergyWh = usableEnergyWh,
             confidence = confidence,
             modelType = if (offPowerEstimator.totalSessionDurationMs > 0L) RuntimeModelType.MULTI_TIMESCALE else RuntimeModelType.CURRENT,
-            sampleCount = offPowerEstimator.sampleCount
+            sampleCount = offPowerEstimator.sampleCount,
+            minRemainingMs = if (minOffMs > 0L) minOffMs else null,
+            maxRemainingMs = if (maxOffMs > 0L) maxOffMs else null
         )
     }
 
@@ -191,6 +235,13 @@ class RuntimeEstimator {
             if (pGlobal > 0.0) {
                 val hours = usableEnergyWh / pGlobal
                 val remainingMs = (hours * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
+
+                // 全局综合工况预期范围（偏重载综合与偏轻载综合）
+                val pHeavyGlobal = pGlobal * 1.50
+                val pLightGlobal = kotlin.math.max(0.30, pGlobal * 0.70)
+                val minGlobalMs = ((usableEnergyWh / pHeavyGlobal) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
+                val maxGlobalMs = ((usableEnergyWh / pLightGlobal) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(minGlobalMs)
+
                 var blendedConfidence = (onPowerEstimator.getConfidence() * 0.5 + offPowerEstimator.getConfidence() * 0.5)
                 if (batteryLevelPercent != null && batteryLevelPercent < 10.0f) {
                     blendedConfidence *= 0.80
@@ -201,7 +252,9 @@ class RuntimeEstimator {
                     remainingEnergyWh = usableEnergyWh,
                     confidence = blendedConfidence,
                     modelType = RuntimeModelType.GLOBAL_COMPOSITE,
-                    sampleCount = onPowerEstimator.sampleCount + offPowerEstimator.sampleCount
+                    sampleCount = onPowerEstimator.sampleCount + offPowerEstimator.sampleCount,
+                    minRemainingMs = if (minGlobalMs > 0L) minGlobalMs else null,
+                    maxRemainingMs = if (maxGlobalMs > 0L) maxGlobalMs else null
                 )
             }
         }
@@ -329,9 +382,12 @@ class RuntimeEstimator {
  * @property screenOnEstimate 持续亮屏状态下的理论剩余续航预测结果
  * @property screenOffEstimate 持续息屏待机状态下的理论剩余续航预测结果
  * @property globalEstimate 融合日常亮屏/待机作息占空比的全局综合理论剩余续航预测结果
+ * @property modelVersion 产生本结果的算法模型版本 [com.battery.analysis.domain.estimator.model.RemainingModelVersion]
  */
 data class TripleRuntimeResult(
     val screenOnEstimate: RuntimeEstimate,
     val screenOffEstimate: RuntimeEstimate,
-    val globalEstimate: RuntimeEstimate
+    val globalEstimate: RuntimeEstimate,
+    val modelVersion: com.battery.analysis.domain.estimator.model.RemainingModelVersion =
+        com.battery.analysis.domain.estimator.model.RemainingModelVersion.REMAINING_RUNTIME_V2
 )

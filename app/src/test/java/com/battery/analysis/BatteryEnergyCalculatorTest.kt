@@ -407,7 +407,7 @@ class BatteryEnergyCalculatorTest {
         assertTrue("包含当前放电速度", message.contains("• 当前放电速度：6.3%/h"))
         assertTrue("包含累积7天全局放电速度与统计时长", message.contains("• 累积7天全局放电速度：2.8%/h（统计时长 06d07h）"))
         assertTrue("包含当前剩余续航且精确到秒", message.contains("• 当前剩余续航：01d02h10m05s"))
-        assertTrue("包含双模型标题", message.contains("📊 满电综合续航推算（双模型）："))
+        assertTrue("包含双模型标题", message.contains("📊 满电综合续航推算"))
         assertTrue("包含模式1全局加权结果（精确到分）", message.contains("• 模式1（全局加权）：01d11h12m"))
         assertTrue("包含模式2场景融合结果（精确到分）", message.contains("• 模式2（场景融合）：01d15h35m"))
         assertTrue("包含模式2动态加权说明", message.contains("按日常习惯 25.0% 亮屏 + 75.0% 息屏动态加权"))

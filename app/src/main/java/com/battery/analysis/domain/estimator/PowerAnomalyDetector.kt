@@ -63,26 +63,41 @@ class PowerAnomalyDetector(
 
     /**
      * 判断指定功耗值在给定历史窗口背景下是否构成统计离群异常点。
+     * 若当前已被工况突变检测器确认处于工况跃迁激活期（如进入 3D 游戏或启动重载应用），
+     * 则判定该高功耗为真实工况转变，不视为统计异常离群点。
      *
      * @param powerWatts 待检测的目标功耗采样点（单位：W）
      * @param windowWatts 历史对照参考滑动窗口集合（单位：W）
-     * @return 若 Z-Score 超过预设阈值则判定为异常返回 true，否则返回 false
+     * @param isRegimeChanging 当前是否已处于工况跃迁激活状态（默认 false）
+     * @return 若构成统计异常离群点返回 true，处于工况跃迁或在容限内返回 false
      */
-    fun isAnomaly(powerWatts: Float, windowWatts: List<Float>): Boolean {
+    fun isAnomaly(
+        powerWatts: Float,
+        windowWatts: List<Float>,
+        isRegimeChanging: Boolean = false
+    ): Boolean {
+        if (isRegimeChanging) return false
         val z = calculateZScore(powerWatts, windowWatts)
         return z > zScoreThreshold
     }
 
     /**
      * 计算该采样点在功耗模型累加中应当分配的衰减置信度权重因子。
-     * 正常数据因子为 1.0；若检测出严重偏离的单次异常尖峰，则自适应衰减至低权重（如 0.2），
+     * 正常数据因子为 1.0；若检测出严重偏离的单次异常尖峰，则自适应衰减至低权重（如 0.15），
      * 既保留物理真实输入，又有效抑制瞬态跳变对模型的污染。
+     * 若当前处于工况跃迁状态，表明属于持续性真实工况转变，权重保持 1.0 不予衰减。
      *
      * @param powerWatts 待计算权重的目标功耗值（单位：W）
      * @param windowWatts 历史对照参考滑动窗口集合（单位：W）
+     * @param isRegimeChanging 当前是否已处于工况跃迁激活状态（默认 false）
      * @return 介于 0.15 至 1.0 之间的置信度权重因子
      */
-    fun getSampleWeight(powerWatts: Float, windowWatts: List<Float>): Double {
+    fun getSampleWeight(
+        powerWatts: Float,
+        windowWatts: List<Float>,
+        isRegimeChanging: Boolean = false
+    ): Double {
+        if (isRegimeChanging) return 1.0
         val z = calculateZScore(powerWatts, windowWatts)
         return when {
             z <= zScoreThreshold -> 1.0

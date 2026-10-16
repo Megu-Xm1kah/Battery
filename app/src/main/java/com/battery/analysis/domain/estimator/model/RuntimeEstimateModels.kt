@@ -47,8 +47,18 @@ data class PowerSample(
 )
 
 /**
+ * 剩余续航预测算法模型版本标识枚举。
+ */
+enum class RemainingModelVersion {
+    /** 基础基线版本：标准时间尺度加权推算 */
+    REMAINING_RUNTIME_V1,
+    /** 阶段二升级版本：双门限突变响应 + MAD 工况联动 + 物理可用能量四级优先级与温度修正 */
+    REMAINING_RUNTIME_V2
+}
+
+/**
  * 剩余续航预测输出结果实体类。
- * 封装推算的理论物理可用毫秒数、预测综合功耗、剩余物理能量以及置信度指标。
+ * 封装推算的理论物理可用毫秒数、预测综合功耗、剩余物理能量、置信度指标以及工况预测范围。
  *
  * @property remainingMs 预测的设备物理可用剩余时间（单位：毫秒，数据不足时为 null）
  * @property predictedPowerWatts 算法融合预测的未来放电平均功率（单位：瓦特 W，数据不足时为 null）
@@ -56,6 +66,10 @@ data class PowerSample(
  * @property confidence 预测结果的综合可信度指数（取值范围 0.0 至 1.0）
  * @property modelType 产生本次预测结果的算法模型分类 [RuntimeModelType]
  * @property sampleCount 纳入本次预测的有效物理样本总数
+ * @property modelVersion 产生本次预测结果的算法模型版本 [RemainingModelVersion]
+ * @property confidenceLevel 预测结果的可信度等级枚举 [FullChargeRuntimeModelsKt.RuntimeConfidenceLevel]
+ * @property minRemainingMs 高负载/重载工况下的预期较短剩余时长（单位：毫秒，可选）
+ * @property maxRemainingMs 轻负载/节能工况下的预期较长剩余时长（单位：毫秒，可选）
  */
 data class RuntimeEstimate(
     val remainingMs: Long?,
@@ -63,5 +77,9 @@ data class RuntimeEstimate(
     val remainingEnergyWh: Double?,
     val confidence: Double,
     val modelType: RuntimeModelType,
-    val sampleCount: Int = 0
+    val sampleCount: Int = 0,
+    val modelVersion: RemainingModelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2,
+    val confidenceLevel: RuntimeConfidenceLevel = RuntimeConfidenceLevel.fromScore(confidence),
+    val minRemainingMs: Long? = null,
+    val maxRemainingMs: Long? = null
 )

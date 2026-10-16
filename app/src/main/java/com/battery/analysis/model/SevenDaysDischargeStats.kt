@@ -16,6 +16,7 @@ package com.battery.analysis.model
  * @property sceneScreenOnRatio 统计窗口内真实日常亮屏时间占比（取值 0.0f ~ 1.0f），无数据时为 null
  * @property sceneCompositeRatePercentPerHour 模式2场景融合加权放电速率（单位：%/h），数据缺失时为 null
  * @property fullChargeSceneCompositeDurationMs 模式2基于日常亮屏与待机场景占空比融合推算的充满电理论综合续航时长（单位：毫秒），数据缺失时为 null
+ * @property v2Result 阶段一升级的满电续航算法（v2.0）综合运算结果实体 [com.battery.analysis.domain.estimator.model.FullChargeRuntimeResult]，未启用或无结果时为 null
  */
 data class SevenDaysDischargeStats(
     val screenOnDischargeRatePercentPerHour: Float? = null,
@@ -29,5 +30,6 @@ data class SevenDaysDischargeStats(
     val fullChargeGlobalDurationMs: Long? = null,
     val sceneScreenOnRatio: Float? = null,
     val sceneCompositeRatePercentPerHour: Float? = null,
-    val fullChargeSceneCompositeDurationMs: Long? = null
+    val fullChargeSceneCompositeDurationMs: Long? = null,
+    val v2Result: com.battery.analysis.domain.estimator.model.FullChargeRuntimeResult? = null
 )

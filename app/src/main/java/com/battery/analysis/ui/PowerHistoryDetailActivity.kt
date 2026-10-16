@@ -898,12 +898,13 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
             tempCelsius = currentRecord?.temperature
         )
 
-        val remDurationMs = when (rowType) {
-            BatteryEnergyCalculator.ROW_SCREEN_ON -> tripleResult.screenOnEstimate.remainingMs
-            BatteryEnergyCalculator.ROW_SCREEN_OFF -> tripleResult.screenOffEstimate.remainingMs
-            BatteryEnergyCalculator.ROW_GLOBAL -> tripleResult.globalEstimate.remainingMs
+        val remEstimate = when (rowType) {
+            BatteryEnergyCalculator.ROW_SCREEN_ON -> tripleResult.screenOnEstimate
+            BatteryEnergyCalculator.ROW_SCREEN_OFF -> tripleResult.screenOffEstimate
+            BatteryEnergyCalculator.ROW_GLOBAL -> tripleResult.globalEstimate
             else -> null
         }
+        val remDurationMs = remEstimate?.remainingMs
 
         val message = BatteryEnergyCalculator.formatDischargeSpeedCardDetailMessage(
             rowType = rowType,
@@ -915,7 +916,9 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
             predictedCapacityMah = capacityMah,
             sceneScreenOnRatio = if (rowType == BatteryEnergyCalculator.ROW_GLOBAL) sevenDays?.sceneScreenOnRatio else null,
             sceneFullDurationMs = if (rowType == BatteryEnergyCalculator.ROW_GLOBAL) sevenDays?.fullChargeSceneCompositeDurationMs else null,
-            remainingDurationMs = remDurationMs
+            remainingDurationMs = remDurationMs,
+            v2Result = sevenDays?.v2Result,
+            remainingEstimate = remEstimate
         )
         if (message.isNotBlank()) {
             showBubbleTooltip(anchorView, message, autoDismissMs = 0L)
