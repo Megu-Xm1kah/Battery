@@ -126,6 +126,8 @@ class RuntimeEstimator(
         val pLightOn = kotlin.math.min(predictedPower * 0.80, kotlin.math.max(1.00, predictedPower * 0.75))
         val minOnMs = ((usableEnergyWh / pHeavyOn) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
         val maxOnMs = ((usableEnergyWh / pLightOn) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(minOnMs)
+        val safeMinOnMs = if (remainingMs > 0L) kotlin.math.min(minOnMs, remainingMs) else minOnMs
+        val safeMaxOnMs = if (remainingMs > 0L) kotlin.math.max(maxOnMs, remainingMs) else maxOnMs
 
         var confidence = onPowerEstimator.getConfidence()
         if (batteryLevelPercent != null && batteryLevelPercent < 10.0f) {
@@ -139,8 +141,8 @@ class RuntimeEstimator(
             confidence = confidence,
             modelType = if (onPowerEstimator.totalSessionDurationMs > 0L) RuntimeModelType.MULTI_TIMESCALE else RuntimeModelType.CURRENT,
             sampleCount = onPowerEstimator.sampleCount,
-            minRemainingMs = if (minOnMs > 0L) minOnMs else null,
-            maxRemainingMs = if (maxOnMs > 0L) maxOnMs else null
+            minRemainingMs = if (safeMinOnMs > 0L) safeMinOnMs else null,
+            maxRemainingMs = if (safeMaxOnMs > 0L) safeMaxOnMs else null
         )
     }
 
@@ -173,11 +175,13 @@ class RuntimeEstimator(
 
         // 息屏工况预期范围：
         // 唤醒活跃工况（后台下载/定位/媒体，功率通常约 0.70W 以上，或约为典型待机的 1.8~2.2 倍）
-        // 深度休眠底噪（纯静置无唤醒锁，功率约为 0.15W~0.30W，或约为典型待机的 0.75 倍）
+        // 深度休眠底噪（纯静置无唤醒锁，功率约为 0.15W~0.30W，或约为典型待机的 0.65~0.80 倍）
         val pHeavyOff = kotlin.math.max(predictedPower * 1.80, 0.70)
-        val pLightOff = kotlin.math.max(0.15, predictedPower * 0.75)
+        val pLightOff = kotlin.math.min(predictedPower * 0.80, kotlin.math.max(0.05, predictedPower * 0.65))
         val minOffMs = ((usableEnergyWh / pHeavyOff) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
         val maxOffMs = ((usableEnergyWh / pLightOff) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(minOffMs)
+        val safeMinOffMs = if (remainingMs > 0L) kotlin.math.min(minOffMs, remainingMs) else minOffMs
+        val safeMaxOffMs = if (remainingMs > 0L) kotlin.math.max(maxOffMs, remainingMs) else maxOffMs
 
         var confidence = offPowerEstimator.getConfidence()
         if (batteryLevelPercent != null && batteryLevelPercent < 10.0f) {
@@ -191,8 +195,8 @@ class RuntimeEstimator(
             confidence = confidence,
             modelType = if (offPowerEstimator.totalSessionDurationMs > 0L) RuntimeModelType.MULTI_TIMESCALE else RuntimeModelType.CURRENT,
             sampleCount = offPowerEstimator.sampleCount,
-            minRemainingMs = if (minOffMs > 0L) minOffMs else null,
-            maxRemainingMs = if (maxOffMs > 0L) maxOffMs else null
+            minRemainingMs = if (safeMinOffMs > 0L) safeMinOffMs else null,
+            maxRemainingMs = if (safeMaxOffMs > 0L) safeMaxOffMs else null
         )
     }
 
@@ -238,9 +242,11 @@ class RuntimeEstimator(
 
                 // 全局综合工况预期范围（偏重载综合与偏轻载综合）
                 val pHeavyGlobal = pGlobal * 1.50
-                val pLightGlobal = kotlin.math.max(0.30, pGlobal * 0.70)
+                val pLightGlobal = kotlin.math.min(pGlobal * 0.80, kotlin.math.max(0.08, pGlobal * 0.65))
                 val minGlobalMs = ((usableEnergyWh / pHeavyGlobal) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
                 val maxGlobalMs = ((usableEnergyWh / pLightGlobal) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(minGlobalMs)
+                val safeMinGlobalMs = if (remainingMs > 0L) kotlin.math.min(minGlobalMs, remainingMs) else minGlobalMs
+                val safeMaxGlobalMs = if (remainingMs > 0L) kotlin.math.max(maxGlobalMs, remainingMs) else maxGlobalMs
 
                 var blendedConfidence = (onPowerEstimator.getConfidence() * 0.5 + offPowerEstimator.getConfidence() * 0.5)
                 if (batteryLevelPercent != null && batteryLevelPercent < 10.0f) {
@@ -253,8 +259,8 @@ class RuntimeEstimator(
                     confidence = blendedConfidence,
                     modelType = RuntimeModelType.GLOBAL_COMPOSITE,
                     sampleCount = onPowerEstimator.sampleCount + offPowerEstimator.sampleCount,
-                    minRemainingMs = if (minGlobalMs > 0L) minGlobalMs else null,
-                    maxRemainingMs = if (maxGlobalMs > 0L) maxGlobalMs else null
+                    minRemainingMs = if (safeMinGlobalMs > 0L) safeMinGlobalMs else null,
+                    maxRemainingMs = if (safeMaxGlobalMs > 0L) safeMaxGlobalMs else null
                 )
             }
         }
@@ -267,13 +273,22 @@ class RuntimeEstimator(
         if (pFallback != null && pFallback > 0.0) {
             val hours = usableEnergyWh / pFallback
             val remainingMs = (hours * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
+            val pHeavyFallback = pFallback * 1.50
+            val pLightFallback = kotlin.math.min(pFallback * 0.80, kotlin.math.max(0.08, pFallback * 0.65))
+            val minFallbackMs = ((usableEnergyWh / pHeavyFallback) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
+            val maxFallbackMs = ((usableEnergyWh / pLightFallback) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(minFallbackMs)
+            val safeMinFallbackMs = if (remainingMs > 0L) kotlin.math.min(minFallbackMs, remainingMs) else minFallbackMs
+            val safeMaxFallbackMs = if (remainingMs > 0L) kotlin.math.max(maxFallbackMs, remainingMs) else maxFallbackMs
+
             return RuntimeEstimate(
                 remainingMs = if (remainingMs > 0L) remainingMs else null,
                 predictedPowerWatts = pFallback,
                 remainingEnergyWh = usableEnergyWh,
                 confidence = fallbackGlobalEstimator?.getConfidence() ?: 0.40,
                 modelType = RuntimeModelType.CURRENT,
-                sampleCount = fallbackGlobalEstimator?.sampleCount ?: 0
+                sampleCount = fallbackGlobalEstimator?.sampleCount ?: 0,
+                minRemainingMs = if (safeMinFallbackMs > 0L) safeMinFallbackMs else null,
+                maxRemainingMs = if (safeMaxFallbackMs > 0L) safeMaxFallbackMs else null
             )
         }
 

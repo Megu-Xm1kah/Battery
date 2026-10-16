@@ -1717,7 +1717,8 @@ class PowerUsageFragment : Fragment() {
             overviewStats = overview,
             totalCapacityWh = totalCapacityWh,
             batteryLevelPercent = snapshot.levelPercent.toFloat(),
-            remainingEnergyWh = snapshot.energyWh
+            remainingEnergyWh = snapshot.energyWh,
+            tempCelsius = snapshot.temperature
         )
 
         // 异步更新过去 7 天加权放电统计速度与充满电使用时间
@@ -2198,13 +2199,15 @@ class PowerUsageFragment : Fragment() {
         binding.tvMetricGlobalPower.text = avgPowerStr
 
         // 2.1 刷新列表内放电速度概览卡片（包含全局放电速度、亮屏放电速度、息屏放电速度三个主要模块）
-        val currentLevel = snapshot?.levelPercent?.toFloat() ?: currentLoadedSnapshotRecord?.levelPercent?.toFloat()
-        val currentEnergy = snapshot?.energyWh ?: currentLoadedSnapshotRecord?.energyWh
+        val currentLevel = snapshot.levelPercent.toFloat()
+        val currentEnergy = snapshot.energyWh
+        val currentTemp = snapshot.temperature
         adapter.updateOverviewStats(
             overviewStats = overview,
             totalCapacityWh = totalCapacityWh,
             batteryLevelPercent = currentLevel,
-            remainingEnergyWh = currentEnergy
+            remainingEnergyWh = currentEnergy,
+            tempCelsius = currentTemp
         )
 
         // 异步更新过去 7 天加权放电统计速度与充满电使用时间

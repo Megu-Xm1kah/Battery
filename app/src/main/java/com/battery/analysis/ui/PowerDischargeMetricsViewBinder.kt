@@ -50,6 +50,7 @@ object PowerDischargeMetricsViewBinder {
      * @param sevenDaysStats 累积 7 天统计放电速度数据实体 [SevenDaysDischargeStats]，若无数据传入 null
      * @param batteryLevelPercent 当前电池剩余电量百分比（0.0f ~ 100.0f），若不可用传入 null
      * @param remainingEnergyWh 当前电池剩余能量（单位：Wh），若不可用传入 null
+     * @param tempCelsius 电池当前工作温度（单位：℃，可选），用于高精度修正实际物理化学可用能量 K_T
      * @param onCardClick 卡片点击事件监听回调，参数依次为被点击卡片视图与行分类标识（[BatteryEnergyCalculator.ROW_SCREEN_ON] 等）
      */
     fun bindDischargeSpeed(
@@ -59,6 +60,7 @@ object PowerDischargeMetricsViewBinder {
         sevenDaysStats: SevenDaysDischargeStats?,
         batteryLevelPercent: Float? = null,
         remainingEnergyWh: Float? = null,
+        tempCelsius: Float? = null,
         onCardClick: ((anchorView: View, rowType: Int) -> Unit)? = null
     ) {
         val context = binding.root.context
@@ -82,13 +84,14 @@ object PowerDischargeMetricsViewBinder {
             tvScreenOffSpeed.text = formatDischargeRateSpannable(offRate)
             tvGlobalSpeed.text = formatDischargeRateSpannable(globalRate)
 
-            // --- 2. 第二行：剩余续航时间（基于自适应多时间尺度与物理能量模型计算） ---
+            // --- 2. 第二行：剩余续航时间（基于自适应多时间尺度与物理能量模型计算，同步融合温度物理修正） ---
             val tripleResult = BatteryEnergyCalculator.estimateTripleRuntimes(
                 overview = overview,
                 sevenDaysStats = sevenDaysStats,
                 batteryLevelPercent = batteryLevelPercent,
                 remainingEnergyWh = remainingEnergyWh,
-                totalCapacityWh = totalCapacityWh
+                totalCapacityWh = totalCapacityWh,
+                tempCelsius = tempCelsius
             )
 
             tvScreenOnRemaining.text = formatRemainingDurationTextWithSuffix(context, tripleResult.screenOnEstimate.remainingMs)

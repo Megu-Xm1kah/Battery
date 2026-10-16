@@ -291,4 +291,53 @@ class RemainingRuntimeEstimatorTest {
         assertTrue("文案必须包含重载下限与轻载上限", msg.contains("(重载)") && msg.contains("(轻载)"))
         assertTrue("文案必须包含预测放电功耗", msg.contains("预测放电功耗"))
     }
+
+    /**
+     * 测试在超低待机功耗（<0.15W 如 0.08W）与超低综合功耗下，工况预期范围的物理单调性与边界自适应保护。
+     * 确保重载下限 <= 典型估计时长 <= 轻载上限恒成立，绝不发生上限反转。
+     */
+    @Test
+    fun testUltraLowStandbyAndGlobalExpectedRangeBoundaries() {
+        val runtimeEstimator = RuntimeEstimator()
+
+        // 1. 深度睡眠极端低功耗 0.08W
+        val offEstimator = PowerEstimator()
+        offEstimator.seedCurrentSession(3_600_000L, 0.08f)
+        val offEstimate = runtimeEstimator.estimateScreenOff(10.0, offEstimator)
+
+        assertNotNull("息屏预测时长必须有效", offEstimate.remainingMs)
+        assertNotNull("息屏必须包含重载下限", offEstimate.minRemainingMs)
+        assertNotNull("息屏必须包含轻载上限", offEstimate.maxRemainingMs)
+        assertTrue(
+            "息屏重载时长必须小于轻载时长",
+            offEstimate.minRemainingMs!! < offEstimate.maxRemainingMs!!
+        )
+        assertTrue(
+            "典型时长必须处于重载与轻载之间（min <= typical <= max）",
+            offEstimate.remainingMs!! in offEstimate.minRemainingMs!!..offEstimate.maxRemainingMs!!
+        )
+
+        // 2. 全局降级分支（缺乏细分亮息屏模型时直接降级）
+        val fallbackEstimator = PowerEstimator()
+        fallbackEstimator.seedCurrentSession(1_800_000L, 0.50f)
+        val fallbackEstimate = runtimeEstimator.estimateGlobal(
+            usableEnergyWh = 10.0,
+            screenOnRatio = null,
+            onPowerEstimator = PowerEstimator(), // 空
+            offPowerEstimator = PowerEstimator(), // 空
+            fallbackGlobalEstimator = fallbackEstimator
+        )
+
+        assertNotNull("降级分支预测时长必须有效", fallbackEstimate.remainingMs)
+        assertNotNull("降级分支必须包含重载下限", fallbackEstimate.minRemainingMs)
+        assertNotNull("降级分支必须包含轻载上限", fallbackEstimate.maxRemainingMs)
+        assertTrue(
+            "降级重载时长必须小于轻载时长",
+            fallbackEstimate.minRemainingMs!! < fallbackEstimate.maxRemainingMs!!
+        )
+        assertTrue(
+            "降级典型时长必须处于重载与轻载之间",
+            fallbackEstimate.remainingMs!! in fallbackEstimate.minRemainingMs!!..fallbackEstimate.maxRemainingMs!!
+        )
+    }
 }

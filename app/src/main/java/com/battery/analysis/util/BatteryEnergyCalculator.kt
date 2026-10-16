@@ -986,7 +986,7 @@ object BatteryEnergyCalculator {
     val runtimeEstimator by lazy { com.battery.analysis.domain.estimator.RuntimeEstimator() }
 
     /**
-     * 运用自适应多时间尺度剩余续航估计模型 (v1.0) 一站式计算亮屏、息屏与全局三维剩余续航。
+     * 运用自适应多时间尺度剩余续航估计模型 (v2.0) 一站式计算亮屏、息屏与全局三维剩余续航。
      *
      * @param overview 当前放电会话统计数据实体
      * @param sevenDaysStats 过去 7 天核心统计指标实体

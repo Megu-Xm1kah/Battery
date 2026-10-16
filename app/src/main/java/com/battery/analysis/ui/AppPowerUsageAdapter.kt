@@ -542,6 +542,7 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
             sevenDaysStats = cachedSevenDaysStats,
             batteryLevelPercent = cachedBatteryLevelPercent,
             remainingEnergyWh = cachedRemainingEnergyWh,
+            tempCelsius = cachedTemperature.takeIf { it != 0f },
             onCardClick = { anchorView, rowType ->
                 onMetricModuleClickedListener?.invoke(anchorView, rowType)
             }
@@ -1325,13 +1326,15 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
      * @param sevenDaysStats 过去 7 天核心放电统计指标实体（可选），若传入则一并更新
      * @param batteryLevelPercent 当前电池电量百分比（可选）
      * @param remainingEnergyWh 当前电池剩余能量（Wh，可选）
+     * @param tempCelsius 当前电池温度（单位：℃，可选）
      */
     fun updateOverviewStats(
         overviewStats: PowerOverviewStats?,
         totalCapacityWh: Float? = null,
         sevenDaysStats: SevenDaysDischargeStats? = null,
         batteryLevelPercent: Float? = null,
-        remainingEnergyWh: Float? = null
+        remainingEnergyWh: Float? = null,
+        tempCelsius: Float? = null
     ) {
         cachedOverviewStats = overviewStats
         if (totalCapacityWh != null && totalCapacityWh > 0f) {
@@ -1345,6 +1348,9 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         }
         if (remainingEnergyWh != null && remainingEnergyWh > 0f) {
             cachedRemainingEnergyWh = remainingEnergyWh
+        }
+        if (tempCelsius != null && tempCelsius != 0f) {
+            cachedTemperature = tempCelsius
         }
         dischargeSpeedHolder?.let { bindDischargeSpeed(it) }
         sleepAwakeHolder?.let { bindSleepAwakeMetrics(it) }

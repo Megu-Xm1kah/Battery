@@ -809,6 +809,7 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
     private fun bindMetricsCards(hBinding: ItemHistoryDetailHeaderBinding) {
         val batteryLevel = currentRecord?.levelPercent?.toFloat()
         val remainingEnergyWh = currentRecord?.energyWh
+        val tempCelsius = currentRecord?.temperature
         PowerDischargeMetricsViewBinder.bindDischargeSpeed(
             binding = hBinding.layoutDischargeSpeed,
             overview = cachedOverviewStats,
@@ -816,6 +817,7 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
             sevenDaysStats = cachedSevenDaysStats,
             batteryLevelPercent = batteryLevel,
             remainingEnergyWh = remainingEnergyWh,
+            tempCelsius = tempCelsius,
             onCardClick = { anchorView, rowType ->
                 showDischargeSpeedDetailBubble(anchorView, rowType)
             }
