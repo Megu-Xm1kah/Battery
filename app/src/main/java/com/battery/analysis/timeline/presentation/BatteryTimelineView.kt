@@ -360,6 +360,7 @@ class BatteryTimelineView @JvmOverloads constructor(
     private val colorBattery = Color.parseColor("#3A7FF0")
     private val colorTemp = Color.parseColor("#FF5252")
     private val colorVoltage = Color.parseColor("#FFD54F")
+    private val colorEnergy = Color.parseColor("#AB47BC")
 
     // 探查游标折线交点彩色外圈画笔
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -437,6 +438,7 @@ class BatteryTimelineView @JvmOverloads constructor(
     private val cachedBatteryCurve = CachedCurveData()
     private val cachedTempCurve = CachedCurveData()
     private val cachedVoltCurve = CachedCurveData()
+    private val cachedEnergyCurve = CachedCurveData()
 
     /** 标记曲线与图表绘制缓存是否有效，避免列表滚动时重复重绘与重复 LTTB 计算 */
     private var isCurveCacheValid = false
@@ -908,6 +910,9 @@ class BatteryTimelineView @JvmOverloads constructor(
         if (metrics.contains(TimelineMetric.BATTERY)) {
             drawBatteryCurve(canvas, cachedBatteryCurve)
         }
+        if (metrics.contains(TimelineMetric.ENERGY)) {
+            drawEnergyCurve(canvas, cachedEnergyCurve)
+        }
         if (metrics.contains(TimelineMetric.TEMPERATURE)) {
             drawTemperatureCurve(canvas, cachedTempCurve)
         }
@@ -1213,6 +1218,10 @@ class BatteryTimelineView @JvmOverloads constructor(
         if (metrics.contains(TimelineMetric.BATTERY)) {
             buildBatteryCurveCache(cachedBatteryCurve, contentLeft, contentWidth, topPadding, availableH, visibleStart, visibleEnd, rawSamples)
             layoutSmartMarkers(cachedBatteryCurve, metricLabelPaint, contentLeft, contentRight, topPadding, bottomBound, sharedOccupiedRects)
+        }
+        if (metrics.contains(TimelineMetric.ENERGY)) {
+            buildEnergyCurveCache(cachedEnergyCurve, contentLeft, contentWidth, topPadding, availableH, visibleStart, visibleEnd, rawSamples)
+            layoutSmartMarkers(cachedEnergyCurve, metricLabelPaint, contentLeft, contentRight, topPadding, bottomBound, sharedOccupiedRects)
         }
         if (metrics.contains(TimelineMetric.POWER)) {
             buildPowerCurveCache(cachedPowerCurve, contentLeft, contentWidth, topPadding, availableH, visibleStart, visibleEnd, cachedMaxScaleW, rawSamples)
@@ -1569,6 +1578,129 @@ class BatteryTimelineView @JvmOverloads constructor(
         applyMetricLabelTheme(isNight)
         val markerColor = if (isNight) color else Color.parseColor("#1976D2")
         val dotColor = if (isNight) Color.parseColor("#3A7FF0") else Color.parseColor("#1976D2")
+        metricDotPaint.color = dotColor
+        metricLabelPaint.color = markerColor
+        drawSmartMarkers(canvas, cache, metricLabelPaint, metricLabelHaloPaint, metricDotPaint)
+    }
+
+    /**
+     * 预计算并构建电池剩余能量平滑衰减曲线 Path 与真实标注点集合。
+     *
+     * @param cache 目标能量曲线缓存对象 [CachedCurveData]
+     * @param contentLeft 内容区左边缘 X 坐标
+     * @param contentWidth 内容区宽度
+     * @param topPadding 顶部安全边距
+     * @param availableH 曲线有效绘制高度
+     * @param visibleStart 可视起始时间戳
+     * @param visibleEnd 可视结束时间戳
+     * @param rawSamples 原始物理采样点集合
+     */
+    private fun buildEnergyCurveCache(
+        cache: CachedCurveData,
+        contentLeft: Float,
+        contentWidth: Float,
+        topPadding: Float,
+        availableH: Float,
+        visibleStart: Long,
+        visibleEnd: Long,
+        rawSamples: List<BatterySample>
+    ) {
+        cache.path.reset()
+        cache.markers.clear()
+        if (rawSamples.isEmpty()) return
+        val targetPoints = (contentWidth * 0.6f).toInt().coerceIn(200, 600)
+        val totalWh = timelineState.totalEnergyWh?.takeIf { it > 0f }
+        val downsampled = ChartDownsampler.downsampleByMetric(rawSamples, targetPoints) { s ->
+            s.energyWh ?: totalWh?.let { (s.batteryLevel / 100.0) * it } ?: 0.0
+        }
+        if (downsampled.isEmpty()) return
+
+        val contentRight = contentLeft + contentWidth
+        val firstSample = downsampled.first()
+        val firstWh = firstSample.energyWh ?: totalWh?.let { (firstSample.batteryLevel / 100.0) * it }
+        val firstNorm = if (firstWh != null && totalWh != null) {
+            (firstWh / totalWh).toFloat().coerceIn(0f, 1f) * 0.45f + 0.50f
+        } else {
+            (firstSample.batteryLevel / 100f).coerceIn(0f, 1f) * 0.45f + 0.50f
+        }
+        val firstY = topPadding + (1f - firstNorm) * availableH
+
+        cache.path.moveTo(contentLeft, firstY)
+        val firstLabel = formatHeaderEnergy(firstWh, displayUnit)
+        if (firstLabel != null) {
+            cache.markers.add(CurveMarker(contentLeft, firstY, firstLabel, isPriority = true))
+        }
+
+        var lastX = contentLeft
+        var lastY = firstY
+        var lastLevel = firstSample.batteryLevel
+
+        for (s in downsampled) {
+            val x = (contentLeft + TimelineScaleCalculator.timeToX(s.timestamp, visibleStart, visibleEnd, contentWidth)).coerceIn(contentLeft, contentRight)
+            val wh = s.energyWh ?: totalWh?.let { (s.batteryLevel / 100.0) * it }
+            val norm = if (wh != null && totalWh != null) {
+                (wh / totalWh).toFloat().coerceIn(0f, 1f) * 0.45f + 0.50f
+            } else {
+                (s.batteryLevel / 100f).coerceIn(0f, 1f) * 0.45f + 0.50f
+            }
+            val y = topPadding + (1f - norm) * availableH
+
+            // 像素级防抖：横向位移大于 1.0px 或电量阶跃或到达末点才追加贝塞尔段
+            if (x > lastX + 1.0f || s === downsampled.last() || s.batteryLevel != lastLevel) {
+                val cX = (lastX + x) / 2f
+                cache.path.cubicTo(cX, lastY, cX, y, x, y)
+                if (s.batteryLevel != lastLevel && (s.batteryLevel % 10 == 0 || cache.markers.size < 5)) {
+                    val label = formatHeaderEnergy(wh, displayUnit)
+                    if (label != null) {
+                        cache.markers.add(CurveMarker(x, y, label, isPriority = false))
+                    }
+                }
+                lastX = x
+                lastY = y
+                lastLevel = s.batteryLevel
+            }
+        }
+
+        if (lastX < contentRight) {
+            val cX = (lastX + contentRight) / 2f
+            cache.path.cubicTo(cX, lastY, cX, lastY, contentRight, lastY)
+        }
+
+        // 末点高优先级 Marker
+        val lastSample = downsampled.last()
+        if (cache.markers.none { abs(it.x - contentRight) < dp10 }) {
+            val lastWh = lastSample.energyWh ?: totalWh?.let { (lastSample.batteryLevel / 100.0) * it }
+            val lastNorm = if (lastWh != null && totalWh != null) {
+                (lastWh / totalWh).toFloat().coerceIn(0f, 1f) * 0.45f + 0.50f
+            } else {
+                (lastSample.batteryLevel / 100f).coerceIn(0f, 1f) * 0.45f + 0.50f
+            }
+            val endY = topPadding + (1f - lastNorm) * availableH
+            val lastLabel = formatHeaderEnergy(lastWh, displayUnit)
+            if (lastLabel != null) {
+                cache.markers.add(CurveMarker(contentRight, endY, lastLabel, isPriority = true))
+            }
+        }
+    }
+
+    /**
+     * 绘制能量平滑衰减曲线与数值标签（直接复用预计算 Path 与预排布 Markers）。
+     *
+     * @param canvas 绘制画布 [Canvas]
+     * @param cache 能量曲线缓存对象 [CachedCurveData]
+     */
+    private fun drawEnergyCurve(
+        canvas: Canvas,
+        cache: CachedCurveData
+    ) {
+        val isNight = isNightMode
+        val color = Color.parseColor("#B3AB47BC")
+        linePaint.color = color
+
+        canvas.drawPath(cache.path, linePaint)
+        applyMetricLabelTheme(isNight)
+        val markerColor = if (isNight) color else Color.parseColor("#7B1FA2")
+        val dotColor = if (isNight) Color.parseColor("#AB47BC") else Color.parseColor("#7B1FA2")
         metricDotPaint.color = dotColor
         metricLabelPaint.color = markerColor
         drawSmartMarkers(canvas, cache, metricLabelPaint, metricLabelHaloPaint, metricDotPaint)
@@ -2284,6 +2416,21 @@ class BatteryTimelineView @JvmOverloads constructor(
                     val batteryNorm = (curSample.batteryLevel / 100f).coerceIn(0f, 1f) * 0.45f + 0.50f
                     val batteryY = topPadding + (1f - batteryNorm) * availableH
                     drawHighLightDot(canvas, clampedX, batteryY, colorBattery)
+                }
+
+                // 能量指标高亮点
+                if (selected.contains(TimelineMetric.ENERGY)) {
+                    val wh = curSample.energyWh ?: timelineState.totalEnergyWh?.takeIf { it > 0f }?.let {
+                        (curSample.batteryLevel / 100.0) * it
+                    }
+                    val totalWh = timelineState.totalEnergyWh?.takeIf { it > 0f }
+                    val energyNorm = if (wh != null && totalWh != null) {
+                        (wh / totalWh).toFloat().coerceIn(0f, 1f) * 0.45f + 0.50f
+                    } else {
+                        (curSample.batteryLevel / 100f).coerceIn(0f, 1f) * 0.45f + 0.50f
+                    }
+                    val energyY = topPadding + (1f - energyNorm) * availableH
+                    drawHighLightDot(canvas, clampedX, energyY, colorEnergy)
                 }
 
                 // 温度指标高亮点

@@ -108,6 +108,7 @@ class ChargingChartView @JvmOverloads constructor(
     val colorLevel = Color.parseColor("#3A7FF0")
     val colorTemp = Color.parseColor("#FF5252")
     val colorVoltage = Color.parseColor("#FFD54F")
+    val colorEnergy = Color.parseColor("#AB47BC")
 
     // 底部亮屏状态指示条画笔（绿色表示亮屏）
     private val screenOnBarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -170,6 +171,15 @@ class ChargingChartView @JvmOverloads constructor(
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
         color = colorVoltage
+    }
+
+    // 绘制画笔：能量曲线（紫色折线，折线宽度全部统一为 1.5dp）
+    private val energyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = dp1_5
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        color = colorEnergy
     }
 
     // 背景参考网格线画笔
@@ -258,6 +268,7 @@ class ChargingChartView @JvmOverloads constructor(
     private val levelPath = Path()
     private val tempPath = Path()
     private val voltagePath = Path()
+    private val energyPath = Path()
     private val gridPath = Path()
     private val headerRect = RectF()
 
@@ -267,6 +278,8 @@ class ChargingChartView @JvmOverloads constructor(
     private val tempPointPool = mutableListOf<PointF>()
     private val voltagePointPool = mutableListOf<PointF>()
     private val voltagePoints = mutableListOf<PointF>()
+    private val energyPointPool = mutableListOf<PointF>()
+    private val energyPoints = mutableListOf<PointF>()
 
     // 前台活跃应用时间轴事件集合、时间槽排布缓存与图标绘制矩形复用
     private val appEvents = mutableListOf<AppTimelineEvent>()
@@ -478,6 +491,7 @@ class ChargingChartView @JvmOverloads constructor(
         levelPoints.clear()
         tempPoints.clear()
         voltagePoints.clear()
+        energyPoints.clear()
         appEvents.clear()
         cachedSlotItems = emptyList()
         lastSlotCalcEventsHash = 0
@@ -590,6 +604,7 @@ class ChargingChartView @JvmOverloads constructor(
         levelPoints.clear()
         tempPoints.clear()
         voltagePoints.clear()
+        energyPoints.clear()
 
         for (i in dataPoints.indices) {
             val p = dataPoints[i]
@@ -604,6 +619,9 @@ class ChargingChartView @JvmOverloads constructor(
             val levelNorm = (p.batteryLevel / 100f).coerceIn(0f, 1f) * 0.40f + 0.55f
             val levelY = chartTop + chartHeight * (1f - levelNorm)
             levelPoints.add(obtainPointF(levelPointPool, i, x, levelY))
+
+            // 能量曲线：与电量走势同比例平滑映射至顶部区间
+            energyPoints.add(obtainPointF(energyPointPool, i, x, levelY))
 
             // 温度曲线：映射至中层区间 (0.35 ~ 0.65)
             val tempNorm = if (p.temperature > 0f) {
@@ -671,6 +689,9 @@ class ChargingChartView @JvmOverloads constructor(
         }
         if (selectedMetrics.contains(TimelineMetric.BATTERY)) {
             drawStraightLine(canvas, levelPoints, levelPath, levelPaint)
+        }
+        if (selectedMetrics.contains(TimelineMetric.ENERGY)) {
+            drawStraightLine(canvas, energyPoints, energyPath, energyPaint)
         }
         if (selectedMetrics.contains(TimelineMetric.TEMPERATURE)) {
             drawStraightLine(canvas, tempPoints, tempPath, tempPaint)
@@ -1264,6 +1285,10 @@ class ChargingChartView @JvmOverloads constructor(
         }
         if (selectedMetrics.contains(TimelineMetric.BATTERY) && levelPoints.isNotEmpty() && selectedIndex in levelPoints.indices) {
             drawHighLightDot(canvas, pX, levelY, colorLevel)
+        }
+        if (selectedMetrics.contains(TimelineMetric.ENERGY) && energyPoints.isNotEmpty() && selectedIndex in energyPoints.indices) {
+            val energyY = energyPoints[selectedIndex].y
+            drawHighLightDot(canvas, pX, energyY, colorEnergy)
         }
         if (selectedMetrics.contains(TimelineMetric.TEMPERATURE) && tempPoints.isNotEmpty() && selectedIndex in tempPoints.indices) {
             drawHighLightDot(canvas, pX, tempY, colorTemp)

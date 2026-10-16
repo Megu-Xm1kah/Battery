@@ -45,6 +45,11 @@ class PowerHistoryActivity : AppCompatActivity() {
     private var allRecordList: List<PowerUsageRecord> = emptyList()
 
     /**
+     * 标记当前是否正在异步加载或计算耗电历史快照数据。
+     */
+    private var isDataLoading = false
+
+    /**
      * 耗电历史记录放电持续时长筛选条件枚举。
      *
      * @property label 胶囊按钮与空状态提示文本
@@ -113,11 +118,11 @@ class PowerHistoryActivity : AppCompatActivity() {
     }
 
     /**
-     * 界面恢复生命周期回调，自动触发最新历史列表重载（采用静默后台加载，避免打断界面初次渲染）。
+     * 界面恢复生命周期回调，进入页面或返回时自动触发历史列表重载并展示下拉刷新进度指示器。
      */
     override fun onResume() {
         super.onResume()
-        loadHistoryList(isPullToRefresh = false)
+        loadHistoryList(isPullToRefresh = true)
     }
 
     /**
@@ -405,45 +410,55 @@ class PowerHistoryActivity : AppCompatActivity() {
 
     /**
      * 异步从本地数据库检索所有历史耗电快照记录并刷新列表与空状态占位。
-     * 所有数据检索、条件过滤、Summary 统计及字段预热均在 IO 线程池并发完成，主线程零负担。
+     * 进入页面或下拉刷新时展示下拉进度指示器，所有数据检索、条件过滤、Summary 统计及字段预热均在 IO 线程池完成。
      *
-     * @param isPullToRefresh 是否由用户主动下拉手势触发刷新（true 时展示旋转进度指示，false 时为初次或返回静默刷新）
+     * @param isPullToRefresh 是否展示下拉旋转进度指示器（true 时通过 post 安全机制展示下拉刷新进度，false 时静默刷新）
      */
-    private fun loadHistoryList(isPullToRefresh: Boolean = false) {
+    private fun loadHistoryList(isPullToRefresh: Boolean = true) {
         if (isPullToRefresh) {
-            binding.swipeRefresh.isRefreshing = true
-        }
-        lifecycleScope.launch(Dispatchers.IO) {
-            // 若当前处于放电中，主动持久化当前最新的放电进度草稿，确保短时间刚拔电也能立即可见且数据最新
-            try {
-                val powerManager = PowerUsageManager.getInstance(applicationContext)
-                val status = powerManager.getCurrentBatteryStatus()
-                if (!status.isCharging && powerManager.getLastUnplugTime() > 0L) {
-                    powerManager.checkpointDischargeSession(isFinal = false)
+            isDataLoading = true
+            binding.swipeRefresh.post {
+                if (isDataLoading) {
+                    binding.swipeRefresh.isRefreshing = true
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
             }
+        }
+        lifecycleScope.launch {
+            try {
+                val (list, filteredList, summary) = withContext(Dispatchers.IO) {
+                    // 若当前处于放电中，主动持久化当前最新的放电进度草稿，确保短时间刚拔电也能立即可见且数据最新
+                    try {
+                        val powerManager = PowerUsageManager.getInstance(applicationContext)
+                        val status = powerManager.getCurrentBatteryStatus()
+                        if (!status.isCharging && powerManager.getLastUnplugTime() > 0L) {
+                            powerManager.checkpointDischargeSession(isFinal = false)
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
 
-            val list = dbHelper.getAllRecords()
-            val filter = selectedDurationFilter
-            val filteredList = if (filter == null) {
-                list
-            } else {
-                list.filter { filter.matches(it.getScreenOnDurationMs()) }
-            }
-            val summary = PowerHistorySummary.calculate(filteredList, applicationContext)
+                    val rawList = dbHelper.getAllRecords()
+                    val filter = selectedDurationFilter
+                    val filtered = if (filter == null) {
+                        rawList
+                    } else {
+                        rawList.filter { filter.matches(it.getScreenOnDurationMs()) }
+                    }
+                    val calculatedSummary = PowerHistorySummary.calculate(filtered, applicationContext)
 
-            // 后台 IO 线程预热各条目的格式化显示文本，彻底消除主线程绘制与滑动绑定的任何开销
-            for (record in filteredList) {
-                record.getFormattedTimeRange()
-                record.getFormattedDurationAndLevel()
-                record.getDisplayScreenOnDuration()
-            }
+                    // 后台 IO 线程预热各条目的格式化显示文本，彻底消除主线程绘制与滑动绑定的任何开销
+                    for (record in filtered) {
+                        record.getFormattedTimeRange()
+                        record.getFormattedDurationAndLevel()
+                        record.getDisplayScreenOnDuration()
+                    }
+                    Triple(rawList, filtered, calculatedSummary)
+                }
 
-            withContext(Dispatchers.Main) {
                 allRecordList = list
                 updateFilteredUI(filteredList, summary)
+            } finally {
+                isDataLoading = false
                 binding.swipeRefresh.isRefreshing = false
             }
         }

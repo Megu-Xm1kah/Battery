@@ -20,6 +20,11 @@ enum class TimelineMetric {
     BATTERY,
 
     /**
+     * 电池剩余能量（Wh / mWh / mAh）曲线。
+     */
+    ENERGY,
+
+    /**
      * 电池温度（℃）曲线。
      */
     TEMPERATURE,

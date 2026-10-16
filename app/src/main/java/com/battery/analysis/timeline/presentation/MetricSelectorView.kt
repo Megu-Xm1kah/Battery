@@ -53,6 +53,7 @@ class MetricSelectorView @JvmOverloads constructor(
     private fun buildMetricItems(): List<Pair<TimelineMetric, String>> {
         return listOf(
             Pair(TimelineMetric.BATTERY, "电量"),
+            Pair(TimelineMetric.ENERGY, "能量"),
             Pair(TimelineMetric.POWER, powerLabel),
             Pair(TimelineMetric.TEMPERATURE, "温度"),
             Pair(TimelineMetric.VOLTAGE, "电压"),
@@ -138,8 +139,8 @@ class MetricSelectorView @JvmOverloads constructor(
     }
 
     /**
-     * 初始化 5 个指标选项标签视图。
-     * 前置圆角点与充电趋势图规范严格对齐（9dp x 9dp，圆角 2.5dp，间距 5dp）。
+     * 初始化 6 个指标选项标签视图（电量、能量、功耗、温度、电压、应用）。
+     * 前置圆角点与充电趋势图规范严格对齐（8.5dp x 8.5dp，圆角 2.5dp，间距 4dp）。
      */
     private fun initViews() {
         removeAllViews()
@@ -148,8 +149,7 @@ class MetricSelectorView @JvmOverloads constructor(
         textViews.clear()
 
         val dp4 = dpToPx(4f)
-        val dp5 = dpToPx(5f)
-        val dp9 = dpToPx(9f)
+        val dp8_5 = dpToPx(8.5f)
 
         for (item in buildMetricItems()) {
             val (metric, title) = item
@@ -166,7 +166,7 @@ class MetricSelectorView @JvmOverloads constructor(
             }
 
             val dotView = View(context).apply {
-                layoutParams = LayoutParams(dp9, dp9)
+                layoutParams = LayoutParams(dp8_5, dp8_5)
             }
 
             val tv = TextView(context).apply {
@@ -177,7 +177,7 @@ class MetricSelectorView @JvmOverloads constructor(
                 includeFontPadding = false
                 gravity = Gravity.CENTER
                 layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                    marginStart = dp5
+                    marginStart = dp4
                 }
             }
 
@@ -260,6 +260,7 @@ class MetricSelectorView @JvmOverloads constructor(
 
             val activeColor = when (metric) {
                 TimelineMetric.BATTERY -> Color.parseColor("#3A7FF0") // 蓝色电量（统一为 3A7FF0）
+                TimelineMetric.ENERGY -> Color.parseColor("#AB47BC") // 紫色能量
                 TimelineMetric.POWER -> Color.parseColor("#90CAF9") // 淡蓝功耗
                 TimelineMetric.TEMPERATURE -> Color.parseColor("#FF5252") // 红色温度（与充电统计趋势图表一致）
                 TimelineMetric.VOLTAGE -> Color.parseColor("#FFD54F") // 金黄电压
