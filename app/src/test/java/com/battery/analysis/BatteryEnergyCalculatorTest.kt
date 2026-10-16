@@ -48,15 +48,17 @@ class BatteryEnergyCalculatorTest {
     }
 
     /**
-     * 测试部分芯片直接返回毫安时（小于 100,000）时的电荷计数器折算。
+     * 测试标准微安时电荷计数器（BATTERY_PROPERTY_CHARGE_COUNTER）统一严格除以 1000 规范折算为毫安时（mAh）。
+     * 在 RuntimeModel v2.1 规范中，彻底废除根据数值是否小于 100,000 猜测单位的逻辑，
+     * 避免在低电量（如 80,000 uAh = 80 mAh）时误猜为 80,000 mAh 导致剩余能量暴涨千倍。
      */
     @Test
     fun testHardwareChargeCounterAsMahDirectly() {
-        // 2500 mAh 直接作为数值返回
-        val chargeMah = 2500
+        // 2500 mAh 对应标准硬件微安时数值 2,500,000 uAh
+        val chargeUah = 2_500_000
         val resultWh = BatteryEnergyCalculator.calculateRemainingEnergyWh(
             hardwareEnergyNwh = null,
-            hardwareChargeCounterUah = chargeMah,
+            hardwareChargeCounterUah = chargeUah,
             batteryPercent = 50,
             nominalVoltageVolts = 3.85f,
             effectiveCapacityMah = 5000f
@@ -67,11 +69,13 @@ class BatteryEnergyCalculatorTest {
     }
 
     /**
-     * 测试硬件电荷计数器直接忠实换算，不设人为离群值强行拦截。
+     * 测试硬件电荷计数器在低数值区间（如 50,000 uAh，即 50 mAh）时的严格物理换算，
+     * 验证其严格除以 1000f 换算为 50 mAh，绝不因数值小于 100,000 而误判为 50,000 mAh。
      */
     @Test
     fun testHardwareChargeCounterDirectCalculation() {
-        val chargeUah = 50
+        // 低电量 50 mAh 对应 50,000 uAh
+        val chargeUah = 50_000
         val resultWh = BatteryEnergyCalculator.calculateRemainingEnergyWh(
             hardwareEnergyNwh = null,
             hardwareChargeCounterUah = chargeUah,
@@ -358,7 +362,7 @@ class BatteryEnergyCalculatorTest {
 
         assertTrue("标题包含亮屏放电速度", message.contains("【亮屏放电速度】"))
         assertTrue("包含当前放电速度", message.contains("• 当前放电速度：6.3%/h"))
-        assertTrue("包含累积7天亮屏放电速度与统计时长", message.contains("• 累积7天亮屏放电速度：6.1%/h（统计时长 02d05h）"))
+        assertTrue("包含7天放电速度与实际时长", message.contains("• 7天放电速度：6.1%/h (亮屏 02d05h)"))
         assertTrue("包含满电亮屏续航", message.contains("• 满电亮屏续航：16h24m"))
         assertTrue("包含当前剩余续航且精确到秒", message.contains("• 当前剩余续航：09h15m30s"))
         assertTrue("包含预测真实容量（多少Wh（多少mAh））", message.contains("• 预测真实容量：19.25 Wh (5000 mAh)"))
@@ -366,7 +370,7 @@ class BatteryEnergyCalculatorTest {
     }
 
     /**
-     * 测试息屏放电速度卡片弹框详细格式化，验证包含“累积7天息屏放电速度”、满电待机时长及精确到秒的“当前剩余续航”。
+     * 测试息屏放电速度卡片弹框详细格式化，验证包含“7天放电速度”、满电待机时长及精确到秒的“当前剩余续航”。
      */
     @Test
     fun testFormatScreenOffDischargeSpeedDetailMessage() {
@@ -381,14 +385,14 @@ class BatteryEnergyCalculatorTest {
 
         assertTrue("标题包含息屏放电速度", message.contains("【息屏放电速度】"))
         assertTrue("当前息屏暂无数据展示--", message.contains("• 当前放电速度：--"))
-        assertTrue("包含累积7天息屏放电速度与统计时长", message.contains("• 累积7天息屏放电速度：1.0%/h（统计时长 04d01h）"))
+        assertTrue("包含7天放电速度与实际时长", message.contains("• 7天放电速度：1.0%/h (息屏 04d01h)"))
         assertTrue("包含满电待机时长", message.contains("• 满电待机时长：04d01h00m"))
         assertTrue("包含当前剩余续航且精确到秒", message.contains("• 当前剩余续航：02d03h40m15s"))
         assertTrue("包含说明模块", message.contains("💡 说明："))
     }
 
     /**
-     * 测试全局放电速度卡片弹框详细格式化，验证包含“累积7天全局放电速度”、精确到秒的“当前剩余续航”、模式1（全局加权）与模式2（场景融合）双模型推算（精确到分钟）。
+     * 测试全局放电速度卡片弹框详细格式化，验证包含“7天全局放电速度”、精确到秒的“当前剩余续航”、模式1（全局加权）与模式2（场景融合）双模型推算（精确到分钟）。
      */
     @Test
     fun testFormatGlobalDischargeSpeedDetailMessage() {
@@ -405,13 +409,52 @@ class BatteryEnergyCalculatorTest {
 
         assertTrue("标题包含全局放电速度", message.contains("【全局放电速度】"))
         assertTrue("包含当前放电速度", message.contains("• 当前放电速度：6.3%/h"))
-        assertTrue("包含累积7天全局放电速度与统计时长", message.contains("• 累积7天全局放电速度：2.8%/h（统计时长 06d07h）"))
+        assertTrue("包含7天放电速度与实际时长", message.contains("• 7天放电速度：2.8%/h (放电 06d07h)"))
         assertTrue("包含当前剩余续航且精确到秒", message.contains("• 当前剩余续航：01d02h10m05s"))
         assertTrue("包含双模型标题", message.contains("📊 满电综合续航推算"))
         assertTrue("包含模式1全局加权结果（精确到分）", message.contains("• 模式1（全局加权）：01d11h12m"))
         assertTrue("包含模式2场景融合结果（精确到分）", message.contains("• 模式2（场景融合）：01d15h35m"))
-        assertTrue("包含模式2动态加权说明", message.contains("按日常习惯 25.0% 亮屏 + 75.0% 息屏动态加权"))
+        assertTrue("包含模式2动态加权说明", message.contains("按日常习惯 25.0% 亮屏 + 75.0% 息屏加权"))
         assertTrue("包含说明模块", message.contains("💡 说明："))
+    }
+
+    /**
+     * 测试卡片弹框详细格式化中对自适应历史时间窗口结果的三项解耦分离展示：
+     * 1. 统计范围（如自适应扩展至近 18.5 天）；
+     * 2. 有效放电时长（实际参与统计的有效放电累计时长）；
+     * 3. 数据充分性（数据充足 / 基本可用 / 样本较少）。
+     */
+    @Test
+    fun testFormatDischargeSpeedDetailMessageWithAdaptiveWindow() {
+        val v2Result = com.battery.analysis.domain.estimator.model.FullChargeRuntimeResult(
+            fullRuntimeMs = 72_000_000L, // 20h
+            fullEnergyWh = 20.0,
+            predictedPowerWatts = 1.0,
+            confidenceLevel = com.battery.analysis.domain.estimator.model.RuntimeConfidenceLevel.HIGH,
+            energySource = com.battery.analysis.domain.estimator.model.EnergySource.FCC_TIMES_NOMINAL_VOLTAGE,
+            effectiveHistoryMs = 18L * 3600_000L,
+            usedRegimeModel = true,
+            screenOnFullRuntimeMs = 18_000_000L, // 5h
+            predictedScreenOnPowerWatts = 4.0,
+            historyWindowDays = 18.5,
+            effectiveDischargeDurationMs = 18L * 3600_000L,
+            dataSufficiency = com.battery.analysis.domain.estimator.model.DataSufficiencyLevel.SUFFICIENT,
+            screenOnEffectiveMs = 6L * 3600_000L
+        )
+
+        val msg = BatteryEnergyCalculator.formatDischargeSpeedCardDetailMessage(
+            rowType = BatteryEnergyCalculator.ROW_SCREEN_ON,
+            currentRatePercentPerHour = 5.0f,
+            sevenDaysRatePercentPerHour = 4.8f,
+            sevenDaysDurationMs = 18L * 3600_000L,
+            fullDurationMs = 72_000_000L,
+            v2Result = v2Result
+        )
+
+        assertTrue("必须包含升级模型v2.1标题", msg.contains("• 升级模型(v2.1)："))
+        assertTrue("必须包含统计范围且展示自适应扩展天数", msg.contains("统计范围：自适应扩展至近 18.5 天"))
+        assertTrue("必须包含实际有效放电时长", msg.contains("有效放电：累计亮屏 06h00m"))
+        assertTrue("必须包含数据充分性评级", msg.contains("数据充足"))
     }
 
     /**

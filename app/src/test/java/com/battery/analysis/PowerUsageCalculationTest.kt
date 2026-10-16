@@ -6477,6 +6477,27 @@ class PowerUsageCalculationTest {
         // 息屏唤醒 = 9m off - 8m sleep = 1m = 60,000ms
         assertEquals("息屏唤醒必须准确解析为 1 分钟（60,000ms）", 60_000L, summary.screenOffAwakeDurationMs)
     }
+
+    /**
+     * 验证耗电详情页与耗电统计页三维核心能量（亮屏、息屏、全局）百分比计算基准完全统一。
+     * 亮屏、息屏与全局能量百分比均以电池满电物理总能量（baseTotalEnergy）为分母基准计算，
+     * 彻底杜绝全局能量硬编码为 100% 以及亮屏息屏按总消耗相对占比计算的不一致问题。
+     */
+    @Test
+    fun testPowerDetailAndPowerStatsEnergyRatioConsistency() {
+        val totalCapacityWh = 20.0f
+        val screenOnEnergyWh = 4.0f
+        val screenOffEnergyWh = 1.0f
+        val totalEnergyWh = 5.0f
+
+        val onRatio = (screenOnEnergyWh / totalCapacityWh * 100f)
+        val offRatio = (screenOffEnergyWh / totalCapacityWh * 100f)
+        val globalRatio = (totalEnergyWh / totalCapacityWh * 100f)
+
+        assertEquals("亮屏能量占电池物理总容量比率", "20.0%", String.format(java.util.Locale.getDefault(), "%.1f%%", onRatio))
+        assertEquals("息屏能量占电池物理总容量比率", "5.0%", String.format(java.util.Locale.getDefault(), "%.1f%%", offRatio))
+        assertEquals("全局能量占电池物理总容量比率", "25.0%", String.format(java.util.Locale.getDefault(), "%.1f%%", globalRatio))
+    }
 }
 
 

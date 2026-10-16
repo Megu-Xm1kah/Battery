@@ -46,6 +46,7 @@ package com.battery.analysis.model
  * @property powerUnitDialogDoNotShow 切换耗电量显示单位时是否不再弹出确认提示对话框
  * @property enableBackgroundStats 是否启用后台应用耗电明细统计与拆分
  * @property timelineSavedMetrics 功耗时间轴底部趋势图用户自定义选中的指标名称列表
+ * @property timelineSavedChargingMetrics 充电时间轴底部趋势图用户自定义选中的指标名称列表
  */
 data class BackupSettings(
     val languageMode: Int? = null,
@@ -87,7 +88,8 @@ data class BackupSettings(
     val powerDisplayUnit: Int? = null,
     val powerUnitDialogDoNotShow: Boolean? = null,
     val enableBackgroundStats: Boolean? = null,
-    val timelineSavedMetrics: List<String>? = null
+    val timelineSavedMetrics: List<String>? = null,
+    val timelineSavedChargingMetrics: List<String>? = null
 )
 
 /**
@@ -116,9 +118,9 @@ data class BackupRestoreSummary(
 /**
  * 电池数据备份文件根结构实体类。
  * 承载备份协议版本、应用元信息、全量应用偏好配置，以及电池快照、充电历史和放电历史记录列表。
- * 向下兼容协议版本 1 与版本 2，当前最新版本为 3。
+ * 向下兼容协议版本 1、版本 2 与版本 3，当前最新版本为 4。
  *
- * @property version 备份协议版本号（当前最新为 3）
+ * @property version 备份协议版本号（当前最新为 4）
  * @property appVersion 导出该备份的应用版本名称
  * @property backupTime 格式化的备份生成时间（例如 "2026-08-19 13:30:00"）
  * @property backupTimestamp 备份生成时的时间戳毫秒值
@@ -128,7 +130,7 @@ data class BackupRestoreSummary(
  * @property powerUsageRecords 放电耗电历史记录列表
  */
 data class BackupData(
-    val version: Int = 3,
+    val version: Int = 4,
     val appVersion: String,
     val backupTime: String,
     val backupTimestamp: Long = System.currentTimeMillis(),

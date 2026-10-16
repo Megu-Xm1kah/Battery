@@ -29,14 +29,15 @@ class RegimePowerEstimator {
         if (intervals.isEmpty()) return null
 
         val totalDurationMs = intervals.sumOf { it.durationMs }
-        val totalEnergyWh = intervals.sumOf { it.energyWh }
+        val weightedDurationMs = intervals.sumOf { it.durationMs.toDouble() * it.ageWeight }
+        val weightedEnergyWh = intervals.sumOf { it.energyWh * it.ageWeight }
 
-        if (totalDurationMs < minDurationMs || totalEnergyWh <= 0.0) {
+        if (totalDurationMs < minDurationMs || weightedDurationMs <= 0.0 || weightedEnergyWh <= 0.0) {
             return null
         }
 
-        val hours = totalDurationMs.toDouble() / 3600000.0
-        val p = totalEnergyWh / hours
+        val hours = weightedDurationMs / 3600000.0
+        val p = weightedEnergyWh / hours
         return if (p > 0.0 && p.isFinite()) p else null
     }
 

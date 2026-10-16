@@ -938,7 +938,7 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
             } else {
                 "Max:--"
             }
-            tvAvgInfo.text = "AVG:$pwrStr, $avgTempStr | $maxTempStr"
+            tvAvgInfo.text = "Avg:$pwrStr, $avgTempStr | $maxTempStr"
 
             val effectiveTotalEnergy = if (cachedTotalAppEnergyWh > 0f) {
                 cachedTotalAppEnergyWh

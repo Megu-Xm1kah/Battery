@@ -199,13 +199,21 @@ class BackupManager private constructor() {
             settingsJson.put("enable_background_stats", powerPrefs.getBoolean(PowerUsageFragment.PREF_KEY_ENABLE_BACKGROUND_STATS, false))
         }
 
-        // 趋势图指标配置
+        // 趋势图指标配置（放电与充电时间轴）
         if (timelinePrefs.contains("saved_timeline_metrics")) {
             val metricsSet = timelinePrefs.getStringSet("saved_timeline_metrics", null)
             if (metricsSet != null) {
                 val array = JSONArray()
                 metricsSet.forEach { array.put(it) }
                 settingsJson.put("timeline_saved_metrics", array)
+            }
+        }
+        if (timelinePrefs.contains("saved_charging_timeline_metrics")) {
+            val metricsSet = timelinePrefs.getStringSet("saved_charging_timeline_metrics", null)
+            if (metricsSet != null) {
+                val array = JSONArray()
+                metricsSet.forEach { array.put(it) }
+                settingsJson.put("timeline_saved_charging_metrics", array)
             }
         }
 
@@ -339,6 +347,17 @@ class BackupManager private constructor() {
                 } else null
             } else null
 
+            val timelineChargingMetrics = if (settingsJson.has("timeline_saved_charging_metrics")) {
+                val array = settingsJson.optJSONArray("timeline_saved_charging_metrics")
+                if (array != null) {
+                    val list = mutableListOf<String>()
+                    for (i in 0 until array.length()) {
+                        list.add(array.getString(i))
+                    }
+                    list
+                } else null
+            } else null
+
             BackupSettings(
                 languageMode = if (settingsJson.has("language_mode")) settingsJson.getInt("language_mode") else null,
                 themeMode = if (settingsJson.has("theme_mode")) settingsJson.getInt("theme_mode") else null,
@@ -379,7 +398,8 @@ class BackupManager private constructor() {
                 powerDisplayUnit = if (settingsJson.has("power_display_unit")) settingsJson.getInt("power_display_unit") else null,
                 powerUnitDialogDoNotShow = if (settingsJson.has("power_unit_dialog_donot_show")) settingsJson.getBoolean("power_unit_dialog_donot_show") else null,
                 enableBackgroundStats = if (settingsJson.has("enable_background_stats")) settingsJson.getBoolean("enable_background_stats") else null,
-                timelineSavedMetrics = timelineMetrics
+                timelineSavedMetrics = timelineMetrics,
+                timelineSavedChargingMetrics = timelineChargingMetrics
             )
         } else {
             BackupSettings()
@@ -764,10 +784,21 @@ class BackupManager private constructor() {
                     CurrentCalibrationManager.setCoulombFallbackEnabled(context, it)
                 }
 
-                // 趋势图指标配置
+                // 趋势图指标配置（放电与充电时间轴）
                 settings.timelineSavedMetrics?.let { metricsList ->
                     val timelinePrefs = context.getSharedPreferences("timeline_metrics_prefs", Context.MODE_PRIVATE)
                     timelinePrefs.edit().putStringSet("saved_timeline_metrics", metricsList.toSet()).apply()
+                }
+                settings.timelineSavedChargingMetrics?.let { metricsList ->
+                    val timelinePrefs = context.getSharedPreferences("timeline_metrics_prefs", Context.MODE_PRIVATE)
+                    timelinePrefs.edit().putStringSet("saved_charging_timeline_metrics", metricsList.toSet()).apply()
+                }
+
+                // 统一依据恢复后的全局偏好设置裁决后台常驻监控服务生命周期
+                if (BatteryMonitorService.shouldServiceRun(context)) {
+                    BatteryMonitorService.start(context)
+                } else {
+                    BatteryMonitorService.stop(context)
                 }
             }
 
@@ -784,7 +815,7 @@ class BackupManager private constructor() {
     }
 
     companion object {
-        private const val BACKUP_SCHEMA_VERSION = 3
+        private const val BACKUP_SCHEMA_VERSION = 4
 
         @Volatile
         private var instance: BackupManager? = null

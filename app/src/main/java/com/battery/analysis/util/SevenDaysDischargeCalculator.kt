@@ -156,9 +156,10 @@ object SevenDaysDischargeCalculator {
         val dbHelper = PowerUsageDbHelper.getInstance(context)
         val allRecords = dbHelper.getAllRecords()
 
-        // 筛选符合基准时间戳的历史记录（排除充电异常记录与未来时间戳记录）
+        // 筛选符合 168 小时滚动墙钟窗口与基准时间戳的历史记录（排除 7 天以前陈旧记录、充电异常记录与未来时间戳记录）
+        val windowStartTs = baseTimestamp - SEVEN_DAYS_MS
         val eligibleRecords = allRecords.filter { record ->
-            !record.isCharging && record.id <= (baseTimestamp + 60_000L)
+            !record.isCharging && record.id >= windowStartTs && record.id <= (baseTimestamp + 60_000L)
         }
 
         for (record in eligibleRecords) {
@@ -260,7 +261,7 @@ object SevenDaysDischargeCalculator {
             null
         }
 
-        // 4. 执行阶段一满电续航算法升级（v2.0）影子模式计算
+        // 4. 执行自适应历史时间窗口满电续航算法升级（v2.1）影子模式计算
         val v2Result = try {
             val v2Estimator = com.battery.analysis.domain.estimator.FullChargeRuntimeEstimator()
             val v2EnergyEstimate = com.battery.analysis.domain.estimator.model.FullChargeEnergyEstimate(
@@ -269,12 +270,12 @@ object SevenDaysDischargeCalculator {
                 quality = com.battery.analysis.domain.estimator.model.DataQuality.VALID
             )
             val v2Normalizer = com.battery.analysis.domain.estimator.PowerSampleNormalizer()
-            val v2Intervals = v2Normalizer.extractDischargeIntervals(
+            val (v2Intervals, v2Metrics) = v2Normalizer.extractAdaptiveDischargeIntervals(
                 currentOverview = currentOverview,
                 allRecords = allRecords,
                 baseTimestamp = baseTimestamp
             )
-            v2Estimator.estimateFromIntervals(v2Intervals, v2EnergyEstimate)
+            v2Estimator.estimateFromIntervals(v2Intervals, v2EnergyEstimate, v2Metrics)
         } catch (_: Exception) {
             null
         }

@@ -38,13 +38,12 @@ class RemainingEnergyEstimator {
         private const val NWH_TO_WH_FACTOR: Double = 1_000_000_000.0
 
         /**
-         * 计算环境与电芯温度对电池实际可用化学能的物理修正系数 K_T。
-         * 在常温区间（15℃ 至 35℃）系数为 1.0（无受限衰减）；
-         * 在低温区间（锂离子活性与扩散速率受限），电芯等效内阻升高，可用容量呈物理性轻度衰减（-10℃ 线性过渡至 0.75）；
-         * 在高温区间（>45℃），发热内阻损耗轻度衰减至 0.95。
+         * 计算环境与电芯温度对电池实际可用化学能的物理修正系数 K_T（实验模型）。
+         * 注意：现代智能手机硬件电量计驱动（如 TI 阻抗追踪算法、高通 PMIC）在底层已集成电芯温度与内阻动态补偿；
+         * 除非拥有目标机型的专门实测标定曲线，否则不应在应用层二次叠加通用折损系数，避免造成双重惩罚与过度折损。
          *
          * @param tempCelsius 当前电池温度（单位：摄氏度 ℃，缺失时传入 null）
-         * @return 介于 0.70 至 1.0 之间的可用能量物理温度修正系数
+         * @return 可用能量物理温度修正系数（未启用标定时返回 1.0）
          */
         fun calculateTemperatureFactor(tempCelsius: Float?): Double {
             if (tempCelsius == null) return 1.0
@@ -64,10 +63,11 @@ class RemainingEnergyEstimator {
      * 估算当前电池剩余状态下整机可释放的真实物理可用能量（单位：Wh）。
      *
      * 优先级逻辑：
-     * 1. 硬件原生能量计数器直读（纳瓦时 nWh -> Wh）；
-     * 2. 硬件电量计实时剩余电荷计数器（微安时 uAh / 毫安时 mAh）结合标称电压折算；
-     * 3. 基准容量（优先当前真实满充容量 FCC，其次设计容量）结合当前电量百分比与标称电压推算；
-     * 4. 结合电池当前工作温度实施 K_T 物理修正。
+     * 1. 硬件直接上报的剩余能量 Wh（若是正有限值直接采用）；
+     * 2. 硬件原生纳瓦时能量寄存器直读（BATTERY_PROPERTY_ENERGY_COUNTER，nWh -> Wh）；
+     * 3. 硬件电量计实时剩余电荷计数器（BATTERY_PROPERTY_CHARGE_COUNTER，严格除以 1000 规范为 mAh，杜绝按大小猜测单位）；
+     * 4. 基准容量（优先当前真实满充容量 FCC，其次设计容量）结合当前电量百分比与标称电压推算；
+     * 5. 零假数据原则：缺乏可靠数据源时忠实返回 null，绝不合成伪造数据。
      *
      * @param remainingEnergyWh 硬件直接换算或上报的剩余能量（单位：Wh，可选）
      * @param nativeEnergyNwh 硬件底层能量计数器（单位：纳瓦时 nWh，可选）
@@ -76,6 +76,7 @@ class RemainingEnergyEstimator {
      * @param effectiveCapacityMah 设备有效基准容量（单位：mAh，可选）
      * @param tempCelsius 电池当前温度（单位：℃，可选）
      * @param nominalVoltage 电池标称工作平台电压（单位：V，默认 3.85V）
+     * @param enableTemperatureDerating 是否启用实验性温度折损乘数（默认 false，防止对电量计读数二次惩罚）
      * @return 剩余可用物理能量估算实体 [UsableRemainingEnergyEstimate]
      */
     fun estimateUsableRemainingEnergy(
@@ -85,17 +86,19 @@ class RemainingEnergyEstimator {
         batteryLevelPercent: Float? = null,
         effectiveCapacityMah: Float? = null,
         tempCelsius: Float? = null,
-        nominalVoltage: Double = DEFAULT_NOMINAL_VOLTAGE
+        nominalVoltage: Double = DEFAULT_NOMINAL_VOLTAGE,
+        enableTemperatureDerating: Boolean = false
     ): UsableRemainingEnergyEstimate {
         val safeVolt = if (nominalVoltage > 0.0 && nominalVoltage.isFinite()) nominalVoltage else DEFAULT_NOMINAL_VOLTAGE
-        val kt = calculateTemperatureFactor(tempCelsius)
+        // 默认不进行未经设备标定的通用硬编码温度折损，忠实反映底层硬件真实数据
+        val kt = if (enableTemperatureDerating) calculateTemperatureFactor(tempCelsius) else 1.0
 
         // 策略 1：直接传入的有效硬件剩余能量 Wh
-        if (remainingEnergyWh != null && remainingEnergyWh > 0f) {
+        if (remainingEnergyWh != null && remainingEnergyWh > 0f && remainingEnergyWh.isFinite()) {
             val raw = remainingEnergyWh.toDouble()
             val usable = raw * kt
             return UsableRemainingEnergyEstimate(
-                usableEnergyWh = if (usable > 0.0) usable else null,
+                usableEnergyWh = if (usable > 0.0 && usable.isFinite()) usable else null,
                 rawEnergyWh = raw,
                 source = EnergySource.NATIVE_FULL_ENERGY,
                 quality = DataQuality.VALID,
@@ -104,13 +107,13 @@ class RemainingEnergyEstimator {
             )
         }
 
-        // 策略 2：硬件原生纳瓦时能量寄存器直读
+        // 策略 2：硬件原生纳瓦时能量寄存器直读 (nWh -> Wh)
         if (nativeEnergyNwh != null && nativeEnergyNwh > 0L) {
             val raw = nativeEnergyNwh.toDouble() / NWH_TO_WH_FACTOR
             if (raw > 0.0 && raw.isFinite()) {
                 val usable = raw * kt
                 return UsableRemainingEnergyEstimate(
-                    usableEnergyWh = if (usable > 0.0) usable else null,
+                    usableEnergyWh = if (usable > 0.0 && usable.isFinite()) usable else null,
                     rawEnergyWh = raw,
                     source = EnergySource.NATIVE_FULL_ENERGY,
                     quality = DataQuality.VALID,
@@ -120,24 +123,27 @@ class RemainingEnergyEstimator {
             }
         }
 
-        // 策略 3：硬件实时电荷计数器 (uAh/mAh -> Wh)
+        // 策略 3：硬件实时电荷计数器（结合物理量级合理性检验自适应归一化为 mAh -> Wh）
+        // 通过 BatteryUnitNormalizer 兼顾标准 uAh 与国产定制 ROM 直接上报 mAh 的实际情况，杜绝千倍缩水与低电量暴增
         if (chargeCounterUah != null && chargeCounterUah > 0) {
-            val currentMah = if (chargeCounterUah < 100_000) {
-                chargeCounterUah.toDouble()
-            } else {
-                chargeCounterUah.toDouble() / 1000.0
-            }
-            val raw = (currentMah * safeVolt) / 1000.0
-            if (raw > 0.0 && raw.isFinite()) {
-                val usable = raw * kt
-                return UsableRemainingEnergyEstimate(
-                    usableEnergyWh = if (usable > 0.0) usable else null,
-                    rawEnergyWh = raw,
-                    source = EnergySource.FCC_TIMES_NOMINAL_VOLTAGE,
-                    quality = DataQuality.VALID,
-                    temperatureFactor = kt,
-                    notes = setOf("基于硬件实时电荷计数器与标称电压折算")
-                )
+            val currentMah = BatteryUnitNormalizer.normalizeChargeCounterToMah(
+                rawCounter = chargeCounterUah.toLong(),
+                effectiveCapacityMah = effectiveCapacityMah?.toDouble(),
+                batteryPercent = batteryLevelPercent?.toDouble()
+            )
+            if (currentMah != null && currentMah > 0.0) {
+                val raw = (currentMah * safeVolt) / 1000.0
+                if (raw > 0.0 && raw.isFinite()) {
+                    val usable = raw * kt
+                    return UsableRemainingEnergyEstimate(
+                        usableEnergyWh = if (usable > 0.0 && usable.isFinite()) usable else null,
+                        rawEnergyWh = raw,
+                        source = EnergySource.FCC_TIMES_NOMINAL_VOLTAGE,
+                        quality = DataQuality.VALID,
+                        temperatureFactor = kt,
+                        notes = setOf("基于硬件实时电荷计数器与标称电压折算")
+                    )
+                }
             }
         }
 
@@ -149,7 +155,7 @@ class RemainingEnergyEstimator {
             if (raw > 0.0 && raw.isFinite()) {
                 val usable = raw * kt
                 return UsableRemainingEnergyEstimate(
-                    usableEnergyWh = if (usable > 0.0) usable else null,
+                    usableEnergyWh = if (usable > 0.0 && usable.isFinite()) usable else null,
                     rawEnergyWh = raw,
                     source = EnergySource.FCC_TIMES_NOMINAL_VOLTAGE,
                     quality = DataQuality.VALID,

@@ -203,35 +203,79 @@ class PowerEstimator(
             return Triple(0.60 / total, 0.0, 0.40 / total)
         }
 
-        // 基础时间分级权重分配（依据当前会话持续时长）
-        var (rawWf, rawWm, rawWl) = when {
-            totalSessionDurationMs < 600_000L -> Triple(0.10, 0.20, 0.70) // < 10min: 依赖长期习惯
-            totalSessionDurationMs < 1_800_000L -> Triple(0.25, 0.30, 0.45) // 10~30min: 平滑过渡
-            totalSessionDurationMs < 3_600_000L -> Triple(0.40, 0.40, 0.20) // 30~60min: 本轮会话主导
-            else -> Triple(0.30, 0.50, 0.20) // >= 60min: 稳态主导
-        }
+        // 1. 基础时间连续权重插值分配（依据当前会话已持续物理时长平滑过渡，杜绝阶跃跳变）
+        val (baseWf, baseWm, baseWl) = interpolateBaselineWeights(totalSessionDurationMs)
 
-        // 稳定性修正与工况突变响应：
-        // 若检测到工况跃迁激活（如进入 3D 游戏或相机），大幅提升 Fast 敏捷度并压制 Long 习惯惯性
-        if (stateDetector.isRegimeChanging) {
-            rawWf *= 2.5 * stateDetector.getResponsivenessMultiplier()
-            rawWm *= 1.5
-            rawWl *= 0.15
+        // 2. 稳定性修正与工况突变响应（升级为凸组合模型，天然保持权重和严格归一为 1.0）：
+        // 若检测到工况跃迁激活（如进入 3D 游戏或启动重载相机），提高对 Fast 敏捷度的信任程度 gamma，并同比例平滑压制 Medium 与 Long
+        val (finalWf, finalWm, finalWl) = if (stateDetector.isRegimeChanging) {
+            val mult = stateDetector.getResponsivenessMultiplier()
+            // 计算响应因子 gamma，范围在 0.40 至 0.85 之间
+            val gamma = (0.30 + (mult - 1.0) * 0.40).coerceIn(0.40, 0.85)
+            val wfPrime = baseWf + gamma * (1.0 - baseWf)
+            val wmPrime = (1.0 - gamma) * baseWm
+            val wlPrime = (1.0 - gamma) * baseWl
+            Triple(wfPrime, wmPrime, wlPrime)
         } else {
-            // 稳态下若 Fast 与 Medium 差异很小，进一步降低 Long 依赖
+            // 稳态下若 Fast 与 Medium 差异很小（稳定运行），温和降低 Long 依赖
             val f = fastPowerWatts ?: 0.0
             val m = mediumPowerWatts ?: 0.0
             if (f > 0.0 && m > 0.0 && abs(f - m) / m < 0.15) {
-                rawWm *= 1.2
+                val shift = baseWl * 0.15
+                Triple(baseWf, baseWm + shift, baseWl - shift)
+            } else {
+                Triple(baseWf, baseWm, baseWl)
             }
         }
 
-        // 严格归一化权重满足 wf + wm + wl = 1.0
-        val sum = rawWf + rawWm + rawWl
+        // 严格消除微小浮点精度误差，确保 wf + wm + wl == 1.0
+        val sum = finalWf + finalWm + finalWl
         return if (sum > 0.0) {
-            Triple(rawWf / sum, rawWm / sum, rawWl / sum)
+            Triple(finalWf / sum, finalWm / sum, finalWl / sum)
         } else {
             Triple(0.0, 0.0, 1.0)
+        }
+    }
+
+    /**
+     * 根据会话持续物理时长在预设时间锚点间进行连续线性插值，求解平滑连续的基础权重分布。
+     * 锚点：
+     * - 0min: (0.10, 0.20, 0.70)
+     * - 10min: (0.25, 0.30, 0.45)
+     * - 30min: (0.40, 0.40, 0.20)
+     * - >=60min: (0.30, 0.50, 0.20)
+     *
+     * @param durationMs 当前放电会话物理持续毫秒数
+     * @return 连续平滑插值后的 (wFast, wMedium, wLong) 基础权重三元组，和恒等于 1.0
+     */
+    fun interpolateBaselineWeights(durationMs: Long): Triple<Double, Double, Double> {
+        return when {
+            durationMs <= 0L -> Triple(0.10, 0.20, 0.70)
+            durationMs < 600_000L -> {
+                // 0 ~ 10 分钟平滑插值
+                val p = durationMs.toDouble() / 600_000.0
+                val wf = 0.10 + p * (0.25 - 0.10)
+                val wm = 0.20 + p * (0.30 - 0.20)
+                val wl = 0.70 + p * (0.45 - 0.70)
+                Triple(wf, wm, wl)
+            }
+            durationMs < 1_800_000L -> {
+                // 10 ~ 30 分钟平滑插值
+                val p = (durationMs - 600_000L).toDouble() / 1_200_000.0
+                val wf = 0.25 + p * (0.40 - 0.25)
+                val wm = 0.30 + p * (0.40 - 0.30)
+                val wl = 0.45 + p * (0.20 - 0.45)
+                Triple(wf, wm, wl)
+            }
+            durationMs < 3_600_000L -> {
+                // 30 ~ 60 分钟平滑插值
+                val p = (durationMs - 1_800_000L).toDouble() / 1_800_000.0
+                val wf = 0.40 + p * (0.30 - 0.40)
+                val wm = 0.40 + p * (0.50 - 0.40)
+                val wl = 0.20
+                Triple(wf, wm, wl)
+            }
+            else -> Triple(0.30, 0.50, 0.20)
         }
     }
 

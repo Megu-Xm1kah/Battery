@@ -1,130 +1,91 @@
 package com.battery.analysis
 
-import com.battery.analysis.util.BatteryUnitNormalizer
+import com.battery.analysis.domain.estimator.BatteryUnitNormalizer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
- * 电池物理指标单位规范化器 [BatteryUnitNormalizer] 单元测试。
- *
- * 验证各品牌芯片（高通/联发科/定制平台）电压、电流与瞬时放电功率十倍量纲异常的自适应校准能力。
+ * 电池物理量纲与数据源单位自适应归一化工具测试类。
+ * 针对 Google 标准 Android API 上报微安时（uAh）与国产厂商（OPPO/OnePlus、vivo等）
+ * 定制 ROM 直接上报毫安时（mAh）的混合物理生态，验证自适应物理量级校验（Physical Magnitude Validation）的准确性。
  */
 class BatteryUnitNormalizerTest {
 
     /**
-     * 测试标准毫伏 (mV)、0.1 毫伏 (0.1mV) 及微伏 (uV) 的电压单位归一化准确性。
+     * 测试标准 Android 设备上报微安时（uAh）且已知基准容量时，准确除以 1000 转换为毫安时（mAh）。
      */
     @Test
-    fun testNormalizeVoltage() {
-        // 标准毫伏 (例如 3950 mV)
-        assertEquals(3950f, BatteryUnitNormalizer.normalizeVoltageMv(3950L), 0.01f)
-        assertEquals(3.95f, BatteryUnitNormalizer.normalizeVoltageVolts(3950L), 0.001f)
-
-        // 0.1 毫伏 (例如某些高通/联发科机型 41500 -> 4150 mV = 4.15V)
-        assertEquals(4150f, BatteryUnitNormalizer.normalizeVoltageMv(41500L), 0.01f)
-        assertEquals(4.15f, BatteryUnitNormalizer.normalizeVoltageVolts(41500L), 0.001f)
-
-        // 微伏 (例如 4000000 uV -> 4000 mV = 4.0V)
-        assertEquals(4000f, BatteryUnitNormalizer.normalizeVoltageMv(4000000L), 0.01f)
-        assertEquals(4.0f, BatteryUnitNormalizer.normalizeVoltageVolts(4000000L), 0.001f)
+    fun testNormalizeStandardUahWithEffectiveCapacity() {
+        // 5000 mAh 电池在剩余 3000 mAh 时，标准驱动上报 3,000,000 uAh
+        val result = BatteryUnitNormalizer.normalizeChargeCounterToMah(
+            rawCounter = 3_000_000L,
+            effectiveCapacityMah = 5000.0,
+            batteryPercent = 60.0
+        )
+        assertEquals(3000.0, result!!, 0.001)
     }
 
     /**
-     * 测试放电工况下库仑计电流异常十倍量纲（0.1uA 步进）时的智能自适应降级校准。
+     * 测试国产魔改 ROM 底层直接上报毫安时（mAh）时，绝不二次除以 1000 导致缩水千倍。
+     * （对应用户真机现场：电量 24% 上报 1896，必须识别为 1896 mAh，杜绝被误算为 1.896 mAh）。
      */
     @Test
-    fun testNormalizeCurrentDischarging() {
-        BatteryUnitNormalizer.resetUnitDetectionForTest()
-
-        // 标准微安 (350,000 uA -> 350 mA)
-        val normalCur = BatteryUnitNormalizer.normalizeCurrentMa(350_000L, isCharging = false)
-        assertEquals(350f, normalCur, 0.01f)
-
-        // 真实高负载放电 (3,500,000 uA -> 3500 mA)
-        val heavyCur = BatteryUnitNormalizer.normalizeCurrentMa(3_500_000L, isCharging = false)
-        assertEquals(3500f, heavyCur, 0.01f)
-
-        // 极大量程 0.1uA (35,000,000 -> 识别为 0.1uA，除以 10000 恢复为 3500mA)
-        val inflatedCur = BatteryUnitNormalizer.normalizeCurrentMa(35_000_000L, isCharging = false)
-        assertEquals(3500f, inflatedCur, 0.01f)
-
-        // 负数放电输入测试
-        val negativeCur = BatteryUnitNormalizer.normalizeCurrentMa(-350_000L, isCharging = false)
-        assertEquals(350f, negativeCur, 0.01f)
+    fun testNormalizeOemMahWithEffectiveCapacity() {
+        // 7900 mAh 电池在剩余 24% 时，魔改驱动直接上报 1896 (mAh)
+        val result = BatteryUnitNormalizer.normalizeChargeCounterToMah(
+            rawCounter = 1896L,
+            effectiveCapacityMah = 7900.0,
+            batteryPercent = 24.0
+        )
+        assertEquals(1896.0, result!!, 0.001)
     }
 
     /**
-     * 测试原生以毫安（mA）为单位上报的设备（如荣耀/华为机型，亮屏放电 267mA）。
-     * 验证其电流忠实识别为 267mA，瞬时功率准确计算为 1.09W，绝不再被误除以 1000 缩水为 0.00W。
+     * 测试在未知基准容量但已知当前电量百分比时，通过反推等效满电容量自适应识别物理量纲。
+     * 1896 若当成 uAh 则满电容量只有 7.9 mAh（纽扣电池，非手机），故正确判定为 1896 mAh。
      */
     @Test
-    fun testNormalizeCurrentMilliampereDevices() {
-        BatteryUnitNormalizer.resetUnitDetectionForTest()
+    fun testNormalizeBySocContextWithoutEffectiveCapacity() {
+        val result = BatteryUnitNormalizer.normalizeChargeCounterToMah(
+            rawCounter = 1896L,
+            effectiveCapacityMah = null,
+            batteryPercent = 24.0
+        )
+        // 判定为 mAh
+        assertEquals(1896.0, result!!, 0.001)
 
-        // 模拟荣耀设备亮屏放电读取 267 (mA)
-        val curMa = BatteryUnitNormalizer.normalizeCurrentMa(267L, isCharging = false)
-        assertEquals("毫安设备放电电流应准确保留为 267mA", 267f, curMa, 0.01f)
-
-        // 计算 4.081V 电压下的功率
-        val powerWatts = BatteryUnitNormalizer.calculatePowerWatts(4.081f, curMa, isCharging = false)
-        assertEquals("瞬时功率应准确计算为 1.09W（与系统悬浮条一致）", 1.09f, powerWatts, 0.02f)
-
-        // 模拟重载放电 1200mA
-        val heavyMa = BatteryUnitNormalizer.normalizeCurrentMa(1200L, isCharging = false)
-        assertEquals("毫安设备重载电流应准确为 1200mA", 1200f, heavyMa, 0.01f)
+        // 若上报 1,896,000，当成 uAh 满电容量为 7900 mAh（手机级别），正确判定为 uAh 并除以 1000
+        val resultUah = BatteryUnitNormalizer.normalizeChargeCounterToMah(
+            rawCounter = 1_896_000L,
+            effectiveCapacityMah = null,
+            batteryPercent = 24.0
+        )
+        assertEquals(1896.0, resultUah!!, 0.001)
     }
 
     /**
-     * 测试微安（uA）机型（如高通/Pixel）在亮屏大数确立后，息屏待机低电流（如 5000 uA = 5mA）
-     * 能够准确自适应除以 1000 恢复真实 5mA 待机，杜绝被误算为 5000mA（20W 放电）。
+     * 测试极低电量下的真实微安时读数（如 80,000 uAh = 80 mAh 在 1% 电量），
+     * 验证绝不会被误放大为 80,000 mAh。
      */
     @Test
-    fun testQualcommSleepCurrentPreservedWithoutInflation() {
-        BatteryUnitNormalizer.resetUnitDetectionForTest()
-
-        // 阶段 1：亮屏正常使用，高通上报微安大数 300,000 uA (300mA)
-        val onCur = BatteryUnitNormalizer.normalizeCurrentMa(300_000L, isCharging = false)
-        assertEquals("亮屏大数归一化为 300mA", 300f, onCur, 0.01f)
-        assertEquals(BatteryUnitNormalizer.CurrentUnitMode.MICROAMPERES, BatteryUnitNormalizer.getDetectedUnitMode())
-
-        // 阶段 2：锁屏进入息屏待机，高通上报 5,000 uA (5mA)
-        val sleepCur = BatteryUnitNormalizer.normalizeCurrentMa(5_000L, isCharging = false)
-        assertEquals("微安设备待机 5000uA 应准确折算为 5mA 绝不膨胀为 5000mA", 5f, sleepCur, 0.01f)
-
-        val sleepWatts = BatteryUnitNormalizer.calculatePowerWatts(4.0f, sleepCur, isCharging = false)
-        assertEquals("待机功耗准确计算为 0.02W 绝非 20W", 0.02f, sleepWatts, 0.005f)
+    fun testNormalizeLowBatteryRealUahNotScaledUp() {
+        val result = BatteryUnitNormalizer.normalizeChargeCounterToMah(
+            rawCounter = 80_000L,
+            effectiveCapacityMah = 5000.0,
+            batteryPercent = 1.6
+        )
+        // 80,000 uAh > 50,000 且 80,000 / 1000 = 80 mAh，反推总容量 80 / 0.016 = 5000 mAh
+        assertEquals(80.0, result!!, 0.001)
     }
 
     /**
-     * 测试放电与充电功率计算忠实反映物理公式 P = (U * I) / 1000，不人为压缩高功率放电。
+     * 测试空值或非法非物理正数输入，忠实返回 null，绝不合成伪造数据。
      */
     @Test
-    fun testCalculatePowerWattsPhysicalCalculation() {
-        // 正常日常放电：4.0V, 350mA -> 1.4W
-        val normalWatts = BatteryUnitNormalizer.calculatePowerWatts(4.0f, 350f, isCharging = false)
-        assertEquals(1.4f, normalWatts, 0.05f)
-
-        // 重载/烤机真实高功率放电：4.0V, 3500mA -> 14.0W（忠实保留真实功率，不人为限制）
-        val heavyLoadWatts = BatteryUnitNormalizer.calculatePowerWatts(4.0f, 3500f, isCharging = false)
-        assertEquals(14.0f, heavyLoadWatts, 0.05f)
-
-        // 充电状态下（例如 65W 快充）
-        val chargingWatts = BatteryUnitNormalizer.calculatePowerWatts(9.0f, 5000f, isCharging = true)
-        assertEquals(45.0f, chargingWatts, 0.1f)
-    }
-
-    /**
-     * 测试移除所有人为物理上限后，极大功率充电（如 240W 快充）与高电压不被 150W 或 12V 截断。
-     */
-    @Test
-    fun testUncappedHighPowerAndVoltage() {
-        // 20V, 12000mA (12A) 对应 240W 超级快充，忠实反映真实 240.0W，不再被 150W 截断
-        val ultraChargingWatts = BatteryUnitNormalizer.calculatePowerWatts(20.0f, 12000f, isCharging = true)
-        assertEquals(240.0f, ultraChargingWatts, 0.1f)
-
-        // 15V 原生伏特测试 (1..24 -> rawVolt * 1000f)
-        val directVoltsMv = BatteryUnitNormalizer.normalizeVoltageMv(15L) // 15 V -> 15000 mV
-        assertEquals(15000f, directVoltsMv, 0.01f)
-        assertEquals(15.0f, BatteryUnitNormalizer.normalizeVoltageVolts(15L), 0.001f)
+    fun testNormalizeInvalidInputsReturnNull() {
+        assertNull(BatteryUnitNormalizer.normalizeChargeCounterToMah(null))
+        assertNull(BatteryUnitNormalizer.normalizeChargeCounterToMah(0L))
+        assertNull(BatteryUnitNormalizer.normalizeChargeCounterToMah(-1000L))
     }
 }

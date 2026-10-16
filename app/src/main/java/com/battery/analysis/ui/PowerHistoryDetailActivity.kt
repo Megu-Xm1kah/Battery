@@ -560,18 +560,36 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
         val offEnergy = record.screenOffEnergyWh
         val totalEnergy = record.totalEnergyWh
 
-        val onEnergyRatioStr = if (totalEnergy > 0f) {
-            val ratio = (onEnergy / totalEnergy * 100f).coerceIn(0f, 100f)
+        val powerMgr = PowerUsageManager.getInstance(this@PowerHistoryDetailActivity)
+        val totalEnergyInfo = cachedTotalEnergyInfo ?: powerMgr.getTotalEnergyInfo()
+        val totalCapacityWh = cachedTotalCapacityWh
+            ?: currentPrefixData?.totalCapacityWh?.takeIf { it > 0f }
+            ?: totalEnergyInfo?.totalWh
+            ?: powerMgr.getTotalEnergyWh()
+            ?: powerMgr.getEffectiveDeviceCapacityMah().takeIf { it > 0f }?.let {
+                BatteryEnergyCalculator.calculateTotalEnergyWh(it)
+            }
+        val baseTotalEnergy = totalCapacityWh?.takeIf { it > 0f }
+
+        val onEnergyRatioStr = if (baseTotalEnergy != null) {
+            val ratio = (onEnergy / baseTotalEnergy * 100f)
             String.format(Locale.getDefault(), "%.1f%%", ratio)
         } else {
-            "0.0%"
+            "--%"
         }
 
-        val offEnergyRatioStr = if (totalEnergy > 0f) {
-            val ratio = (offEnergy / totalEnergy * 100f).coerceIn(0f, 100f)
+        val offEnergyRatioStr = if (baseTotalEnergy != null) {
+            val ratio = (offEnergy / baseTotalEnergy * 100f)
             String.format(Locale.getDefault(), "%.1f%%", ratio)
         } else {
-            "0.0%"
+            "--%"
+        }
+
+        val globalEnergyRatioStr = if (baseTotalEnergy != null) {
+            val ratio = (totalEnergy / baseTotalEnergy * 100f)
+            String.format(Locale.getDefault(), "%.1f%%", ratio)
+        } else {
+            "--%"
         }
 
         val onDurationMs = parseDurationTextToMs(record.screenOnDurationText)
@@ -627,7 +645,7 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
         // 第三行：全局数据（前置半亮半暗太阳图标，时长占比 / 能量占比 / 功耗）
         val totalEnergyText = BatteryEnergyCalculator.formatDisplayEnergy(totalEnergy, currentDisplayUnit)
         hBinding.tvMetricGlobalTime.text = formatValueWithSmallPercent(totalDurationStr, "100%")
-        hBinding.tvMetricGlobalEnergy.text = formatValueWithSmallPercent(totalEnergyText, "100%")
+        hBinding.tvMetricGlobalEnergy.text = formatValueWithSmallPercent(totalEnergyText, globalEnergyRatioStr)
         hBinding.tvMetricGlobalPower.text = avgPowerStr
 
         // 指标卡片三行点击气泡提示（亮屏 / 息屏 / 全局）
@@ -642,8 +660,6 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
         }
 
         // 核心功耗指标卡片能量数值点击弹出等效电量（mAh）详细说明气泡弹框
-        val totalEnergyInfo = PowerUsageManager.getInstance(this@PowerHistoryDetailActivity).getTotalEnergyInfo()
-
         hBinding.tvMetricScreenOnEnergy.setOnClickListener {
             val message = BatteryEnergyCalculator.formatEnergyConversionMessage(
                 title = "亮屏",
@@ -666,7 +682,7 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
             val message = BatteryEnergyCalculator.formatEnergyConversionMessage(
                 title = "全局",
                 energyWh = totalEnergy,
-                ratioStr = "100%",
+                ratioStr = globalEnergyRatioStr.takeIf { it != "--%" },
                 totalEnergyInfo = totalEnergyInfo
             )
             showBubbleTooltip(hBinding.tvMetricGlobalEnergy, message, autoDismissMs = 0L)
@@ -707,6 +723,14 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
 
         val baseTotalEnergy = currentPrefixData?.totalCapacityWh?.takeIf { it > 0f }
             ?: cachedTotalCapacityWh?.takeIf { it > 0f }
+            ?: run {
+                val powerMgr = PowerUsageManager.getInstance(this@PowerHistoryDetailActivity)
+                cachedTotalEnergyInfo?.totalWh
+                    ?: powerMgr.getTotalEnergyWh()
+                    ?: powerMgr.getEffectiveDeviceCapacityMah().takeIf { it > 0f }?.let {
+                        BatteryEnergyCalculator.calculateTotalEnergyWh(it)
+                    }
+            }?.takeIf { it > 0f }
 
         val onEnergyRatioStr = if (baseTotalEnergy != null && baseTotalEnergy > 0f) {
             val ratio = (subStats.screenOnEnergyWh / baseTotalEnergy * 100f)

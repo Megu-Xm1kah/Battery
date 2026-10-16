@@ -1488,6 +1488,7 @@ class BatteryTimelineView @JvmOverloads constructor(
 
     /**
      * 预计算并构建电量平滑衰减曲线 Path 与标注点集合。
+     * 严格将 100% 到 0% 的电量物理数值忠实映射为图表顶部至底部的真实全高度范围。
      *
      * @param cache 目标电量曲线缓存对象 [CachedCurveData]
      * @param contentLeft 内容区左边界 X 坐标
@@ -1517,7 +1518,7 @@ class BatteryTimelineView @JvmOverloads constructor(
 
         val contentRight = contentLeft + contentWidth
         val firstSample = downsampled.first()
-        val firstNorm = (firstSample.batteryLevel / 100f).coerceIn(0f, 1f) * 0.45f + 0.50f
+        val firstNorm = (firstSample.batteryLevel / 100f).coerceIn(0f, 1f)
         val firstY = topPadding + (1f - firstNorm) * availableH
 
         cache.path.moveTo(contentLeft, firstY)
@@ -1529,7 +1530,7 @@ class BatteryTimelineView @JvmOverloads constructor(
 
         for (s in downsampled) {
             val x = (contentLeft + TimelineScaleCalculator.timeToX(s.timestamp, visibleStart, visibleEnd, contentWidth)).coerceIn(contentLeft, contentRight)
-            val norm = (s.batteryLevel / 100f).coerceIn(0f, 1f) * 0.45f + 0.50f
+            val norm = (s.batteryLevel / 100f).coerceIn(0f, 1f)
             val y = topPadding + (1f - norm) * availableH
 
             // 像素级防抖：横向位移大于 1.0px 或电量阶跃或到达末点才追加贝塞尔段
@@ -1554,7 +1555,7 @@ class BatteryTimelineView @JvmOverloads constructor(
         // 末点高优先级 Marker
         val lastSample = downsampled.last()
         if (cache.markers.none { abs(it.x - contentRight) < dp10 }) {
-            val lastNorm = (lastSample.batteryLevel / 100f).coerceIn(0f, 1f) * 0.45f + 0.50f
+            val lastNorm = (lastSample.batteryLevel / 100f).coerceIn(0f, 1f)
             val endY = topPadding + (1f - lastNorm) * availableH
             cache.markers.add(CurveMarker(contentRight, endY, "${lastSample.batteryLevel}%", isPriority = true))
         }
@@ -1585,6 +1586,7 @@ class BatteryTimelineView @JvmOverloads constructor(
 
     /**
      * 预计算并构建电池剩余能量平滑衰减曲线 Path 与真实标注点集合。
+     * 严格将 100% 到 0% 的剩余能量物理数值忠实映射为图表顶部至底部的真实全高度范围。
      *
      * @param cache 目标能量曲线缓存对象 [CachedCurveData]
      * @param contentLeft 内容区左边缘 X 坐标
@@ -1619,9 +1621,9 @@ class BatteryTimelineView @JvmOverloads constructor(
         val firstSample = downsampled.first()
         val firstWh = firstSample.energyWh ?: totalWh?.let { (firstSample.batteryLevel / 100.0) * it }
         val firstNorm = if (firstWh != null && totalWh != null) {
-            (firstWh / totalWh).toFloat().coerceIn(0f, 1f) * 0.45f + 0.50f
+            (firstWh / totalWh).toFloat().coerceIn(0f, 1f)
         } else {
-            (firstSample.batteryLevel / 100f).coerceIn(0f, 1f) * 0.45f + 0.50f
+            (firstSample.batteryLevel / 100f).coerceIn(0f, 1f)
         }
         val firstY = topPadding + (1f - firstNorm) * availableH
 
@@ -1639,9 +1641,9 @@ class BatteryTimelineView @JvmOverloads constructor(
             val x = (contentLeft + TimelineScaleCalculator.timeToX(s.timestamp, visibleStart, visibleEnd, contentWidth)).coerceIn(contentLeft, contentRight)
             val wh = s.energyWh ?: totalWh?.let { (s.batteryLevel / 100.0) * it }
             val norm = if (wh != null && totalWh != null) {
-                (wh / totalWh).toFloat().coerceIn(0f, 1f) * 0.45f + 0.50f
+                (wh / totalWh).toFloat().coerceIn(0f, 1f)
             } else {
-                (s.batteryLevel / 100f).coerceIn(0f, 1f) * 0.45f + 0.50f
+                (s.batteryLevel / 100f).coerceIn(0f, 1f)
             }
             val y = topPadding + (1f - norm) * availableH
 
@@ -1671,9 +1673,9 @@ class BatteryTimelineView @JvmOverloads constructor(
         if (cache.markers.none { abs(it.x - contentRight) < dp10 }) {
             val lastWh = lastSample.energyWh ?: totalWh?.let { (lastSample.batteryLevel / 100.0) * it }
             val lastNorm = if (lastWh != null && totalWh != null) {
-                (lastWh / totalWh).toFloat().coerceIn(0f, 1f) * 0.45f + 0.50f
+                (lastWh / totalWh).toFloat().coerceIn(0f, 1f)
             } else {
-                (lastSample.batteryLevel / 100f).coerceIn(0f, 1f) * 0.45f + 0.50f
+                (lastSample.batteryLevel / 100f).coerceIn(0f, 1f)
             }
             val endY = topPadding + (1f - lastNorm) * availableH
             val lastLabel = formatHeaderEnergy(lastWh, displayUnit)
@@ -2413,7 +2415,7 @@ class BatteryTimelineView @JvmOverloads constructor(
 
                 // 电量指标高亮点
                 if (selected.contains(TimelineMetric.BATTERY)) {
-                    val batteryNorm = (curSample.batteryLevel / 100f).coerceIn(0f, 1f) * 0.45f + 0.50f
+                    val batteryNorm = (curSample.batteryLevel / 100f).coerceIn(0f, 1f)
                     val batteryY = topPadding + (1f - batteryNorm) * availableH
                     drawHighLightDot(canvas, clampedX, batteryY, colorBattery)
                 }
@@ -2425,9 +2427,9 @@ class BatteryTimelineView @JvmOverloads constructor(
                     }
                     val totalWh = timelineState.totalEnergyWh?.takeIf { it > 0f }
                     val energyNorm = if (wh != null && totalWh != null) {
-                        (wh / totalWh).toFloat().coerceIn(0f, 1f) * 0.45f + 0.50f
+                        (wh / totalWh).toFloat().coerceIn(0f, 1f)
                     } else {
-                        (curSample.batteryLevel / 100f).coerceIn(0f, 1f) * 0.45f + 0.50f
+                        (curSample.batteryLevel / 100f).coerceIn(0f, 1f)
                     }
                     val energyY = topPadding + (1f - energyNorm) * availableH
                     drawHighLightDot(canvas, clampedX, energyY, colorEnergy)

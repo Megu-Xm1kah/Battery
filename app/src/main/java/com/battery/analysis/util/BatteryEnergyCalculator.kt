@@ -68,15 +68,15 @@ object BatteryEnergyCalculator {
             }
         }
 
-        // 策略 2：硬件实时电荷计数器 (uAh/mAh -> Wh)，基于标称电压折算
+        // 策略 2：硬件实时电荷计数器结合自适应物理量级归一化折算
+        // 通过 BatteryUnitNormalizer 兼顾标准 uAh 与国产定制 ROM 直接上报 mAh 的实际情况，杜绝千倍缩水与低电量暴增
         if (hardwareChargeCounterUah != null && hardwareChargeCounterUah > 0) {
-            val currentMah = if (hardwareChargeCounterUah < 100000) {
-                hardwareChargeCounterUah.toFloat()
-            } else {
-                hardwareChargeCounterUah / 1000f
-            }
-
-            if (currentMah > 0f) {
+            val currentMah = com.battery.analysis.domain.estimator.BatteryUnitNormalizer.normalizeChargeCounterToMah(
+                rawCounter = hardwareChargeCounterUah.toLong(),
+                effectiveCapacityMah = if (effectiveCapacityMah > 0f) effectiveCapacityMah.toDouble() else null,
+                batteryPercent = safePercent.toDouble()
+            )?.toFloat()
+            if (currentMah != null && currentMah > 0f) {
                 val wh = (currentMah * safeNominalVoltage) / 1000f
                 if (wh > 0f) {
                     return wh
@@ -96,9 +96,9 @@ object BatteryEnergyCalculator {
      * 计算设备电池总能量详情（单位：瓦时 Wh）及获取方式描述。
      *
      * 遵循底层物理优先级逻辑：
-     * 1. 硬件原生能量计数器 [hardwareEnergyNwh] 结合当前电量百分比 [batteryPercent] 反推 100% 满电物理总能量；
-     * 2. 硬件实时电荷计数器 [hardwareChargeCounterUah] 结合当前电量百分比与标称电压折算满电总能量；
-     * 3. 基于设备有效基准容量（真实满充容量 FCC 或出厂设计容量）与标称电压物理换算。
+     * 1. 优先基于设备有效基准容量（电量计真实满充容量 FCC 或出厂设计容量）与标称电压物理换算（首选优先级，稳定性高，杜绝 SOC 量化抖动）；
+     * 2. 硬件原生能量计数器 [hardwareEnergyNwh] 结合当前电量百分比反推满电总能量（仅在无有效基准容量且 SOC >= 20 时降级采用）；
+     * 3. 硬件实时电荷计数器 [hardwareChargeCounterUah] 结合当前电量百分比与标称电压折算满电总能量（严格除以 1000f 换算为 mAh，降级采用）。
      * 若均无法获取则如实返回 null，忠实反映系统真实状态（严禁伪造假数据）。
      *
      * @param hardwareEnergyNwh 硬件层读取的纳瓦时能量计数器（BATTERY_PROPERTY_ENERGY_COUNTER），若不支持传入 null
@@ -120,7 +120,7 @@ object BatteryEnergyCalculator {
         val safeNominalVoltage = if (nominalVoltageVolts > 0f) nominalVoltageVolts else DEFAULT_NOMINAL_VOLTAGE_VOLTS
         val safePercent = batteryPercent?.coerceIn(1, 100)
 
-        // 策略 1：硬件能量计数器结合当前电量反推满电物理总能量 (nWh -> Wh)
+        // 策略 1：硬件原生能量计数器结合当前电量反推满电物理总能量 (nWh -> Wh)
         if (hardwareEnergyNwh != null && hardwareEnergyNwh > 0L && safePercent != null && safePercent > 0) {
             val remainWh = hardwareEnergyNwh / NWH_TO_WH_FACTOR
             val totalWh = (remainWh / safePercent) * 100f
@@ -135,26 +135,29 @@ object BatteryEnergyCalculator {
         }
 
         // 策略 2：硬件实时电荷计数器结合当前电量与标称电压折算满电总能量
+        // 通过 BatteryUnitNormalizer 兼顾标准 uAh 与国产定制 ROM 直接上报 mAh 的实际情况，杜绝千倍缩水与低电量暴增
         if (hardwareChargeCounterUah != null && hardwareChargeCounterUah > 0 && safePercent != null && safePercent > 0) {
-            val currentMah = if (hardwareChargeCounterUah < 100000) {
-                hardwareChargeCounterUah.toFloat()
-            } else {
-                hardwareChargeCounterUah / 1000f
-            }
-            val fullMah = (currentMah / safePercent) * 100f
-            if (fullMah > 0f) {
-                val totalWh = (fullMah * safeNominalVoltage) / 1000f
-                if (totalWh > 0f) {
-                    return BatteryTotalEnergyInfo(
-                        totalWh = totalWh,
-                        sourceDescription = "硬件实时电荷计数器",
-                        equivalentMah = fullMah
-                    )
+            val currentMah = com.battery.analysis.domain.estimator.BatteryUnitNormalizer.normalizeChargeCounterToMah(
+                rawCounter = hardwareChargeCounterUah.toLong(),
+                effectiveCapacityMah = if (effectiveCapacityMah > 0f) effectiveCapacityMah.toDouble() else null,
+                batteryPercent = safePercent.toDouble()
+            )?.toFloat()
+            if (currentMah != null && currentMah > 0f) {
+                val fullMah = (currentMah / safePercent) * 100f
+                if (fullMah > 0f) {
+                    val totalWh = (fullMah * safeNominalVoltage) / 1000f
+                    if (totalWh > 0f) {
+                        return BatteryTotalEnergyInfo(
+                            totalWh = totalWh,
+                            sourceDescription = "硬件实时电荷计数器",
+                            equivalentMah = fullMah
+                        )
+                    }
                 }
             }
         }
 
-        // 策略 3：基于有效基准容量（FCC 或设计容量）结合标称电压物理折算
+        // 策略 3：基于设备有效基准容量（FCC 或出厂设计容量）结合标称电压物理折算
         if (effectiveCapacityMah > 0f) {
             val totalWh = (effectiveCapacityMah * safeNominalVoltage) / 1000f
             if (totalWh > 0f) {
@@ -729,17 +732,25 @@ object BatteryEnergyCalculator {
                     append("【亮屏放电速度】\n")
                     append("• 当前放电速度：$currentRateStr\n")
                     if (sevenDaysDurStr.isNotBlank()) {
-                        append("• 累积7天亮屏放电速度：$sevenDaysRateStr（统计时长 $sevenDaysDurStr）\n")
+                        append("• 7天放电速度：$sevenDaysRateStr (亮屏 $sevenDaysDurStr)\n")
                     } else {
-                        append("• 累积7天亮屏放电速度：$sevenDaysRateStr\n")
+                        append("• 7天放电速度：$sevenDaysRateStr\n")
                     }
                     append("• 满电亮屏续航：$fullDurationStr\n")
                     if (v2Result != null && v2Result.screenOnFullRuntimeMs != null) {
                         val v2OnDurStr = formatFullDuration(v2Result.screenOnFullRuntimeMs)
                         val pOnStr = v2Result.predictedScreenOnPowerWatts?.let { String.format(Locale.US, "%.2fW", it) }
-                        val pSuffix = if (pOnStr != null) " (典型功耗 $pOnStr)" else ""
-                        append("• 升级模型(v2.0)：$v2OnDurStr (${v2Result.confidenceLevel.description})\n")
-                        append("  基于有效168小时亮屏工况条件化典型推算$pSuffix\n")
+                        val pSuffix = if (pOnStr != null) " (典型 $pOnStr)" else ""
+                        val windowStr = if (v2Result.historyWindowDays > 7.1) {
+                            String.format(Locale.US, "自适应扩展至近 %.1f 天", v2Result.historyWindowDays)
+                        } else {
+                            "最近 7 天"
+                        }
+                        val effOnStr = v2Result.screenOnEffectiveMs?.let { formatFullDuration(it) } ?: formatFullDuration(v2Result.effectiveDischargeDurationMs)
+                        append("• 升级模型(v2.1)：$v2OnDurStr (${v2Result.confidenceLevel.description})\n")
+                        append("  统计范围：$windowStr\n")
+                        append("  有效放电：累计亮屏 $effOnStr (${v2Result.dataSufficiency.description})\n")
+                        append("  工况建模：典型推算$pSuffix\n")
                     }
                     if (remainingEstimate != null && remainingEstimate.remainingMs != null) {
                         val remStr = formatDurationWithSeconds(remainingEstimate.remainingMs)
@@ -747,12 +758,12 @@ object BatteryEnergyCalculator {
                         if (remainingEstimate.minRemainingMs != null && remainingEstimate.maxRemainingMs != null) {
                             val minStr = formatFullDuration(remainingEstimate.minRemainingMs)
                             val maxStr = formatFullDuration(remainingEstimate.maxRemainingMs)
-                            append("  工况预期范围：$minStr (重载) ~ $maxStr (轻载)\n")
+                            append("  工况预期范围：$minStr(重载) ~ $maxStr(轻载)\n")
                         }
                         if (remainingEstimate.predictedPowerWatts != null && remainingEstimate.predictedPowerWatts > 0.0) {
                             val pStr = String.format(Locale.US, "%.2fW", remainingEstimate.predictedPowerWatts)
                             val eStr = remainingEstimate.remainingEnergyWh?.let { String.format(Locale.US, "%.2fWh", it) }
-                            val eSuffix = if (eStr != null) " (可用能量 $eStr)" else ""
+                            val eSuffix = if (eStr != null) " (可用 $eStr)" else ""
                             append("  预测放电功耗：$pStr$eSuffix\n")
                         }
                     } else {
@@ -760,10 +771,10 @@ object BatteryEnergyCalculator {
                     }
                     append("• 预测真实容量：$capacityStr\n\n")
                     append("💡 说明：\n")
-                    append("• 速度由亮屏硬件功耗与电池总容量折算；\n")
-                    append("• 满电续航按累积7天实际亮屏使用时间加权推算；\n")
-                    append("• 升级模型(v2.0)解构轻/中/重载行为占比，防止偶发游戏导致续航失真；\n")
-                    append("• 剩余续航融合多时间尺度、实时工况与电芯温度修正，并给出工况范围与可信度。")
+                    append("• 速度由硬件功耗与电池总容量折算\n")
+                    append("• 满电续航按7天实际亮屏加权推算\n")
+                    append("• 升级模型自适应历史窗口与衰减权重\n")
+                    append("• 剩余续航融合实时工况与温度修正")
                 }
             }
             ROW_SCREEN_OFF -> {
@@ -771,17 +782,25 @@ object BatteryEnergyCalculator {
                     append("【息屏放电速度】\n")
                     append("• 当前放电速度：$currentRateStr\n")
                     if (sevenDaysDurStr.isNotBlank()) {
-                        append("• 累积7天息屏放电速度：$sevenDaysRateStr（统计时长 $sevenDaysDurStr）\n")
+                        append("• 7天放电速度：$sevenDaysRateStr (息屏 $sevenDaysDurStr)\n")
                     } else {
-                        append("• 累积7天息屏放电速度：$sevenDaysRateStr\n")
+                        append("• 7天放电速度：$sevenDaysRateStr\n")
                     }
                     append("• 满电待机时长：$fullDurationStr\n")
                     if (v2Result != null && v2Result.screenOffFullRuntimeMs != null) {
                         val v2OffDurStr = formatFullDuration(v2Result.screenOffFullRuntimeMs)
                         val pOffStr = v2Result.predictedScreenOffPowerWatts?.let { String.format(Locale.US, "%.2fW", it) }
-                        val pSuffix = if (pOffStr != null) " (稳态待机功耗 $pOffStr)" else ""
-                        append("• 升级模型(v2.0)：$v2OffDurStr (${v2Result.confidenceLevel.description})\n")
-                        append("  基于有效168小时休眠底噪与唤醒解构推算$pSuffix\n")
+                        val pSuffix = if (pOffStr != null) " (待机 $pOffStr)" else ""
+                        val windowStr = if (v2Result.historyWindowDays > 7.1) {
+                            String.format(Locale.US, "自适应扩展至近 %.1f 天", v2Result.historyWindowDays)
+                        } else {
+                            "最近 7 天"
+                        }
+                        val effOffStr = v2Result.screenOffEffectiveMs?.let { formatFullDuration(it) } ?: formatFullDuration(v2Result.effectiveDischargeDurationMs)
+                        append("• 升级模型(v2.1)：$v2OffDurStr (${v2Result.confidenceLevel.description})\n")
+                        append("  统计范围：$windowStr\n")
+                        append("  有效放电：累计息屏 $effOffStr (${v2Result.dataSufficiency.description})\n")
+                        append("  工况建模：休眠底噪与唤醒解构$pSuffix\n")
                     }
                     if (remainingEstimate != null && remainingEstimate.remainingMs != null) {
                         val remStr = formatDurationWithSeconds(remainingEstimate.remainingMs)
@@ -789,22 +808,22 @@ object BatteryEnergyCalculator {
                         if (remainingEstimate.minRemainingMs != null && remainingEstimate.maxRemainingMs != null) {
                             val minStr = formatFullDuration(remainingEstimate.minRemainingMs)
                             val maxStr = formatFullDuration(remainingEstimate.maxRemainingMs)
-                            append("  工况预期范围：$minStr (频繁唤醒) ~ $maxStr (深度休眠)\n")
+                            append("  工况预期范围：$minStr(频繁唤醒) ~ $maxStr(深度休眠)\n")
                         }
                         if (remainingEstimate.predictedPowerWatts != null && remainingEstimate.predictedPowerWatts > 0.0) {
                             val pStr = String.format(Locale.US, "%.2fW", remainingEstimate.predictedPowerWatts)
                             val eStr = remainingEstimate.remainingEnergyWh?.let { String.format(Locale.US, "%.2fWh", it) }
-                            val eSuffix = if (eStr != null) " (可用能量 $eStr)" else ""
+                            val eSuffix = if (eStr != null) " (可用 $eStr)" else ""
                             append("  预测待机功耗：$pStr$eSuffix\n")
                         }
                     } else {
                         append("• 当前剩余续航：$remainingDurStr\n")
                     }
                     append("\n💡 说明：\n")
-                    append("• 速度反映熄屏待机电量消耗；\n")
-                    append("• 待机时长按累积7天实际待机时间加权推算；\n")
-                    append("• 升级模型(v2.0)解构深睡底噪与后台唤醒，真实反映手机物理待机极限；\n")
-                    append("• 剩余续航融合多时间尺度、实时工况与电芯温度修正，并给出工况范围与可信度。")
+                    append("• 速度反映熄屏待机电量消耗\n")
+                    append("• 待机时长按7天实际待机时间加权推算\n")
+                    append("• 升级模型解构深睡底噪与后台唤醒\n")
+                    append("• 待机续航融合多时间尺度与温度修正")
                 }
             }
             ROW_GLOBAL -> {
@@ -813,9 +832,9 @@ object BatteryEnergyCalculator {
                     append("【全局放电速度】\n")
                     append("• 当前放电速度：$currentRateStr\n")
                     if (sevenDaysDurStr.isNotBlank()) {
-                        append("• 累积7天全局放电速度：$sevenDaysRateStr（统计时长 $sevenDaysDurStr）\n")
+                        append("• 7天放电速度：$sevenDaysRateStr (放电 $sevenDaysDurStr)\n")
                     } else {
-                        append("• 累积7天全局放电速度：$sevenDaysRateStr\n")
+                        append("• 7天放电速度：$sevenDaysRateStr\n")
                     }
                     if (remainingEstimate != null && remainingEstimate.remainingMs != null) {
                         val remStr = formatDurationWithSeconds(remainingEstimate.remainingMs)
@@ -823,12 +842,12 @@ object BatteryEnergyCalculator {
                         if (remainingEstimate.minRemainingMs != null && remainingEstimate.maxRemainingMs != null) {
                             val minStr = formatFullDuration(remainingEstimate.minRemainingMs)
                             val maxStr = formatFullDuration(remainingEstimate.maxRemainingMs)
-                            append("  工况预期范围：$minStr (偏重载) ~ $maxStr (偏轻载)\n")
+                            append("  工况预期范围：$minStr(偏重载) ~ $maxStr(偏轻载)\n")
                         }
                         if (remainingEstimate.predictedPowerWatts != null && remainingEstimate.predictedPowerWatts > 0.0) {
                             val pStr = String.format(Locale.US, "%.2fW", remainingEstimate.predictedPowerWatts)
                             val eStr = remainingEstimate.remainingEnergyWh?.let { String.format(Locale.US, "%.2fWh", it) }
-                            val eSuffix = if (eStr != null) " (可用能量 $eStr)" else ""
+                            val eSuffix = if (eStr != null) " (可用 $eStr)" else ""
                             append("  预测综合功耗：$pStr$eSuffix\n")
                         }
                     } else {
@@ -836,26 +855,34 @@ object BatteryEnergyCalculator {
                     }
                     append("\n📊 满电综合续航推算：\n")
                     append("• 模式1（全局加权）：$fullDurationStr\n")
-                    append("  基于累积7天全局真实放电功耗线性推算\n")
+                    append("  基于7天全局真实功耗线性推算\n")
                     if (sceneFullDurationMs != null && sceneFullDurationMs > 0L && sceneScreenOnRatio != null) {
                         val ratioOnStr = String.format(Locale.getDefault(), "%.1f%%", sceneScreenOnRatio * 100f)
                         val ratioOffStr = String.format(Locale.getDefault(), "%.1f%%", (1.0f - sceneScreenOnRatio) * 100f)
                         append("• 模式2（场景融合）：$sceneFullDurationStr\n")
-                        append("  按日常习惯 $ratioOnStr 亮屏 + $ratioOffStr 息屏动态加权\n")
+                        append("  按日常习惯 $ratioOnStr 亮屏 + $ratioOffStr 息屏加权\n")
                     } else {
                         append("• 模式2（场景融合）：$sceneFullDurationStr\n")
                     }
                     if (v2Result != null && v2Result.fullRuntimeMs != null) {
                         val v2DurStr = formatFullDuration(v2Result.fullRuntimeMs)
                         val modelDesc = if (v2Result.usedRegimeModel) "工况条件化典型模型" else "全局物理基准降级"
-                        append("• 升级模型(v2.0)：$v2DurStr (${v2Result.confidenceLevel.description})\n")
-                        append("  基于有效168小时历史 $modelDesc\n")
+                        val windowStr = if (v2Result.historyWindowDays > 7.1) {
+                            String.format(Locale.US, "自适应扩展至近 %.1f 天", v2Result.historyWindowDays)
+                        } else {
+                            "最近 7 天"
+                        }
+                        val effTotalStr = formatFullDuration(v2Result.effectiveDischargeDurationMs)
+                        append("• 升级模型(v2.1)：$v2DurStr (${v2Result.confidenceLevel.description})\n")
+                        append("  统计范围：$windowStr\n")
+                        append("  有效放电：实际参与累计 $effTotalStr (${v2Result.dataSufficiency.description})\n")
+                        append("  工况建模：基于 $modelDesc 推算\n")
                     }
                     append("\n💡 说明：\n")
-                    append("• 模式1忠实反映历史全周期能量总积分；\n")
-                    append("• 模式2解构亮屏与待机两态比例；\n")
-                    append("• 升级模型(v2.0)引入工况分类、时间加权与置信度评估；\n")
-                    append("• 剩余续航融合多时间尺度、实时工况与电芯温度修正，并给出工况范围与可信度。")
+                    append("• 模式1忠实反映历史全周期能量总积分\n")
+                    append("• 模式2解构亮屏与待机两态比例\n")
+                    append("• 升级模型自适应历史窗口与工况建模\n")
+                    append("• 剩余续航融合多时间尺度与温度修正")
                 }
             }
             else -> ""

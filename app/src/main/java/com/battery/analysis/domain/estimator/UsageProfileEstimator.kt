@@ -32,6 +32,27 @@ class UsageProfileEstimator {
     }
 
     /**
+     * 根据各工况经时间衰减加权后的有效持续时长计算归一化时间占比概率。
+     * 适用于自适应历史时间窗口模型（超出 7 天的历史工况按指数权重平滑衰减）。
+     *
+     * @param durationByRegime 各工况经时间衰减加权后的有效持续毫秒数映射 Map
+     * @return 归一化后的各工况时间占比概率 Map（各项和为 1.0，若无有效数据返回空 Map）
+     */
+    fun computeWeightedTimeRatios(durationByRegime: Map<PowerRegime, Double>): Map<PowerRegime, Double> {
+        val validEntries = durationByRegime.filter { it.key != PowerRegime.UNKNOWN && it.value > 0.0 }
+        val totalMs = validEntries.values.sum()
+        if (totalMs <= 0.0) return emptyMap()
+
+        val rawRatios = validEntries.mapValues { it.value / totalMs }
+        val sum = rawRatios.values.sum()
+        return if (sum > 0.0) {
+            rawRatios.mapValues { it.value / sum }
+        } else {
+            emptyMap()
+        }
+    }
+
+    /**
      * 融合长期历史行为分布（近 168 小时）与近期行为分布（近 24 小时），
      * 赋予模型对用户近期作息微小漂移的温和适应能力。
      * 遵循保守设计：近期分布影响权重上限严格限制（最大不超过 20%），数据不足时不引入偏置。

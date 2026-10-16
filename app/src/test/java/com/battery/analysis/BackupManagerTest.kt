@@ -455,4 +455,84 @@ class BackupManagerTest {
         assertTrue(p.isScreenOffDecomposedAvailable)
     }
 
+    /**
+     * 测试版本 4 全量备份数据解析。
+     * 验证包含放电与充电趋势图双维度自定义指标（含新增能量指标 ENERGY）的反序列化正确性与版本升级平滑性。
+     */
+    @Test
+    fun testParseBackupJson_v4FullSettingsWithChargingMetrics() {
+        val testJson = """
+            {
+                "version": 4,
+                "app_version": "1.9.25",
+                "backup_time": "2026-10-16 16:30:00",
+                "backup_timestamp": 1792130000000,
+                "settings": {
+                    "language_mode": 0,
+                    "theme_mode": 1,
+                    "charge_discharge_stats_enabled": true,
+                    "charging_keep_screen_on": false,
+                    "power_stats_mode": 0,
+                    "power_mode_configured": true,
+                    "shizuku_user_disabled": false,
+                    "notification_display_enabled": true,
+                    "screen_on_interval_ms": 1000,
+                    "screen_off_interval_ms": 1000,
+                    "boot_auto_start_enabled": true,
+                    "battery_service_enabled": true,
+                    "floating_enabled": true,
+                    "current_calibration_multiplier": 1.0,
+                    "power_display_unit": 0,
+                    "enable_background_stats": true,
+                    "timeline_saved_metrics": ["POWER", "BATTERY", "ENERGY"],
+                    "timeline_saved_charging_metrics": ["POWER", "BATTERY", "ENERGY", "APP"]
+                },
+                "history_records": [],
+                "charging_records": [
+                    {
+                        "id": 1792125000000,
+                        "record_time": "2026-10-16 15:00:00",
+                        "start_timestamp": 1792120000000,
+                        "end_timestamp": 1792123600000,
+                        "duration_ms": 3600000,
+                        "start_level": 30,
+                        "end_level": 90,
+                        "level_gain": 60,
+                        "charged_energy_wh": 16.5,
+                        "avg_power_watts": 16.5,
+                        "max_power_watts": 28.0,
+                        "max_temperature": 35.5,
+                        "charge_type": "交流快充",
+                        "screen_off_duration_ms": 3200000,
+                        "screen_off_level_gain": 55,
+                        "screen_off_energy_wh": 15.0,
+                        "sample_points_json": "[]"
+                    }
+                ],
+                "power_usage_records": []
+            }
+        """.trimIndent()
+
+        val manager = BackupManager.getInstance()
+        val data = manager.parseBackupJson(testJson)
+
+        assertEquals(4, data.version)
+        assertEquals("1.9.25", data.appVersion)
+
+        val s = data.settings
+        assertNotNull(s.timelineSavedMetrics)
+        assertEquals(3, s.timelineSavedMetrics!!.size)
+        assertTrue(s.timelineSavedMetrics!!.contains("ENERGY"))
+
+        assertNotNull(s.timelineSavedChargingMetrics)
+        assertEquals(4, s.timelineSavedChargingMetrics!!.size)
+        assertTrue(s.timelineSavedChargingMetrics!!.contains("POWER"))
+        assertTrue(s.timelineSavedChargingMetrics!!.contains("ENERGY"))
+        assertTrue(s.timelineSavedChargingMetrics!!.contains("APP"))
+
+        assertEquals(1, data.chargingRecords.size)
+        val charging = data.chargingRecords[0]
+        assertEquals(1792125000000L, charging.id)
+        assertEquals(16.5f, charging.chargedEnergyWh, 0.001f)
+    }
 }

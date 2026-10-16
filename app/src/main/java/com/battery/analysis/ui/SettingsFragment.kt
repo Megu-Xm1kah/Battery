@@ -1616,10 +1616,12 @@ class SettingsFragment : Fragment() {
         if (s.powerDisplayUnit != null || s.enableBackgroundStats != null || s.powerUnitDialogDoNotShow != null) {
             settingsList.add(getString(R.string.setting_restore_power_usage_pref))
         }
-        if (s.timelineSavedMetrics != null && s.timelineSavedMetrics.isNotEmpty()) {
+        if ((s.timelineSavedMetrics != null && s.timelineSavedMetrics.isNotEmpty()) ||
+            (s.timelineSavedChargingMetrics != null && s.timelineSavedChargingMetrics.isNotEmpty())) {
             settingsList.add(getString(R.string.setting_restore_timeline_metrics))
         }
 
+        cbRestoreSettings.text = getString(R.string.dialog_restore_sync_settings)
         if (settingsList.isNotEmpty()) {
             tvSettingsInfo.text = settingsList.joinToString("、")
             cbRestoreSettings.isEnabled = true

@@ -215,25 +215,35 @@ class RemainingRuntimeEstimatorTest {
         assertEquals(1.0, roomTemp.temperatureFactor, 0.001)
         assertEquals(10.0, roomTemp.usableEnergyWh!!, 0.01)
 
-        // 极低温 -10℃: K_T = 0.75, 能量修正为 7.5 Wh
-        val coldTemp = energyEstimator.estimateUsableRemainingEnergy(
+        // 极低温 -10℃: 默认模式下严格忠实反映硬件真实读数，不进行未经标定的二次惩罚（K_T = 1.0, 能量保持 10.0 Wh）
+        val coldDefault = energyEstimator.estimateUsableRemainingEnergy(
             remainingEnergyWh = 10.0f,
             tempCelsius = -10.0f
         )
-        assertEquals(0.75, coldTemp.temperatureFactor, 0.001)
-        assertEquals(7.5, coldTemp.usableEnergyWh!!, 0.01)
+        assertEquals(1.0, coldDefault.temperatureFactor, 0.001)
+        assertEquals(10.0, coldDefault.usableEnergyWh!!, 0.01)
 
-        // 极端高温 50℃: K_T = 0.95, 能量修正为 9.5 Wh
-        val hotTemp = energyEstimator.estimateUsableRemainingEnergy(
+        // 显式启用特定设备实验性温度折损时: K_T = 0.75, 能量修正为 7.5 Wh
+        val coldExplicit = energyEstimator.estimateUsableRemainingEnergy(
             remainingEnergyWh = 10.0f,
-            tempCelsius = 50.0f
+            tempCelsius = -10.0f,
+            enableTemperatureDerating = true
         )
-        assertEquals(0.95, hotTemp.temperatureFactor, 0.001)
-        assertEquals(9.5, hotTemp.usableEnergyWh!!, 0.01)
+        assertEquals(0.75, coldExplicit.temperatureFactor, 0.001)
+        assertEquals(7.5, coldExplicit.usableEnergyWh!!, 0.01)
+
+        // 显式启用极端高温 50℃: K_T = 0.95, 能量修正为 9.5 Wh
+        val hotExplicit = energyEstimator.estimateUsableRemainingEnergy(
+            remainingEnergyWh = 10.0f,
+            tempCelsius = 50.0f,
+            enableTemperatureDerating = true
+        )
+        assertEquals(0.95, hotExplicit.temperatureFactor, 0.001)
+        assertEquals(9.5, hotExplicit.usableEnergyWh!!, 0.01)
     }
 
     /**
-     * 测试一站式整合预测结果（TripleRuntimeResult）与阶段二模型版本元数据标记。
+     * 测试一站式整合预测结果（TripleRuntimeResult）与阶段三模型版本（v2.1）元数据标记。
      */
     @Test
     fun testTripleRuntimeResultWithV2Metadata() {
@@ -254,16 +264,45 @@ class RemainingRuntimeEstimatorTest {
 
         assertEquals("亮屏续航 10Wh / 2W = 5h", 18_000_000L, onEstimate.remainingMs!!)
         assertEquals("待机续航 10Wh / 0.5W = 20h", 72_000_000L, offEstimate.remainingMs!!)
-        assertEquals(RemainingModelVersion.REMAINING_RUNTIME_V2, onEstimate.modelVersion)
-        assertEquals(RemainingModelVersion.REMAINING_RUNTIME_V2, offEstimate.modelVersion)
-        assertEquals(RemainingModelVersion.REMAINING_RUNTIME_V2, globalEstimate.modelVersion)
+        assertEquals(RemainingModelVersion.REMAINING_RUNTIME_V2_1, onEstimate.modelVersion)
+        assertEquals(RemainingModelVersion.REMAINING_RUNTIME_V2_1, offEstimate.modelVersion)
+        assertEquals(RemainingModelVersion.REMAINING_RUNTIME_V2_1, globalEstimate.modelVersion)
         assertEquals(RuntimeModelType.GLOBAL_COMPOSITE, globalEstimate.modelType)
+
+        // 验证质量解释说明
+        assertTrue("亮屏结果包含质量依据", onEstimate.qualityReasons.isNotEmpty())
+        assertTrue("全局结果包含场景融合说明", globalEstimate.qualityReasons.any { it.contains("场景") || it.contains("作息") })
 
         // 验证置信度等级与预期范围
         assertNotNull("亮屏预测必须包含保守重载下限", onEstimate.minRemainingMs)
         assertNotNull("亮屏预测必须包含乐观轻载上限", onEstimate.maxRemainingMs)
         assertTrue("重载时长必小于轻载时长", onEstimate.minRemainingMs!! < onEstimate.maxRemainingMs!!)
         assertTrue("典型时长处于重载与轻载之间", onEstimate.remainingMs!! in onEstimate.minRemainingMs!!..onEstimate.maxRemainingMs!!)
+    }
+
+    /**
+     * 测试微安电荷计数器在低数值 (<100,000 uAh，即 <100mAh) 时绝不按大小猜测单位。
+     * 验证：80,000 uAh 严格换算为 80 mAh (0.308 Wh)，绝不误判为 80,000 mAh (308 Wh) 暴增 1000 倍！
+     */
+    @Test
+    fun testChargeCounterLowValuesNeverGuessesUnits() {
+        val energyEstimator = RemainingEnergyEstimator()
+
+        // 场景 1：低电量剩余 80,000 uAh (80 mAh)，标称电压 3.85V -> 80 * 3.85 / 1000 = 0.308 Wh
+        val lowResult = energyEstimator.estimateUsableRemainingEnergy(
+            chargeCounterUah = 80_000,
+            nominalVoltage = 3.85
+        )
+        assertNotNull(lowResult.usableEnergyWh)
+        assertEquals("80,000 uAh 必须严格为 0.308 Wh，绝不放大千倍", 0.308, lowResult.usableEnergyWh!!, 0.001)
+
+        // 场景 2：极低电量 5,000 uAh (5 mAh) -> 5 * 3.85 / 1000 = 0.01925 Wh
+        val veryLowResult = energyEstimator.estimateUsableRemainingEnergy(
+            chargeCounterUah = 5_000,
+            nominalVoltage = 3.85
+        )
+        assertNotNull(veryLowResult.usableEnergyWh)
+        assertEquals("5,000 uAh 必须严格为 0.01925 Wh", 0.01925, veryLowResult.usableEnergyWh!!, 0.0001)
     }
 
     /**

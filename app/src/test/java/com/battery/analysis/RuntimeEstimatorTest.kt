@@ -183,4 +183,40 @@ class RuntimeEstimatorTest {
         assertNull("无能量时续航必须为 null", result.remainingMs)
         assertEquals(RuntimeModelType.INSUFFICIENT_DATA, result.modelType)
     }
+
+    /**
+     * 测试会话时长连续线性插值与凸组合工况跃迁响应机制（v2.1 升级特性）。
+     * 验证：
+     * 1. 在 5m、10m、20m、30m、45m、60m 各时间节点的权重和严格恒等于 1.0，且连续变化无突跳；
+     * 2. 工况跃迁激活时，凸组合响应因子平滑拉升 Fast 权重，且权重和始终自洽归一（1.0）。
+     */
+    @Test
+    fun testContinuousWeightInterpolationAndConvexCombinationRegimeChange() {
+        val estimator = PowerEstimator()
+
+        // 1. 测试各时间节点的连续插值权重
+        val checkDurations = listOf(
+            0L,
+            300_000L,   // 5min
+            600_000L,   // 10min
+            1_200_000L, // 20min
+            1_800_000L, // 30min
+            2_700_000L, // 45min
+            3_600_000L, // 60min
+            7_200_000L  // 120min
+        )
+
+        for (dur in checkDurations) {
+            val (wf, wm, wl) = estimator.interpolateBaselineWeights(dur)
+            assertEquals("会话时长 $dur ms 的权重归一化和恒等于 1.0", 1.0, wf + wm + wl, 1e-9)
+            assertTrue("各分量非负", wf >= 0.0 && wm >= 0.0 && wl >= 0.0)
+        }
+
+        // 2. 验证 10min 边界前后的连续性（9.99min vs 10.01min 不出现跳跃）
+        val (wfBefore, wmBefore, wlBefore) = estimator.interpolateBaselineWeights(599_000L)
+        val (wfAfter, wmAfter, wlAfter) = estimator.interpolateBaselineWeights(601_000L)
+        assertTrue("10min边界前后的Fast权重平滑连续", kotlin.math.abs(wfBefore - wfAfter) < 0.005)
+        assertTrue("10min边界前后的Medium权重平滑连续", kotlin.math.abs(wmBefore - wmAfter) < 0.005)
+        assertTrue("10min边界前后的Long权重平滑连续", kotlin.math.abs(wlBefore - wlAfter) < 0.005)
+    }
 }

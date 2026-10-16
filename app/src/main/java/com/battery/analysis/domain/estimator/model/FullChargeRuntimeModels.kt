@@ -65,6 +65,21 @@ enum class PowerRegime(val label: String) {
 }
 
 /**
+ * 历史样本数据充分性等级枚举。
+ * 遵循真实样本质量与工况覆盖度评定，绝不简单以日历天数代替真实样本量。
+ *
+ * @property description 可读充分性描述文本
+ */
+enum class DataSufficiencyLevel(val description: String) {
+    /** 样本充足，时间与多工况覆盖全面，具备极高统计代表性 */
+    SUFFICIENT("数据充足"),
+    /** 样本基本可用，具备核心放电工况，可提供可靠参考基准 */
+    MODERATE("基本可用"),
+    /** 样本偏少（如新机刚用一两天），处于数据积累初期，已如实降权 */
+    INSUFFICIENT("样本较少")
+}
+
+/**
  * 历史放电物理区间实体类。
  * 表达一段不重叠、时间单调的有效放电时间段，作为工况划分与能量积分的基石。
  *
@@ -75,6 +90,7 @@ enum class PowerRegime(val label: String) {
  * @property powerWatts 区间平均放电物理功率（单位：W）
  * @property isScreenOn 屏幕是否处于亮屏状态（true 为亮屏，false 为息屏）
  * @property quality 区间数据质量等级 [DataQuality]
+ * @property ageWeight 自适应历史时间衰减权重 w_age（取值 0.0 ~ 1.0，越旧的样本权重越低）
  */
 data class DischargeInterval(
     val startTimeMs: Long,
@@ -83,7 +99,30 @@ data class DischargeInterval(
     val energyWh: Double,
     val powerWatts: Double,
     val isScreenOn: Boolean,
-    val quality: DataQuality = DataQuality.VALID
+    val quality: DataQuality = DataQuality.VALID,
+    val ageWeight: Double = 1.0
+)
+
+/**
+ * 自适应历史窗口统计元信息指标实体类。
+ * 封装窗口提取过程中实际覆盖的自然时间跨度、真实有效放电累计时长与数据充分性评定。
+ *
+ * @property windowDurationMs 实际覆盖的日历自然时间跨度（单位：毫秒，7天至30天之间）
+ * @property windowDays 实际覆盖的日历自然天数（如 7.0 天或 18.5 天）
+ * @property effectiveDischargeDurationMs 实际参与统计的有效放电累计物理时长（单位：毫秒）
+ * @property screenOnDurationMs 参与统计的有效亮屏累计时长（单位：毫秒）
+ * @property screenOffDurationMs 参与统计的有效息屏累计时长（单位：毫秒）
+ * @property sufficiency 数据充分性评级 [DataSufficiencyLevel]
+ * @property regimeCount 覆盖的核心放电工况类别数量
+ */
+data class AdaptiveWindowMetrics(
+    val windowDurationMs: Long,
+    val windowDays: Double,
+    val effectiveDischargeDurationMs: Long,
+    val screenOnDurationMs: Long,
+    val screenOffDurationMs: Long,
+    val sufficiency: DataSufficiencyLevel,
+    val regimeCount: Int
 )
 
 /**
@@ -93,7 +132,9 @@ enum class RuntimeModelVersion {
     /** 现有基线算法：168 小时历史全局能量加权平均线性推算 */
     FULL_RUNTIME_V1,
     /** 升级算法：有效历史窗口 + 工况条件化行为占比与稳健能量模型 */
-    FULL_RUNTIME_V2
+    FULL_RUNTIME_V2,
+    /** 阶段三修正升级版本（v2.1）：自适应历史窗口(7~30天) + 时间衰减权重 + FCC满电优先级 + 严谨数据质量追溯 */
+    FULL_RUNTIME_V2_1
 }
 
 /**
@@ -139,19 +180,25 @@ enum class RuntimeConfidenceLevel(val description: String) {
  * @property modelVersion 产生本结果的算法模型版本 [RuntimeModelVersion]
  * @property confidenceLevel 预测结果的数据置信度等级 [RuntimeConfidenceLevel]
  * @property energySource 满充物理能量的数据获取来源 [EnergySource]
- * @property effectiveHistoryMs 统计实际覆盖的有效历史放电物理毫秒数（上限 168 小时）
+ * @property effectiveHistoryMs 统计实际覆盖的有效历史放电物理毫秒数
  * @property usedRegimeModel 是否成功启用了工况条件化模型（若为 false 则表明已安全降级至全局基准）
  * @property fallbackReason 降级或降权的具体物理原因说明（若运行完整工况模型则为 null）
- * @property screenOnFullRuntimeMs 基于亮屏工况（轻/中/重载）典型加权推算的满电纯亮屏可用物理毫秒数（v2.0，无有效亮屏数据为 null）
- * @property screenOffFullRuntimeMs 基于息屏休眠与唤醒解构稳态加权推算的满电纯待机可用物理毫秒数（v2.0，无有效息屏数据为 null）
+ * @property screenOnFullRuntimeMs 基于亮屏工况（轻/中/重载）典型加权推算的满电纯亮屏可用物理毫秒数（无有效亮屏数据为 null）
+ * @property screenOffFullRuntimeMs 基于息屏休眠与唤醒解构稳态加权推算的满电纯待机可用物理毫秒数（无有效息屏数据为 null）
  * @property predictedScreenOnPowerWatts 预测的亮屏典型物理放电功率（单位：W，不可用时为 null）
  * @property predictedScreenOffPowerWatts 预测的息屏典型物理放电功率（单位：W，不可用时为 null）
+ * @property qualityReasons 预测数据质量与依据说明列表（用于解释预测来源与可靠性）
+ * @property historyWindowDays 实际生效的日历自然时间窗口跨度（单位：天，默认 7.0 天）
+ * @property effectiveDischargeDurationMs 实际参与统计的有效放电累计物理时长（单位：毫秒）
+ * @property dataSufficiency 历史样本数据充分性等级 [DataSufficiencyLevel]
+ * @property screenOnEffectiveMs 实际统计的亮屏有效放电时长（单位：毫秒，可选）
+ * @property screenOffEffectiveMs 实际统计的息屏有效放电时长（单位：毫秒，可选）
  */
 data class FullChargeRuntimeResult(
     val fullRuntimeMs: Long?,
     val fullEnergyWh: Double?,
     val predictedPowerWatts: Double?,
-    val modelVersion: RuntimeModelVersion,
+    val modelVersion: RuntimeModelVersion = RuntimeModelVersion.FULL_RUNTIME_V2_1,
     val confidenceLevel: RuntimeConfidenceLevel,
     val energySource: EnergySource,
     val effectiveHistoryMs: Long,
@@ -160,5 +207,11 @@ data class FullChargeRuntimeResult(
     val screenOnFullRuntimeMs: Long? = null,
     val screenOffFullRuntimeMs: Long? = null,
     val predictedScreenOnPowerWatts: Double? = null,
-    val predictedScreenOffPowerWatts: Double? = null
+    val predictedScreenOffPowerWatts: Double? = null,
+    val qualityReasons: List<String> = emptyList(),
+    val historyWindowDays: Double = 7.0,
+    val effectiveDischargeDurationMs: Long = effectiveHistoryMs,
+    val dataSufficiency: DataSufficiencyLevel = DataSufficiencyLevel.SUFFICIENT,
+    val screenOnEffectiveMs: Long? = null,
+    val screenOffEffectiveMs: Long? = null
 )

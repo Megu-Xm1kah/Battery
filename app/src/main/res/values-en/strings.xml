@@ -462,6 +462,7 @@
     <string name="setting_restore_current_calibration">Current Calibration</string>
     <string name="setting_restore_power_usage_pref">Power Usage Preferences</string>
     <string name="setting_restore_timeline_metrics">Timeline Metrics</string>
+    <string name="dialog_restore_sync_settings">Synchronously restore application preferences</string>
 
     <!-- Health Calculation Guide Dialog -->
     <string name="guide_title">Battery Health Guide</string>

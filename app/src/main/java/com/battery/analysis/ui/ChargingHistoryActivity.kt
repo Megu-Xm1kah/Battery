@@ -8,6 +8,7 @@ import android.view.View
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -47,6 +48,17 @@ class ChargingHistoryActivity : AppCompatActivity() {
      * 标记当前是否正在异步加载或计算历史记录数据。
      */
     private var isDataLoading = false
+
+    /**
+     * 标记充电历史记录数据是否已完成初次加载，避免从详情页或后台返回时重复触发全量刷新与下拉进度动画。
+     */
+    private var isInitialLoaded = false
+
+    private val detailLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) {
+            loadHistoryList(isPullToRefresh = false)
+        }
+    }
 
     /**
      * 充电历史记录电量增量筛选条件类型枚举。
@@ -109,11 +121,15 @@ class ChargingHistoryActivity : AppCompatActivity() {
     }
 
     /**
-     * 界面恢复生命周期回调，进入页面或返回时自动触发历史列表重载并展示下拉刷新进度指示器。
+     * 界面恢复生命周期回调。仅在初次进入页面时触发历史列表重载并展示下拉刷新进度指示器，
+     * 从二级页面（如详情页）返回或切回前台时不再重复刷新。
      */
     override fun onResume() {
         super.onResume()
-        loadHistoryList(isPullToRefresh = true)
+        if (!isInitialLoaded) {
+            isInitialLoaded = true
+            loadHistoryList(isPullToRefresh = true)
+        }
     }
 
     /**
@@ -449,7 +465,7 @@ class ChargingHistoryActivity : AppCompatActivity() {
         val intent = Intent(this, ChargingHistoryDetailActivity::class.java).apply {
             putExtra(ChargingHistoryDetailActivity.EXTRA_RECORD_ID, record.id)
         }
-        startActivity(intent)
+        detailLauncher.launch(intent)
     }
 
     /**

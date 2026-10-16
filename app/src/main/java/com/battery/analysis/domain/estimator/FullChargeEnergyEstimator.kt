@@ -28,9 +28,11 @@ class FullChargeEnergyEstimator {
      * 根据设备底层可用的硬件能量、电量计容量或设计规格参数，估算电池在 100% 满充状态下的理论可用物理能量。
      *
      * 优先级逻辑：
-     * 1. 硬件电量计原生纳瓦时能量计数器（若可用且大于 0，结合当前电量百分比反推 100% 满电能量）；
-     * 2. 电量计实测真实满充容量 FCC（单位：mAh）结合标称电压折算，由于 FCC 已反映电芯自然老化后的实际容量，绝不二次乘 SOH；
-     * 3. 电池出厂标称设计容量（单位：mAh）结合有效健康度 SOH 与标称电压折算；
+     * 1. 电量计实测真实满充容量 FCC（单位：mAh）结合标称电压折算（首选优先级）：
+     *    由于 FCC 已由电量计库仑计与阻抗跟踪算法动态计入电芯自然老化衰减，代表最可信的满充容量，绝不二次乘 SOH；
+     * 2. 电池出厂标称设计容量（单位：mAh）结合有效健康度 SOH 与标称电压折算；
+     * 3. 硬件电量计原生纳瓦时剩余能量计数器单点反推（降级选项）：
+     *    仅在前两者均不可用且当前电量非极端低电量（>= 20%）时作为低质量参考，防止整数 SOC 量化跳变导致反推满充能量剧烈抖动；
      * 4. 若上述参数均无法获取或非物理正数，忠实返回不可用结果，绝不编造假数据。
      *
      * @param nativeEnergyNwh 硬件底层能量计数器数值（单位：纳瓦时 nWh，若不支持可为 null）
@@ -51,21 +53,7 @@ class FullChargeEnergyEstimator {
     ): FullChargeEnergyEstimate {
         val safeVolt = if (nominalVoltage > 0.0 && nominalVoltage.isFinite()) nominalVoltage else DEFAULT_NOMINAL_VOLTAGE
 
-        // 优先级 1：硬件电量计原生能量寄存器 (nWh -> Wh)
-        if (nativeEnergyNwh != null && nativeEnergyNwh > 0L && batteryPercent != null && batteryPercent in 1..100) {
-            val remainWh = nativeEnergyNwh.toDouble() / NWH_TO_WH_FACTOR
-            val fullWh = (remainWh / batteryPercent.toDouble()) * 100.0
-            if (fullWh > 0.0 && fullWh.isFinite()) {
-                return FullChargeEnergyEstimate(
-                    energyWh = fullWh,
-                    source = EnergySource.NATIVE_FULL_ENERGY,
-                    quality = DataQuality.VALID,
-                    notes = setOf("基于硬件原生能量寄存器与当前电量反推")
-                )
-            }
-        }
-
-        // 优先级 2：当前真实满充容量 FCC × 标称电压（FCC已包含老化衰减，绝不二次乘 SOH）
+        // 优先级 1（首选）：当前真实满充容量 FCC × 标称电压（FCC 已包含老化衰减，稳定性高且不产生 SOC 量化跳变）
         if (fccMah != null && fccMah > 0f) {
             val fullWh = (fccMah.toDouble() * safeVolt) / 1000.0
             if (fullWh > 0.0 && fullWh.isFinite()) {
@@ -78,7 +66,7 @@ class FullChargeEnergyEstimator {
             }
         }
 
-        // 优先级 3：出厂设计容量 × 真实 SOH × 标称电压
+        // 优先级 2：出厂设计容量 × 真实 SOH × 标称电压
         if (designCapacityMah != null && designCapacityMah > 0f) {
             val effectiveSoh = if (sohPercent != null && sohPercent in 10.0f..150.0f) {
                 sohPercent.toDouble() / 100.0
@@ -97,6 +85,21 @@ class FullChargeEnergyEstimator {
                     } else {
                         setOf("无SOH数据，按标称出厂设计容量基础估算")
                     }
+                )
+            }
+        }
+
+        // 优先级 3（降级备选）：硬件原生剩余能量计数器结合电量百分比单点反推
+        // 限制：仅在前两项均缺失且 SOC >= 20% 时作为低质量估算，避免低电量时单点除法放大误差
+        if (nativeEnergyNwh != null && nativeEnergyNwh > 0L && batteryPercent != null && batteryPercent in 20..100) {
+            val remainWh = nativeEnergyNwh.toDouble() / NWH_TO_WH_FACTOR
+            val fullWh = (remainWh / batteryPercent.toDouble()) * 100.0
+            if (fullWh > 0.0 && fullWh.isFinite()) {
+                return FullChargeEnergyEstimate(
+                    energyWh = fullWh,
+                    source = EnergySource.NATIVE_FULL_ENERGY,
+                    quality = DataQuality.LOW_QUALITY,
+                    notes = setOf("基于硬件剩余能量寄存器与电量单点反推（低置信度降级）")
                 )
             }
         }

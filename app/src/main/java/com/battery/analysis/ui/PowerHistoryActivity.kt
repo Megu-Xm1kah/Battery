@@ -50,6 +50,11 @@ class PowerHistoryActivity : AppCompatActivity() {
     private var isDataLoading = false
 
     /**
+     * 标记耗电历史快照数据是否已完成初次加载，避免从详情页或后台返回时重复触发全量刷新与下拉进度动画。
+     */
+    private var isInitialLoaded = false
+
+    /**
      * 耗电历史记录放电持续时长筛选条件枚举。
      *
      * @property label 胶囊按钮与空状态提示文本
@@ -93,6 +98,8 @@ class PowerHistoryActivity : AppCompatActivity() {
         if (result.resultCode == PowerHistoryDetailActivity.RESULT_LOAD_TO_MAIN) {
             setResult(PowerHistoryDetailActivity.RESULT_LOAD_TO_MAIN)
             finish()
+        } else if (result.resultCode == RESULT_OK) {
+            loadHistoryList(isPullToRefresh = false)
         }
     }
 
@@ -118,11 +125,15 @@ class PowerHistoryActivity : AppCompatActivity() {
     }
 
     /**
-     * 界面恢复生命周期回调，进入页面或返回时自动触发历史列表重载并展示下拉刷新进度指示器。
+     * 界面恢复生命周期回调。仅在初次进入页面时触发历史列表重载并展示下拉刷新进度指示器，
+     * 从二级页面（如详情页）返回或切回前台时不再重复刷新。
      */
     override fun onResume() {
         super.onResume()
-        loadHistoryList(isPullToRefresh = true)
+        if (!isInitialLoaded) {
+            isInitialLoaded = true
+            loadHistoryList(isPullToRefresh = true)
+        }
     }
 
     /**

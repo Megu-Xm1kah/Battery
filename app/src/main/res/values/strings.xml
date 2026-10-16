@@ -463,6 +463,7 @@
     <string name="setting_restore_current_calibration">硬件电流校准</string>
     <string name="setting_restore_power_usage_pref">耗电统计偏好</string>
     <string name="setting_restore_timeline_metrics">趋势图指标</string>
+    <string name="dialog_restore_sync_settings">同步恢复应用偏好设置</string>
 
     <!-- 健康度指南说明弹窗 -->
     <string name="guide_title">电池健康度计算说明</string>

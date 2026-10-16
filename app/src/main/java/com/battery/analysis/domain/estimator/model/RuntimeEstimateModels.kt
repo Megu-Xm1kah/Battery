@@ -53,23 +53,27 @@ enum class RemainingModelVersion {
     /** 基础基线版本：标准时间尺度加权推算 */
     REMAINING_RUNTIME_V1,
     /** 阶段二升级版本：双门限突变响应 + MAD 工况联动 + 物理可用能量四级优先级与温度修正 */
-    REMAINING_RUNTIME_V2
+    REMAINING_RUNTIME_V2,
+    /** 阶段三修正升级版本（v2.1）：严格规范单位 + 凸组合跃迁响应 + 连续权重插值 + 忠实物理直读 */
+    REMAINING_RUNTIME_V2_1
 }
 
 /**
  * 剩余续航预测输出结果实体类。
- * 封装推算的理论物理可用毫秒数、预测综合功耗、剩余物理能量、置信度指标以及工况预测范围。
+ * 封装推算的理论物理可用毫秒数、预测综合功耗、剩余物理能量、置信度指标以及工况情景假设范围。
  *
- * @property remainingMs 预测的设备物理可用剩余时间（单位：毫秒，数据不足时为 null）
+ * @property remainingMs 预测的设备物理可用剩余时间（单位：毫秒，数据不足时为 null，严禁假数据）
  * @property predictedPowerWatts 算法融合预测的未来放电平均功率（单位：瓦特 W，数据不足时为 null）
  * @property remainingEnergyWh 计算采用的电池有效剩余能量（单位：瓦时 Wh，数据不足时为 null）
  * @property confidence 预测结果的综合可信度指数（取值范围 0.0 至 1.0）
  * @property modelType 产生本次预测结果的算法模型分类 [RuntimeModelType]
  * @property sampleCount 纳入本次预测的有效物理样本总数
  * @property modelVersion 产生本次预测结果的算法模型版本 [RemainingModelVersion]
- * @property confidenceLevel 预测结果的可信度等级枚举 [FullChargeRuntimeModelsKt.RuntimeConfidenceLevel]
- * @property minRemainingMs 高负载/重载工况下的预期较短剩余时长（单位：毫秒，可选）
- * @property maxRemainingMs 轻负载/节能工况下的预期较长剩余时长（单位：毫秒，可选）
+ * @property confidenceLevel 预测结果的可信度等级枚举 [RuntimeConfidenceLevel]
+ * @property minRemainingMs 高负载/重载工况情景假设下的预期较短剩余时长（单位：毫秒，可选）
+ * @property maxRemainingMs 轻负载/节能工况情景假设下的预期较长剩余时长（单位：毫秒，可选）
+ * @property qualityReasons 预测数据质量与降级原因列表（用于解释置信度与模型依据）
+ * @property unavailableReason 数据不可用时的明确物理原因（当 remainingMs 为 null 时说明原因）
  */
 data class RuntimeEstimate(
     val remainingMs: Long?,
@@ -78,8 +82,10 @@ data class RuntimeEstimate(
     val confidence: Double,
     val modelType: RuntimeModelType,
     val sampleCount: Int = 0,
-    val modelVersion: RemainingModelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2,
+    val modelVersion: RemainingModelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
     val confidenceLevel: RuntimeConfidenceLevel = RuntimeConfidenceLevel.fromScore(confidence),
     val minRemainingMs: Long? = null,
-    val maxRemainingMs: Long? = null
+    val maxRemainingMs: Long? = null,
+    val qualityReasons: List<String> = emptyList(),
+    val unavailableReason: String? = null
 )

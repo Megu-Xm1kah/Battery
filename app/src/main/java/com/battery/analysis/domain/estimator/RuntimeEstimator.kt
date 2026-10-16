@@ -1,5 +1,6 @@
 package com.battery.analysis.domain.estimator
 
+import com.battery.analysis.domain.estimator.model.RemainingModelVersion
 import com.battery.analysis.domain.estimator.model.RuntimeEstimate
 import com.battery.analysis.domain.estimator.model.RuntimeModelType
 import kotlin.math.roundToLong
@@ -107,12 +108,18 @@ class RuntimeEstimator(
     ): RuntimeEstimate {
         val predictedPower = onPowerEstimator.getPredictedPower()
         if (usableEnergyWh == null || usableEnergyWh <= 0.0 || predictedPower == null || predictedPower <= 0.0) {
+            val reason = when {
+                usableEnergyWh == null || usableEnergyWh <= 0.0 -> "剩余物理可用能量不可用"
+                else -> "亮屏预测放电功率数据不足"
+            }
             return RuntimeEstimate(
                 remainingMs = null,
                 predictedPowerWatts = predictedPower,
                 remainingEnergyWh = usableEnergyWh,
                 confidence = 0.0,
-                modelType = RuntimeModelType.INSUFFICIENT_DATA
+                modelType = RuntimeModelType.INSUFFICIENT_DATA,
+                modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
+                unavailableReason = reason
             )
         }
 
@@ -130,8 +137,15 @@ class RuntimeEstimator(
         val safeMaxOnMs = if (remainingMs > 0L) kotlin.math.max(maxOnMs, remainingMs) else maxOnMs
 
         var confidence = onPowerEstimator.getConfidence()
+        val qualityReasons = mutableListOf<String>()
+        if (onPowerEstimator.totalSessionDurationMs > 0L) {
+            qualityReasons.add("基于当前会话与历史多时间尺度融合")
+        } else {
+            qualityReasons.add("基于当前直接采样推算")
+        }
         if (batteryLevelPercent != null && batteryLevelPercent < 10.0f) {
-            confidence *= 0.80 // 低电量区域压降变化剧烈，降低预测置信度
+            confidence *= 0.80 // 低电量区域压降变化剧烈，提示预测不确定性
+            qualityReasons.add("剩余电量低于10%，放电极化内阻增大")
         }
 
         return RuntimeEstimate(
@@ -141,8 +155,10 @@ class RuntimeEstimator(
             confidence = confidence,
             modelType = if (onPowerEstimator.totalSessionDurationMs > 0L) RuntimeModelType.MULTI_TIMESCALE else RuntimeModelType.CURRENT,
             sampleCount = onPowerEstimator.sampleCount,
+            modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
             minRemainingMs = if (safeMinOnMs > 0L) safeMinOnMs else null,
-            maxRemainingMs = if (safeMaxOnMs > 0L) safeMaxOnMs else null
+            maxRemainingMs = if (safeMaxOnMs > 0L) safeMaxOnMs else null,
+            qualityReasons = qualityReasons
         )
     }
 
@@ -161,12 +177,18 @@ class RuntimeEstimator(
     ): RuntimeEstimate {
         val predictedPower = offPowerEstimator.getPredictedPower()
         if (usableEnergyWh == null || usableEnergyWh <= 0.0 || predictedPower == null || predictedPower <= 0.0) {
+            val reason = when {
+                usableEnergyWh == null || usableEnergyWh <= 0.0 -> "剩余物理可用能量不可用"
+                else -> "息屏待机预测功耗数据不足"
+            }
             return RuntimeEstimate(
                 remainingMs = null,
                 predictedPowerWatts = predictedPower,
                 remainingEnergyWh = usableEnergyWh,
                 confidence = 0.0,
-                modelType = RuntimeModelType.INSUFFICIENT_DATA
+                modelType = RuntimeModelType.INSUFFICIENT_DATA,
+                modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
+                unavailableReason = reason
             )
         }
 
@@ -184,8 +206,15 @@ class RuntimeEstimator(
         val safeMaxOffMs = if (remainingMs > 0L) kotlin.math.max(maxOffMs, remainingMs) else maxOffMs
 
         var confidence = offPowerEstimator.getConfidence()
+        val qualityReasons = mutableListOf<String>()
+        if (offPowerEstimator.totalSessionDurationMs > 0L) {
+            qualityReasons.add("基于待机休眠与唤醒多时间尺度融合")
+        } else {
+            qualityReasons.add("基于当前待机直接采样推算")
+        }
         if (batteryLevelPercent != null && batteryLevelPercent < 10.0f) {
             confidence *= 0.80
+            qualityReasons.add("剩余电量低于10%，放电极化内阻增大")
         }
 
         return RuntimeEstimate(
@@ -195,8 +224,10 @@ class RuntimeEstimator(
             confidence = confidence,
             modelType = if (offPowerEstimator.totalSessionDurationMs > 0L) RuntimeModelType.MULTI_TIMESCALE else RuntimeModelType.CURRENT,
             sampleCount = offPowerEstimator.sampleCount,
+            modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
             minRemainingMs = if (safeMinOffMs > 0L) safeMinOffMs else null,
-            maxRemainingMs = if (safeMaxOffMs > 0L) safeMaxOffMs else null
+            maxRemainingMs = if (safeMaxOffMs > 0L) safeMaxOffMs else null,
+            qualityReasons = qualityReasons
         )
     }
 
@@ -226,7 +257,9 @@ class RuntimeEstimator(
                 predictedPowerWatts = null,
                 remainingEnergyWh = null,
                 confidence = 0.0,
-                modelType = RuntimeModelType.INSUFFICIENT_DATA
+                modelType = RuntimeModelType.INSUFFICIENT_DATA,
+                modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
+                unavailableReason = "剩余物理可用能量不可用"
             )
         }
 
@@ -249,8 +282,11 @@ class RuntimeEstimator(
                 val safeMaxGlobalMs = if (remainingMs > 0L) kotlin.math.max(maxGlobalMs, remainingMs) else maxGlobalMs
 
                 var blendedConfidence = (onPowerEstimator.getConfidence() * 0.5 + offPowerEstimator.getConfidence() * 0.5)
+                val qualityReasons = mutableListOf<String>()
+                qualityReasons.add("融合用户日常作息亮屏/息屏时间占空比")
                 if (batteryLevelPercent != null && batteryLevelPercent < 10.0f) {
                     blendedConfidence *= 0.80
+                    qualityReasons.add("剩余电量低于10%，放电极化内阻增大")
                 }
                 return RuntimeEstimate(
                     remainingMs = if (remainingMs > 0L) remainingMs else null,
@@ -259,8 +295,10 @@ class RuntimeEstimator(
                     confidence = blendedConfidence,
                     modelType = RuntimeModelType.GLOBAL_COMPOSITE,
                     sampleCount = onPowerEstimator.sampleCount + offPowerEstimator.sampleCount,
+                    modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
                     minRemainingMs = if (safeMinGlobalMs > 0L) safeMinGlobalMs else null,
-                    maxRemainingMs = if (safeMaxGlobalMs > 0L) safeMaxGlobalMs else null
+                    maxRemainingMs = if (safeMaxGlobalMs > 0L) safeMaxGlobalMs else null,
+                    qualityReasons = qualityReasons
                 )
             }
         }
@@ -287,8 +325,10 @@ class RuntimeEstimator(
                 confidence = fallbackGlobalEstimator?.getConfidence() ?: 0.40,
                 modelType = RuntimeModelType.CURRENT,
                 sampleCount = fallbackGlobalEstimator?.sampleCount ?: 0,
+                modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
                 minRemainingMs = if (safeMinFallbackMs > 0L) safeMinFallbackMs else null,
-                maxRemainingMs = if (safeMaxFallbackMs > 0L) safeMaxFallbackMs else null
+                maxRemainingMs = if (safeMaxFallbackMs > 0L) safeMaxFallbackMs else null,
+                qualityReasons = listOf("细分场景不全，降级至单项或全局直接采样")
             )
         }
 
@@ -297,7 +337,9 @@ class RuntimeEstimator(
             predictedPowerWatts = null,
             remainingEnergyWh = usableEnergyWh,
             confidence = 0.0,
-            modelType = RuntimeModelType.INSUFFICIENT_DATA
+            modelType = RuntimeModelType.INSUFFICIENT_DATA,
+            modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
+            unavailableReason = "缺乏亮屏、息屏或全局有效放电功耗数据"
         )
     }
 
@@ -404,5 +446,5 @@ data class TripleRuntimeResult(
     val screenOffEstimate: RuntimeEstimate,
     val globalEstimate: RuntimeEstimate,
     val modelVersion: com.battery.analysis.domain.estimator.model.RemainingModelVersion =
-        com.battery.analysis.domain.estimator.model.RemainingModelVersion.REMAINING_RUNTIME_V2
+        com.battery.analysis.domain.estimator.model.RemainingModelVersion.REMAINING_RUNTIME_V2_1
 )
