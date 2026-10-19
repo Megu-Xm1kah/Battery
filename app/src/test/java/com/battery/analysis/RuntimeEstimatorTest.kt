@@ -364,4 +364,113 @@ class RuntimeEstimatorTest {
         assertEquals(7_200_000L, onProfileEst.minRemainingMs!!)
         assertEquals(28_800_000L, onProfileEst.maxRemainingMs!!)
     }
+
+    /**
+     * 测试当数据不足导致主剩余续航为 null 时，minRemainingMs 与 maxRemainingMs 同步为 null。
+     * 验证绝不在主续航为 null 时泄露虚假范围区间，确保 UI 展示与底层数据一致性。
+     */
+    @Test
+    fun testRemainingMsNull_BoundsMustAlsoBeNull() {
+        val emptyEstimator = PowerEstimator()
+
+        // 1. 亮屏估计器功率为 null
+        val onResult = estimator.estimateScreenOn(
+            usableEnergyWh = 10.0,
+            onPowerEstimator = emptyEstimator
+        )
+        assertNull("亮屏主续航必须为 null", onResult.remainingMs)
+        assertNull("亮屏最小续航必须同步为 null", onResult.minRemainingMs)
+        assertNull("亮屏最大续航必须同步为 null", onResult.maxRemainingMs)
+
+        // 2. 息屏估计器功率为 null
+        val offResult = estimator.estimateScreenOff(
+            usableEnergyWh = 10.0,
+            offPowerEstimator = emptyEstimator
+        )
+        assertNull("息屏主续航必须为 null", offResult.remainingMs)
+        assertNull("息屏最小续航必须同步为 null", offResult.minRemainingMs)
+        assertNull("息屏最大续航必须同步为 null", offResult.maxRemainingMs)
+
+        // 3. 全局估计数据不足
+        val globalResult = estimator.estimateGlobal(
+            usableEnergyWh = 10.0,
+            screenOnRatio = null,
+            onPowerEstimator = emptyEstimator,
+            offPowerEstimator = emptyEstimator,
+            fallbackGlobalEstimator = null
+        )
+        assertNull("全局主续航必须为 null", globalResult.remainingMs)
+        assertNull("全局最小续航必须同步为 null", globalResult.minRemainingMs)
+        assertNull("全局最大续航必须同步为 null", globalResult.maxRemainingMs)
+    }
+
+    /**
+     * 测试全局续航降级至单项或全局直接估计器时，置信度与样本数量动态继承自真实被选中的估计器。
+     * 验证彻底消除 0.40 硬编码虚构置信度与 0 样本数漏洞。
+     */
+    @Test
+    fun testEstimateGlobalFallback_UsesSelectedEstimatorConfidenceAndSampleCount() {
+        val onEstimator = PowerEstimator()
+        // 注入亮屏稳态样本，产生明确的置信度与样本数
+        onEstimator.seedCurrentSession(durationMs = 1_800_000L, powerWatts = 3.0f)
+        val expectedConfidence = onEstimator.getConfidence()
+
+        val emptyOffEstimator = PowerEstimator()
+
+        // 细分场景不全（缺乏有效 off 数据与 ratio），降级至 onEstimator
+        val fallbackResult = estimator.estimateGlobal(
+            usableEnergyWh = 15.0,
+            screenOnRatio = null,
+            onPowerEstimator = onEstimator,
+            offPowerEstimator = emptyOffEstimator,
+            fallbackGlobalEstimator = null,
+            batteryLevelPercent = 50.0f
+        )
+
+        assertNotNull("降级主续航有效", fallbackResult.remainingMs)
+        assertEquals(3.0, fallbackResult.predictedPowerWatts!!, 0.001)
+        assertEquals("置信度必须真实继承自被选中的 onEstimator，绝非硬编码 0.40", expectedConfidence, fallbackResult.confidence, 0.001)
+        assertEquals("样本数必须继承自被选中的 onEstimator", onEstimator.sampleCount, fallbackResult.sampleCount)
+    }
+
+    /**
+     * 测试 estimateTripleRuntimes 优先对接 FullChargeRuntimeResult 的 v2 高阶预测功耗作为 Long 尺度基准。
+     * 验证两套模型在物理基准功率上的科学协同与一致性。
+     */
+    @Test
+    fun testEstimateTripleRuntimes_PrefersV2PredictedPowerAsLongBaseline() {
+        // v2 高阶模型测算的科学预测功耗（例如亮屏 2.2W，息屏 0.15W，全局 1.1W）
+        val v2Result = com.battery.analysis.domain.estimator.model.FullChargeRuntimeResult(
+            fullRuntimeMs = 40_000_000L,
+            fullEnergyWh = 20.0,
+            predictedPowerWatts = 1.1,
+            predictedScreenOnPowerWatts = 2.2,
+            predictedScreenOffPowerWatts = 0.15,
+            confidenceLevel = com.battery.analysis.domain.estimator.model.RuntimeConfidenceLevel.HIGH,
+            energySource = com.battery.analysis.domain.estimator.model.EnergySource.FCC_TIMES_NOMINAL_VOLTAGE,
+            effectiveHistoryMs = 7 * 86400 * 1000L,
+            usedRegimeModel = true
+        )
+
+        // 故意设置不同的线性统计放电速率（若未优先对接 v2，则会算出不同的线性粗略值）
+        val sevenDays = SevenDaysDischargeStats(
+            screenOnDischargeRatePercentPerHour = 20.0f, // 20% * 20Wh = 4.0W（粗暴线性算法）
+            screenOffDischargeRatePercentPerHour = 2.0f,
+            globalDischargeRatePercentPerHour = 10.0f,
+            v2Result = v2Result
+        )
+
+        // 会话数据为空，纯依赖 Long 尺度历史基线
+        val result = estimator.estimateTripleRuntimes(
+            overview = null,
+            sevenDaysStats = sevenDays,
+            batteryLevelPercent = 50.0f,
+            totalCapacityWh = 20.0f,
+            tempCelsius = 25.0f
+        )
+
+        assertEquals("亮屏 Long 尺度基线必须优先采纳 v2Result 高阶建模功率 2.2W", 2.2, result.screenOnEstimate.predictedPowerWatts!!, 0.001)
+        assertEquals("息屏 Long 尺度基线必须优先采纳 v2Result 高阶建模功率 0.15W", 0.15, result.screenOffEstimate.predictedPowerWatts!!, 0.001)
+    }
 }
+

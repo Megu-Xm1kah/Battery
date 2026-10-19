@@ -88,4 +88,44 @@ class BatteryUnitNormalizerTest {
         assertNull(BatteryUnitNormalizer.normalizeChargeCounterToMah(0L))
         assertNull(BatteryUnitNormalizer.normalizeChargeCounterToMah(-1000L))
     }
+
+    /**
+     * 测试在有效电压与有效电流下的真实物理瞬时放电功率计算。
+     */
+    @Test
+    fun testCalculatePowerWattsWithValidInputs() {
+        // 电压 4.0V，电流 500mA -> 2.0W
+        val power = com.battery.analysis.util.BatteryUnitNormalizer.calculatePowerWatts(
+            voltageVolts = 4.0f,
+            currentMa = 500f
+        )
+        assertEquals(2.0f, power, 0.001f)
+    }
+
+    /**
+     * 测试在非法电压（<= 0f）或零电流时，忠实反映真实物理状态，返回 0f，绝不捏造 4.0V 虚假电压。
+     */
+    @Test
+    fun testCalculatePowerWattsWithInvalidVoltageReturnsZero() {
+        // 非法电压 0f 或负数，严禁虚构 4.0V
+        val powerZeroVolt = com.battery.analysis.util.BatteryUnitNormalizer.calculatePowerWatts(
+            voltageVolts = 0f,
+            currentMa = 1000f
+        )
+        assertEquals("非法电压必须返回 0f，杜绝 4.0V 虚假硬编码保底", 0f, powerZeroVolt, 0.0001f)
+
+        val powerNegativeVolt = com.battery.analysis.util.BatteryUnitNormalizer.calculatePowerWatts(
+            voltageVolts = -3.8f,
+            currentMa = 1000f
+        )
+        assertEquals("负数电压必须返回 0f", 0f, powerNegativeVolt, 0.0001f)
+
+        // 零电流
+        val powerZeroCur = com.battery.analysis.util.BatteryUnitNormalizer.calculatePowerWatts(
+            voltageVolts = 4.0f,
+            currentMa = 0f
+        )
+        assertEquals("零电流必须返回 0f 功率", 0f, powerZeroCur, 0.0001f)
+    }
 }
+

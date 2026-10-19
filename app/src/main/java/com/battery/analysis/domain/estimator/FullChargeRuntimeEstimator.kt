@@ -325,7 +325,7 @@ class FullChargeRuntimeEstimator(
             offLowPowerW = offLowPower,
             offHighPowerW = offHighPower,
             typicalScreenOffPowerW = pTypicalScreenOff,
-            typicalGlobalPowerW = pGlobalComposite,
+            typicalGlobalPowerW = finalPredictedPower,
             confidence = confidence
         )
 

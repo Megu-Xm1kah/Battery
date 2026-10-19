@@ -1463,7 +1463,7 @@ class PowerUsageFragment : Fragment() {
             v2Result = sevenDays?.v2Result,
             remainingEstimate = remEstimate,
             displayUnit = currentDisplayUnit,
-            nominalVoltageVolts = pkg?.batterySnapshot?.voltageVolts ?: BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS
+            nominalVoltageVolts = BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS
         )
         if (message.isNotBlank()) {
             showBubbleTooltip(anchorView, message, autoDismissMs = 0L)

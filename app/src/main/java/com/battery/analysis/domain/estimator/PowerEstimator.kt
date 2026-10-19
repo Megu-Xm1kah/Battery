@@ -110,6 +110,44 @@ class PowerEstimator(
     }
 
     /**
+     * 单独设置 Medium 尺度（当前会话稳态）估算功率与会话时长，保持 Fast 尺度不变或空置。
+     * 用于从持久化会话统计加载稳态基准，但尚无近期细粒度采样点的场景。
+     *
+     * @param durationMs 当前会话已持续物理时长（单位：毫秒）
+     * @param powerWatts 当前会话测得的平均物理功率（单位：W）
+     */
+    fun setMediumTermPower(durationMs: Long, powerWatts: Float) {
+        if (durationMs >= 0L && powerWatts > 0f) {
+            totalSessionDurationMs = durationMs
+            val p = powerWatts.toDouble()
+            mediumPowerWatts = p
+            sampleCount = sampleCount.coerceAtLeast(1)
+            if (stateDetector.baselinePowerWatts == null) {
+                stateDetector.reset(p)
+            }
+        }
+    }
+
+    /**
+     * 标记或注入外部工况突变状态。
+     * 当外部业务层（如亮灭屏、启动大型应用等）识别到工况跃迁时通知估计器，用于敏捷自适应加权调整。
+     *
+     * @param isChanging 是否正处于工况突变跃迁状态
+     */
+    fun notifyRegimeChange(isChanging: Boolean) {
+        if (isChanging) {
+            val base = mediumPowerWatts ?: fastPowerWatts ?: longPowerWatts ?: 2.0
+            stateDetector.reset(base)
+            // 连续输入偏离样本以激活检测器的工况突变标志与响应乘数
+            stateDetector.update((base * 2.5).toFloat())
+            stateDetector.update((base * 2.5).toFloat())
+        } else {
+            val base = mediumPowerWatts ?: fastPowerWatts ?: longPowerWatts ?: 2.0
+            stateDetector.reset(base)
+        }
+    }
+
+    /**
      * 向估计器注入一个新的物理电池采样点并更新各时间尺度模型。
      * 充电状态数据将被严格拦截，不进入放电功耗模型。
      *
@@ -208,6 +246,13 @@ class PowerEstimator(
      *
      * @return 包含 (w_fast, w_medium, w_long) 且和为 1.0 的权重三元组 [Triple]
      */
+    /**
+     * 结合当前已积累的数据量、多尺度间方差稳定性与工况迁移状态，
+     * 自适应计算 Fast/Medium/Long 三个模型的动态归一化权重。
+     * 严格遵循凸组合守恒：所有存在的尺度权重和恒等于 1.0，不存在的尺度权重严格为 0.0。
+     *
+     * @return 包含 (w_fast, w_medium, w_long) 且有效项之和为 1.0 的权重三元组 [Triple]
+     */
     fun calculateAdaptiveWeights(): Triple<Double, Double, Double> {
         val hasFast = fastPowerWatts != null && fastPowerWatts!! > 0.0
         val hasMedium = mediumPowerWatts != null && mediumPowerWatts!! > 0.0
@@ -217,72 +262,120 @@ class PowerEstimator(
             return Triple(0.0, 0.0, 0.0)
         }
 
-        // 1. 基础时间连续权重插值分配（依据当前会话已持续物理时长平滑过渡，杜绝阶跃跳变）
-        val (baseWf, baseWm, baseWl) = interpolateBaselineWeights(totalSessionDurationMs)
+        // 仅有一个有效数据源时，直接赋予 100% 权重，彻底杜绝除零或越界
+        if (hasFast && !hasMedium && !hasLong) return Triple(1.0, 0.0, 0.0)
+        if (!hasFast && hasMedium && !hasLong) return Triple(0.0, 1.0, 0.0)
+        if (!hasFast && !hasMedium && hasLong) return Triple(0.0, 0.0, 1.0)
 
-        // 2. 若部分数据源缺失，依据既定插值比率自适应重归一化，保持平滑连续性
-        if (!hasLong && hasFast && hasMedium) {
-            val sumFM = baseWf + baseWm
-            val normWf = if (sumFM > 0.0) baseWf / sumFM else 0.5
-            val normWm = if (sumFM > 0.0) baseWm / sumFM else 0.5
-            return applyRegimeChangeIfNeeded(normWf, normWm, 0.0)
-        } else if (!hasLong && hasFast) {
-            return Triple(1.0, 0.0, 0.0)
-        } else if (!hasLong && hasMedium) {
-            return Triple(0.0, 1.0, 0.0)
-        } else if (hasLong && !hasFast && !hasMedium) {
-            return Triple(0.0, 0.0, 1.0)
-        } else if (hasLong && hasFast && !hasMedium) {
-            val sumFL = baseWf + baseWl
-            val normWf = if (sumFL > 0.0) baseWf / sumFL else 0.5
-            val normWl = if (sumFL > 0.0) baseWl / sumFL else 0.5
-            return applyRegimeChangeIfNeeded(normWf, 0.0, normWl)
-        }
+        // 1. 依据当前会话已持续物理时长在 7 级时间锚点间进行连续平滑线性插值
+        val (rawWf, rawWm, rawWl) = interpolateBaselineWeights(totalSessionDurationMs)
 
-        // 3. 完整三数据源均存在时的稳定性修正与工况突变响应
-        return applyRegimeChangeIfNeeded(baseWf, baseWm, baseWl)
+        // 2. 依据实际存在的数据源掩码进行初步加权分配与重归一化（缺失的尺度置为 0.0）
+        val initWf = if (hasFast) rawWf else 0.0
+        val initWm = if (hasMedium) rawWm else 0.0
+        val initWl = if (hasLong) rawWl else 0.0
+        val initSum = initWf + initWm + initWl
+
+        val baseWf = if (initSum > 0.0) initWf / initSum else 0.0
+        val baseWm = if (initSum > 0.0) initWm / initSum else 0.0
+        val baseWl = if (initSum > 0.0) initWl / initSum else 0.0
+
+        // 3. 在有效数据源集合内应用工况突变增益或稳态收敛调整
+        return applyRegimeChangeIfNeeded(
+            baseWf = baseWf,
+            baseWm = baseWm,
+            baseWl = baseWl,
+            hasFast = hasFast,
+            hasMedium = hasMedium,
+            hasLong = hasLong
+        )
     }
 
     /**
-     * 根据工况突变状态对基准权重进行凸组合动态调整并严格归一化。
+     * 根据工况突变状态对基准权重进行动态凸组合调整，并严格约束仅在有效数据源间分配。
      *
-     * @param baseWf Fast 基础权重
-     * @param baseWm Medium 基础权重
-     * @param baseWl Long 基础权重
+     * 动态分配策略：
+     * 1. 发生工况突变时：优先将响应权重向 Fast 尺度倾斜；若 Fast 不存在但 Medium 存在，则向 Medium 倾斜；
+     *    严禁给不存在（null）的尺度分配任何突变权重，防止有效权重凭空蒸发导致预测功率暴跌；
+     * 2. 稳态运行且 Fast 与 Medium 接近时：适度降低 Long 依赖，增强当前会话代表性；
+     * 3. 最终严格执行重新归一化消除微小浮点误差，确保权重和恒等于 1.0。
+     *
+     * @param baseWf Fast 基础权重（若无该数据源传入 0.0）
+     * @param baseWm Medium 基础权重（若无该数据源传入 0.0）
+     * @param baseWl Long 基础权重（若无该数据源传入 0.0）
+     * @param hasFast 是否具备有效的 Fast 尺度数据源
+     * @param hasMedium 是否具备有效的 Medium 尺度数据源
+     * @param hasLong 是否具备有效的 Long 尺度数据源
      * @return 经过工况响应与归一化后的 (w_fast, w_medium, w_long) 权重三元组 [Triple]
      */
     private fun applyRegimeChangeIfNeeded(
         baseWf: Double,
         baseWm: Double,
-        baseWl: Double
+        baseWl: Double,
+        hasFast: Boolean,
+        hasMedium: Boolean,
+        hasLong: Boolean
     ): Triple<Double, Double, Double> {
         val (finalWf, finalWm, finalWl) = if (stateDetector.isRegimeChanging) {
             val mult = stateDetector.getResponsivenessMultiplier()
-            // 计算响应因子 gamma，范围在 0.40 至 0.85 之间
+            // 计算自适应响应因子 gamma（取值 0.40 至 0.85 之间）
             val gamma = (0.30 + (mult - 1.0) * 0.40).coerceIn(0.40, 0.85)
-            val wfPrime = baseWf + gamma * (1.0 - baseWf)
-            val wmPrime = (1.0 - gamma) * baseWm
-            val wlPrime = (1.0 - gamma) * baseWl
-            Triple(wfPrime, wmPrime, wlPrime)
+
+            when {
+                // 首选：Fast 存在，向 Fast 尺度快速倾斜
+                hasFast -> {
+                    val wfPrime = baseWf + gamma * (1.0 - baseWf)
+                    val wmPrime = if (hasMedium) (1.0 - gamma) * baseWm else 0.0
+                    val wlPrime = if (hasLong) (1.0 - gamma) * baseWl else 0.0
+                    Triple(wfPrime, wmPrime, wlPrime)
+                }
+                // 次选：Fast 不存在但 Medium 存在（如只有 Medium + Long），向当前最快的 Medium 尺度倾斜
+                hasMedium && hasLong -> {
+                    val wmPrime = baseWm + gamma * (1.0 - baseWm)
+                    val wlPrime = (1.0 - gamma) * baseWl
+                    Triple(0.0, wmPrime, wlPrime)
+                }
+                else -> {
+                    Triple(baseWf, baseWm, baseWl)
+                }
+            }
         } else {
-            // 稳态下若 Fast 与 Medium 差异很小（稳定运行），温和降低 Long 依赖
-            val f = fastPowerWatts ?: 0.0
-            val m = mediumPowerWatts ?: 0.0
-            if (f > 0.0 && m > 0.0 && abs(f - m) / m < 0.15 && baseWl > 0.0) {
-                val shift = baseWl * 0.15
-                Triple(baseWf, baseWm + shift, baseWl - shift)
+            // 稳态下若 Fast 与 Medium 均存在且差异很小（稳定运行），温和降低 Long 依赖
+            if (hasFast && hasMedium && hasLong) {
+                val f = fastPowerWatts ?: 0.0
+                val m = mediumPowerWatts ?: 0.0
+                if (f > 0.0 && m > 0.0 && abs(f - m) / m < 0.15 && baseWl > 0.0) {
+                    val shift = baseWl * 0.15
+                    Triple(baseWf, baseWm + shift, baseWl - shift)
+                } else {
+                    Triple(baseWf, baseWm, baseWl)
+                }
             } else {
                 Triple(baseWf, baseWm, baseWl)
             }
         }
 
-        // 严格消除微小浮点精度误差，确保 wf + wm + wl == 1.0
-        val sum = finalWf + finalWm + finalWl
+        // 严格消除微小浮点精度误差，确保有效项之和严格恒等于 1.0
+        val sum = finalWf + finalWm + finalLCorrection(finalWl, hasLong)
         return if (sum > 0.0) {
-            Triple(finalWf / sum, finalWm / sum, finalWl / sum)
+            val normWf = if (hasFast) finalWf / sum else 0.0
+            val normWm = if (hasMedium) finalWm / sum else 0.0
+            val normWl = if (hasLong) (1.0 - normWf - normWm).coerceAtLeast(0.0) else 0.0
+            Triple(normWf, normWm, normWl)
         } else {
             Triple(0.0, 0.0, 1.0)
         }
+    }
+
+    /**
+     * 辅助校验 Long 权重的存在性。
+     *
+     * @param wl 计算得出的 Long 权重数值
+     * @param hasLong 是否具备有效的 Long 尺度数据源
+     * @return 校验修正后的 Long 权重数值
+     */
+    private fun finalLCorrection(wl: Double, hasLong: Boolean): Double {
+        return if (hasLong) wl else 0.0
     }
 
     /**

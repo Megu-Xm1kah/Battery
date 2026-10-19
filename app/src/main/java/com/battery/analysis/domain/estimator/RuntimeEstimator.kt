@@ -169,8 +169,8 @@ class RuntimeEstimator(
             modelType = modelType,
             sampleCount = onPowerEstimator.sampleCount,
             modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
-            minRemainingMs = if (safeMinOnMs > 0L) safeMinOnMs else null,
-            maxRemainingMs = if (safeMaxOnMs > 0L) safeMaxOnMs else null,
+            minRemainingMs = if (remainingMs > 0L && safeMinOnMs > 0L) safeMinOnMs else null,
+            maxRemainingMs = if (remainingMs > 0L && safeMaxOnMs > 0L) safeMaxOnMs else null,
             qualityReasons = qualityReasons
         )
     }
@@ -250,8 +250,8 @@ class RuntimeEstimator(
             modelType = modelType,
             sampleCount = offPowerEstimator.sampleCount,
             modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
-            minRemainingMs = if (safeMinOffMs > 0L) safeMinOffMs else null,
-            maxRemainingMs = if (safeMaxOffMs > 0L) safeMaxOffMs else null,
+            minRemainingMs = if (remainingMs > 0L && safeMinOffMs > 0L) safeMinOffMs else null,
+            maxRemainingMs = if (remainingMs > 0L && safeMaxOffMs > 0L) safeMaxOffMs else null,
             qualityReasons = qualityReasons
         )
     }
@@ -325,19 +325,25 @@ class RuntimeEstimator(
                     modelType = RuntimeModelType.GLOBAL_COMPOSITE,
                     sampleCount = onPowerEstimator.sampleCount + offPowerEstimator.sampleCount,
                     modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
-                    minRemainingMs = if (safeMinGlobalMs > 0L) safeMinGlobalMs else null,
-                    maxRemainingMs = if (safeMaxGlobalMs > 0L) safeMaxGlobalMs else null,
+                    minRemainingMs = if (remainingMs > 0L && safeMinGlobalMs > 0L) safeMinGlobalMs else null,
+                    maxRemainingMs = if (remainingMs > 0L && safeMaxGlobalMs > 0L) safeMaxGlobalMs else null,
                     qualityReasons = qualityReasons
                 )
             }
         }
 
-        // 场景解构数据不全时，尝试采用全局直接估计器降级
-        val pFallback = fallbackGlobalEstimator?.getPredictedPower()
-            ?: pOn
-            ?: pOff
+        // 场景解构数据不全时，尝试采用全局直接估计器或单项估计器降级
+        val (selectedEstimator, pFallback) = when {
+            fallbackGlobalEstimator?.getPredictedPower()?.takeIf { it > 0.0 } != null ->
+                fallbackGlobalEstimator to fallbackGlobalEstimator.getPredictedPower()!!
+            pOn != null && pOn > 0.0 ->
+                onPowerEstimator to pOn
+            pOff != null && pOff > 0.0 ->
+                offPowerEstimator to pOff
+            else -> null to null
+        }
 
-        if (pFallback != null && pFallback > 0.0) {
+        if (selectedEstimator != null && pFallback != null && pFallback > 0.0) {
             val hours = usableEnergyWh / pFallback
             val remainingMs = (hours * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
 
@@ -348,17 +354,24 @@ class RuntimeEstimator(
             val safeMinFallbackMs = if (remainingMs > 0L) kotlin.math.min(minFallbackMs, remainingMs) else minFallbackMs
             val safeMaxFallbackMs = if (remainingMs > 0L) kotlin.math.max(maxFallbackMs, remainingMs) else maxFallbackMs
 
+            var fallbackConfidence = selectedEstimator.getConfidence()
+            val qualityReasons = mutableListOf("细分场景不全，降级至单项或全局直接采样")
+            if (batteryLevelPercent != null && batteryLevelPercent < 10.0f) {
+                fallbackConfidence *= 0.80
+                qualityReasons.add("剩余电量低于10%，放电极化内阻增大")
+            }
+
             return RuntimeEstimate(
                 remainingMs = if (remainingMs > 0L) remainingMs else null,
                 predictedPowerWatts = pFallback,
                 remainingEnergyWh = usableEnergyWh,
-                confidence = fallbackGlobalEstimator?.getConfidence() ?: 0.40,
+                confidence = fallbackConfidence,
                 modelType = RuntimeModelType.CURRENT,
-                sampleCount = fallbackGlobalEstimator?.sampleCount ?: 0,
+                sampleCount = selectedEstimator.sampleCount,
                 modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
-                minRemainingMs = if (safeMinFallbackMs > 0L) safeMinFallbackMs else null,
-                maxRemainingMs = if (safeMaxFallbackMs > 0L) safeMaxFallbackMs else null,
-                qualityReasons = listOf("细分场景不全，降级至单项或全局直接采样")
+                minRemainingMs = if (remainingMs > 0L && safeMinFallbackMs > 0L) safeMinFallbackMs else null,
+                maxRemainingMs = if (remainingMs > 0L && safeMaxFallbackMs > 0L) safeMaxFallbackMs else null,
+                qualityReasons = qualityReasons
             )
         }
 
@@ -409,14 +422,15 @@ class RuntimeEstimator(
         val offHighW = profile?.offHighPowerW
         val offLowW = profile?.offLowPowerW
 
-        // 1. 构建亮屏多时间尺度估计器
+        // 1. 构建亮屏多时间尺度估计器（优先对接 v2Result 预测功耗作为 Long 尺度基准）
         val onEstimator = PowerEstimator()
-        val longOnPower = if (sevenDaysStats != null && totalCapacityWh != null && totalCapacityWh > 0f) {
-            val rate = sevenDaysStats.screenOnDischargeRatePercentPerHour
-            if (rate != null && rate > 0f) {
-                (rate.toDouble() / 100.0) * totalCapacityWh.toDouble()
+        val longOnPower = sevenDaysStats?.v2Result?.predictedScreenOnPowerWatts
+            ?: if (sevenDaysStats != null && totalCapacityWh != null && totalCapacityWh > 0f) {
+                val rate = sevenDaysStats.screenOnDischargeRatePercentPerHour
+                if (rate != null && rate > 0f) {
+                    (rate.toDouble() / 100.0) * totalCapacityWh.toDouble()
+                } else null
             } else null
-        } else null
         onEstimator.setLongTermPower(longOnPower)
         if (overview != null && overview.screenOnPowerWatts > 0f) {
             val durMs = if (overview.screenOnDurationMs > 0L) overview.screenOnDurationMs else 0L
@@ -430,14 +444,15 @@ class RuntimeEstimator(
             lightPowerW = lightOnW
         )
 
-        // 2. 构建息屏待机多时间尺度估计器
+        // 2. 构建息屏待机多时间尺度估计器（优先对接 v2Result 预测功耗作为 Long 尺度基准）
         val offEstimator = PowerEstimator()
-        val longOffPower = if (sevenDaysStats != null && totalCapacityWh != null && totalCapacityWh > 0f) {
-            val rate = sevenDaysStats.screenOffDischargeRatePercentPerHour
-            if (rate != null && rate > 0f) {
-                (rate.toDouble() / 100.0) * totalCapacityWh.toDouble()
+        val longOffPower = sevenDaysStats?.v2Result?.predictedScreenOffPowerWatts
+            ?: if (sevenDaysStats != null && totalCapacityWh != null && totalCapacityWh > 0f) {
+                val rate = sevenDaysStats.screenOffDischargeRatePercentPerHour
+                if (rate != null && rate > 0f) {
+                    (rate.toDouble() / 100.0) * totalCapacityWh.toDouble()
+                } else null
             } else null
-        } else null
         offEstimator.setLongTermPower(longOffPower)
         if (overview != null && overview.screenOffPowerWatts > 0f) {
             val durMs = if (overview.screenOffDurationMs > 0L) overview.screenOffDurationMs else 0L
@@ -451,14 +466,15 @@ class RuntimeEstimator(
             offLowPowerW = offLowW
         )
 
-        // 3. 构建全局直接估计器备用
+        // 3. 构建全局直接估计器备用（优先对接 v2Result 预测功耗作为 Long 尺度基准）
         val globalFallbackEstimator = PowerEstimator()
-        val longGlobalPower = if (sevenDaysStats != null && totalCapacityWh != null && totalCapacityWh > 0f) {
-            val rate = sevenDaysStats.globalDischargeRatePercentPerHour
-            if (rate != null && rate > 0f) {
-                (rate.toDouble() / 100.0) * totalCapacityWh.toDouble()
+        val longGlobalPower = sevenDaysStats?.v2Result?.predictedPowerWatts
+            ?: if (sevenDaysStats != null && totalCapacityWh != null && totalCapacityWh > 0f) {
+                val rate = sevenDaysStats.globalDischargeRatePercentPerHour
+                if (rate != null && rate > 0f) {
+                    (rate.toDouble() / 100.0) * totalCapacityWh.toDouble()
+                } else null
             } else null
-        } else null
         globalFallbackEstimator.setLongTermPower(longGlobalPower)
         if (overview != null && overview.avgPowerWatts > 0f) {
             val durMs = if (overview.totalDurationMs > 0L) overview.totalDurationMs else 0L

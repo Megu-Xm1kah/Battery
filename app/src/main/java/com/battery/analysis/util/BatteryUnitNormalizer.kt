@@ -185,11 +185,12 @@ object BatteryUnitNormalizer {
      */
     @Suppress("UNUSED_PARAMETER")
     fun calculatePowerWatts(voltageVolts: Float, currentMa: Float, isCharging: Boolean = false): Float {
-        val safeVolt = if (voltageVolts > 0f) voltageVolts else 4.0f
         val safeCur = abs(currentMa)
-        if (safeVolt <= 0f || safeCur <= 0f) return 0f
+        if (voltageVolts <= 0f || safeCur <= 0f || !voltageVolts.isFinite() || !currentMa.isFinite()) {
+            return 0f
+        }
 
-        val pWatts = (safeVolt * safeCur) / 1000f
+        val pWatts = (voltageVolts * safeCur) / 1000f
         return (Math.round(pWatts * 100f) / 100f).coerceAtLeast(0f)
     }
 }

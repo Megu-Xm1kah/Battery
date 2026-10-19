@@ -90,4 +90,49 @@ class PowerEstimatorTest {
         assertNotNull(predicted)
         assertEquals(3.5, predicted!!, 0.01)
     }
+
+    /**
+     * 测试当仅具备 Medium（当前会话稳态）与 Long（历史大样本），但无 Fast 采样时的自适应权重严格归一化。
+     * 验证权重总和恒为 1.0，且预测放电功率真实反映两者的融合做功，绝不归零或丢失比重。
+     */
+    @Test
+    fun testAdaptiveWeightsWithMediumAndLongWithoutFast() {
+        val testEstimator = PowerEstimator()
+        testEstimator.setLongTermPower(2.0) // 7天大样本基线 2.0W
+        testEstimator.setMediumTermPower(durationMs = 1_800_000L, powerWatts = 3.0f) // 注入稳态 3.0W，持续 30 分钟（无 Fast）
+
+        val (wf, wm, wl) = testEstimator.calculateAdaptiveWeights()
+        assertEquals("Fast 权重必须为 0.0", 0.0, wf, 0.0001)
+        assertEquals("Medium 与 Long 权重和必须严格归一化为 1.0", 1.0, wm + wl, 0.0001)
+        assertTrue("Medium 权重必须大于 0", wm > 0.0)
+        assertTrue("Long 权重必须大于 0", wl > 0.0)
+
+        val predicted = testEstimator.getPredictedPower()
+        assertNotNull("预测功率不可为空", predicted)
+        assertTrue("预测功率必须在 2.0W 至 3.0W 之间", predicted!! in 2.0..3.0)
+    }
+
+    /**
+     * 测试在仅具备 Medium 与 Long 且无 Fast 时触发工况突变，绝不会将突变权重分配给不存在的 Fast。
+     * 验证突变下的权重总和仍为 1.0，Medium 敏捷提升，预测功率不会缩水归零。
+     */
+    @Test
+    fun testRegimeChangeWithoutFast_DoesNotLoseWeightToNonExistentFast() {
+        val testEstimator = PowerEstimator()
+        testEstimator.setLongTermPower(2.0)
+        testEstimator.setMediumTermPower(durationMs = 1_800_000L, powerWatts = 4.0f)
+
+        // 模拟外部检测器触发工况突变
+        testEstimator.notifyRegimeChange(true)
+
+        val (wf, wm, wl) = testEstimator.calculateAdaptiveWeights()
+        assertEquals("无 Fast 采样时 Fast 权重即使突变也必须为 0.0", 0.0, wf, 0.0001)
+        assertEquals("权重和必须严格归一化为 1.0", 1.0, wm + wl, 0.0001)
+        assertTrue("突变时 Medium 权重必须显著放大提升响应速度", wm > 0.50)
+
+        val predicted = testEstimator.getPredictedPower()
+        assertNotNull("预测功率不可为空", predicted)
+        assertTrue("预测功率必须真实反映高负载（接近 4.0W）", predicted!! > 3.0)
+    }
 }
+

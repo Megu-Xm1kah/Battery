@@ -296,10 +296,22 @@ object SevenDaysDischargeCalculator {
         // 4. 执行自适应历史时间窗口与细粒度工况切片满电续航算法升级（v2.2）影子模式计算
         val v2Result = try {
             val v2Estimator = com.battery.analysis.domain.estimator.FullChargeRuntimeEstimator()
+            val powerMgr = com.battery.analysis.manager.PowerUsageManager.getInstance(context)
+            val capWithSource = powerMgr.getEffectiveDeviceCapacityWithSource()
+            val sourceDesc = capWithSource.second
+            val isFromFcc = sourceDesc.contains("满充") || sourceDesc.contains("FCC")
+            val energySource = if (isFromFcc) {
+                com.battery.analysis.domain.estimator.model.EnergySource.FCC_TIMES_NOMINAL_VOLTAGE
+            } else if (sourceDesc.contains("设计")) {
+                com.battery.analysis.domain.estimator.model.EnergySource.DESIGN_CAPACITY_TIMES_HEALTH
+            } else {
+                com.battery.analysis.domain.estimator.model.EnergySource.FCC_TIMES_NOMINAL_VOLTAGE
+            }
             val v2EnergyEstimate = com.battery.analysis.domain.estimator.model.FullChargeEnergyEstimate(
                 energyWh = totalCapacityWh.toDouble(),
-                source = com.battery.analysis.domain.estimator.model.EnergySource.FCC_TIMES_NOMINAL_VOLTAGE,
-                quality = com.battery.analysis.domain.estimator.model.DataQuality.VALID
+                source = energySource,
+                quality = com.battery.analysis.domain.estimator.model.DataQuality.VALID,
+                notes = setOf("基于$sourceDesc (${String.format(Locale.US, "%.2fWh", totalCapacityWh)})")
             )
             val v2Normalizer = com.battery.analysis.domain.estimator.PowerSampleNormalizer()
             val runningDraftPoints = if (currentOverview != null && currentTrendPoints.isNullOrEmpty()) {
