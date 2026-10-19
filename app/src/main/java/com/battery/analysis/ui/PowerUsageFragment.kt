@@ -1589,6 +1589,11 @@ class PowerUsageFragment : Fragment() {
         val currentIsChargingTab = (currentDisplayTab == 1)
         if (isCharging != currentIsChargingTab) {
             applySmartChargingMode(isCharging = isCharging, showToast = false)
+            if (isCharging) {
+                onDevicePowerConnected()
+            } else {
+                onDevicePowerDisconnected()
+            }
         } else {
             (activity as? MainActivity)?.updateBottomNavPowerTab(isCharging)
         }

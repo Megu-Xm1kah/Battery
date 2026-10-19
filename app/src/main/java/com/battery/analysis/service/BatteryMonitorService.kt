@@ -355,32 +355,44 @@ class BatteryMonitorService : Service() {
                             pluggedRaw > 0)
                     cachedIsCharging = newIsCharging
 
-                    // 核心逻辑：系统电池广播触发频率不可控且未采集硬件放电功率，
-                    // 绝不在此处刷新通知栏，避免打乱通知栏采样节奏导致更新忽快忽慢。
-                    // 常驻通知栏数据严格由后台采样服务生成的真实物理数据驱动更新。
-
                     val isInteractive = cachedIsInteractive
                     val screenOffInterval = getScreenOffIntervalMs(appContext)
 
-                    if (newIsCharging) {
-                        // 充电状态下：若处于息屏且配置为智能省电(0L)，借由系统电池状态广播被动记录采样点，零主动能耗
+                    // 核心状态跃迁守卫：无线充电连接或断开时，系统往往只发送 ACTION_BATTERY_CHANGED 广播，
+                    // 绝不保证派发 ACTION_POWER_CONNECTED / ACTION_POWER_DISCONNECTED。
+                    // 因此必须在此精确检测充电状态变化并触发对应的连接/断开事件处理！
+                    if (!prevIsCharging && newIsCharging) {
+                        clearPersistedScreenOffBaseline(appContext)
+                        if (com.battery.analysis.manager.FloatingWindowManager.isFloatingEnabled(appContext)) {
+                            com.battery.analysis.manager.FloatingWindowManager.updateData(
+                                appContext,
+                                null,
+                                null,
+                                isCharging = true
+                            )
+                        }
+                        handlePowerConnected(appContext)
+                        // 若处于息屏且配置为智能省电(0L)，立即补齐记录首个瞬时充电采样点
+                        if (!isInteractive && screenOffInterval == 0L) {
+                            ChargingStatsManager.getInstance(appContext).sampleCurrentPoint()
+                        }
+                    } else if (prevIsCharging && !newIsCharging) {
+                        if (com.battery.analysis.manager.FloatingWindowManager.isFloatingEnabled(appContext)) {
+                            com.battery.analysis.manager.FloatingWindowManager.updateData(
+                                appContext,
+                                null,
+                                null,
+                                isCharging = false
+                            )
+                        }
+                        handlePowerDisconnected(appContext)
+                    } else if (newIsCharging) {
+                        // 稳定充电状态下：若处于息屏且配置为智能省电(0L)，借由系统电池状态广播被动记录采样点，零主动能耗
                         if (!isInteractive && screenOffInterval == 0L) {
                             ChargingStatsManager.getInstance(appContext).sampleCurrentPoint()
                         }
                     } else {
                         val powerManager = PowerUsageManager.getInstance(appContext)
-
-                        // 状态由充电转为未充电的二次对齐兜底：若拔电广播丢失或被拦截，自动补齐固化充电账本并开启放电周期
-                        if (prevIsCharging) {
-                            try {
-                                ChargingStatsManager.getInstance(appContext).onPowerDisconnected()
-                            } catch (e: Throwable) {
-                                e.printStackTrace()
-                            }
-                            if (powerManager.getLastUnplugTime() <= 0L) {
-                                powerManager.onPowerDisconnected(cachedLevelPercent, force = true)
-                            }
-                        }
 
                         // 检测电量下降，按 5% 步进阈值防抖触发放电 Checkpoint 增量持久化
                         powerManager.requestCheckpoint(force = false, currentLevel = cachedLevelPercent)
@@ -668,7 +680,7 @@ class BatteryMonitorService : Service() {
                 val powerManager = PowerUsageManager.getInstance(context)
                 val chargingManager = ChargingStatsManager.getInstance(context)
                 val currentStatus = powerManager.getCurrentBatteryStatus()
-                val (_, type) = chargingManager.checkCurrentSystemChargingState()
+                val (_, type) = chargingManager.checkCurrentSystemChargingState(force = true)
 
                 // 1. 归档上一个放电周期的耗电账本并清空当前放电周期统计数据
                 powerManager.onPowerConnected()

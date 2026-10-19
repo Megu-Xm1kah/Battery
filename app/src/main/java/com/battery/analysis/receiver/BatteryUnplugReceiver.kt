@@ -109,7 +109,7 @@ class BatteryUnplugReceiver : BroadcastReceiver() {
 
             // 2. 开启全新充电会话
             val currentBattery = powerManager.getCurrentBatteryStatus()
-            val (_, chargeType) = chargingManager.checkCurrentSystemChargingState()
+            val (_, chargeType) = chargingManager.checkCurrentSystemChargingState(force = true)
             chargingManager.onPowerConnected(currentBattery.levelPercent, chargeType)
 
             // 3. 通知前台界面（若当前处于前台活跃状态）

@@ -113,6 +113,7 @@ class ChargingHistoryActivity : AppCompatActivity() {
         setupEdgeToEdgeInsets()
 
         dbHelper = ChargingHistoryDbHelper.getInstance(this)
+        com.battery.analysis.manager.ChargingStatsManager.getInstance(this).checkAndReconcileChargingState()
 
         setupRecyclerView()
         setupListeners()
@@ -126,6 +127,7 @@ class ChargingHistoryActivity : AppCompatActivity() {
      */
     override fun onResume() {
         super.onResume()
+        com.battery.analysis.manager.ChargingStatsManager.getInstance(this).checkAndReconcileChargingState()
         if (!isInitialLoaded) {
             isInitialLoaded = true
             loadHistoryList(isPullToRefresh = true)

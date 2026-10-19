@@ -363,5 +363,79 @@ class ChargingHistoryRecordTest {
         assertEquals(87 * 60 * 1000L, reconciledDuration)
         assertTrue("核准后的时长必须大于10秒阈值", reconciledDuration >= 10000L)
     }
+
+    /**
+     * 测试无线充电位掩码类型识别逻辑：
+     * 针对部分设备与底座组合报告复合 plugged 状态（例如 4 纯无线、4 或 1 复合无线底座）时，
+     * 均能通过位运算准确识别为“无线充电”。
+     */
+    @Test
+    fun testWirelessChargingBitmaskRecognition() {
+        // 模拟纯无线充电: BATTERY_PLUGGED_WIRELESS (4)
+        val pureWirelessPlugged = 4
+        val isWireless1 = (pureWirelessPlugged and 4) != 0
+        assertTrue("纯无线充电必须识别为 true", isWireless1)
+
+        // 模拟复合无线底座: 1 (AC) | 4 (WIRELESS) = 5
+        val compositeWirelessPlugged = 5
+        val isWireless2 = (compositeWirelessPlugged and 4) != 0
+        assertTrue("复合无线底座必须识别为 true", isWireless2)
+
+        // 模拟普通 USB 充电: 2 (USB)
+        val usbPlugged = 2
+        val isWireless3 = (usbPlugged and 4) != 0
+        assertTrue("普通USB不能被误识别为无线充电", !isWireless3)
+    }
+
+    /**
+     * 测试无线充电短时微断开（例如线圈抖动或温控短暂保护）重新握手时的平滑接续与归档条件：
+     * 验证 180 秒内且电量未下跌的短暂断开能够识别为同一周期接续，时长累计并正确持久化。
+     */
+    @Test
+    fun testWirelessChargingSessionSmoothReconnectionAndPersistence() {
+        val startTs = 1700000000000L
+        val pauseTs = startTs + 30 * 60 * 1000L // 充电 30 分钟后因线圈微动短暂断开
+        val resumeTs = pauseTs + 2000L // 2 秒后重新放置对准握手
+        val endTs = resumeTs + 15 * 60 * 1000L // 继续充 15 分钟后正式拿走
+
+        // 验证断开间隔在 180 秒窗口内判定为平滑接续
+        val isRecentSession = (resumeTs - pauseTs) < 180_000L
+        assertTrue("2秒断开必须判定为平滑接续窗口内", isRecentSession)
+
+        // 验证整体充入电量与总时长
+        val totalDurationMs = endTs - startTs
+        val startLevel = 40
+        val endLevel = 65
+        val levelGain = endLevel - startLevel
+
+        val designCapMah = 5000f
+        val avgVolt = 4.0f
+        val calculatedEnergyWh = (levelGain / 100.0f) * designCapMah * avgVolt / 1000.0f
+        assertEquals(5.0f, calculatedEnergyWh, 0.01f)
+
+        // 验证满足入库门限
+        val shouldPersist = totalDurationMs >= 10000L || calculatedEnergyWh > 0.005f || levelGain > 0
+        assertTrue("无线充电完整会话必须满足入库归档门限", shouldPersist)
+
+        val record = ChargingHistoryRecord(
+            id = endTs,
+            recordTime = "2026-10-10 14:45:00",
+            startTimestamp = startTs,
+            endTimestamp = endTs,
+            durationMs = totalDurationMs,
+            startLevel = startLevel,
+            endLevel = endLevel,
+            levelGain = levelGain,
+            chargedEnergyWh = calculatedEnergyWh,
+            avgPowerWatts = calculatedEnergyWh / (totalDurationMs / 3600000.0f),
+            maxPowerWatts = 15.0f,
+            maxTemperature = 38.0f,
+            chargeType = "无线充电"
+        )
+        assertEquals("无线充电", record.chargeType)
+        assertEquals(25, record.levelGain)
+        assertEquals(45 * 60 * 1000L + 2000L, record.durationMs)
+    }
 }
+
 

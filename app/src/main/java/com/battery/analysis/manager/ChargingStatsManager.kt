@@ -329,10 +329,15 @@ class ChargingStatsManager private constructor(private val context: Context) {
                     status == BatteryManager.BATTERY_STATUS_FULL ||
                     plugged > 0
 
-            val chargeType = when (plugged) {
-                BatteryManager.BATTERY_PLUGGED_AC -> "交流快充"
-                BatteryManager.BATTERY_PLUGGED_USB -> "USB充电"
-                BatteryManager.BATTERY_PLUGGED_WIRELESS -> "无线充电"
+            val isWireless = (plugged and BatteryManager.BATTERY_PLUGGED_WIRELESS) != 0 ||
+                    (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU && (plugged and BatteryManager.BATTERY_PLUGGED_DOCK) != 0)
+            val isAc = (plugged and BatteryManager.BATTERY_PLUGGED_AC) != 0
+            val isUsb = (plugged and BatteryManager.BATTERY_PLUGGED_USB) != 0
+
+            val chargeType = when {
+                isWireless -> "无线充电"
+                isAc -> "交流快充"
+                isUsb -> "USB充电"
                 else -> if (charging) "外部供电" else "未充电"
             }
 
@@ -367,12 +372,13 @@ class ChargingStatsManager private constructor(private val context: Context) {
     }
 
     /**
-     * 实时检测系统当前是否处于充电状态及充电接口类型（复用 3000ms 缓存）。
+     * 实时检测系统当前是否处于充电状态及充电接口类型。
      *
+     * @param force 是否强制穿透 3000ms 缓存刷新底层广播数据
      * @return 包含Pair(是否在充电, 充电类型文本)
      */
-    fun checkCurrentSystemChargingState(): Pair<Boolean, String> {
-        val status = getOrRefreshSystemBatteryStatus()
+    fun checkCurrentSystemChargingState(force: Boolean = false): Pair<Boolean, String> {
+        val status = getOrRefreshSystemBatteryStatus(force)
         return Pair(status.isCharging, status.chargeType)
     }
 
@@ -387,19 +393,20 @@ class ChargingStatsManager private constructor(private val context: Context) {
 
     /**
      * 当检测到连接充电器或系统由放电转为充电时调用，初始化全新充电统计周期。
-     * 具备完善的会话幂等防重守卫：若底层系统当前正处于充电中且当前会话已有有效采样数据，
-     * 自动判定为前后台生命周期切换或重复广播触发，仅同步接口类型与当前电量，严禁清空历史采样点与累计能量。
+     * 具备完善的会话幂等防重与平滑接续守卫：
+     * 1. 若底层系统当前正处于充电中且当前会话已有有效采样数据，仅同步接口类型与当前电量，严禁清空历史采样点；
+     * 2. 若发生无线充电放置微调、温控保护短暂断开或车载颠簸等短时间微断开（180 秒内）重新握手恢复，平滑接续原有会话，杜绝历史采样点丢失。
      *
      * @param initialLevel 当前接入时刻的电池电量百分比
      * @param chargeType 充电连接类型
      */
     fun onPowerConnected(initialLevel: Int, chargeType: String) {
         val now = System.currentTimeMillis()
-        val (isSysCharging, sysChargeType) = checkCurrentSystemChargingState()
+        val (isSysCharging, sysChargeType) = checkCurrentSystemChargingState(force = true)
         val hasPoints = synchronized(samplePoints) { samplePoints.isNotEmpty() }
         val hasOngoingSession = currentSummary.isCharging && currentSummary.startTimestamp > 0L
 
-        // 幂等防重守卫：若底层系统当前确在充电，且当前内存中已有进行中的有效充电会话，
+        // 幂等防重守卫 1：若底层系统当前确在充电，且当前内存中已有进行中的有效充电会话，
         // 判定为同一充电周期的重复通知或生命周期重入事件，严禁清空采样点与重置会话！
         if (isSysCharging && hasOngoingSession && hasPoints) {
             isCurrentlyCharging = true
@@ -411,6 +418,25 @@ class ChargingStatsManager private constructor(private val context: Context) {
                 )
                 saveChargingSessionToPrefs()
             }
+            return
+        }
+
+        // 幂等防重守卫 2（无线充电短时微断开/温控保护/线圈晃动平滑接续）：
+        // 若当前会话已有有效采样点，且距离上次断开时间非常短（如 180 秒内），且电量未跌落，
+        // 判定为同一充电会话的物理短暂微断开后自动重新握手恢复，平滑接续当前会话，严禁清空历史采样点！
+        val isRecentSession = currentSummary.startTimestamp > 0L &&
+                (now - currentSummary.endTimestamp).coerceAtLeast(0L) < 180_000L &&
+                (initialLevel <= 0 || initialLevel >= (currentSummary.currentLevel - 1))
+        if (hasPoints && isRecentSession) {
+            isCurrentlyCharging = true
+            val effectiveType = if (chargeType.isNotEmpty() && chargeType != "未充电") chargeType else sysChargeType
+            currentSummary = currentSummary.copy(
+                isCharging = true,
+                endTimestamp = now,
+                currentLevel = if (initialLevel > 0) initialLevel else currentSummary.currentLevel,
+                chargeType = if (effectiveType.isNotEmpty() && effectiveType != "未充电") effectiveType else currentSummary.chargeType
+            )
+            saveChargingSessionToPrefs()
             return
         }
 
