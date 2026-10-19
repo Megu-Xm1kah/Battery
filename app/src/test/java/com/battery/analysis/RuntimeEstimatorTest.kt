@@ -280,4 +280,88 @@ class RuntimeEstimatorTest {
             assertEquals("会话时长 $dur ms 的置信度应为 $expected", expected, conf, 1e-6)
         }
     }
+
+    /**
+     * 测试无大样本画像与有大样本画像时，范围包络（minRemainingMs / maxRemainingMs）的自适应物理推导。
+     * 验证：彻底杜绝绝对硬编码功率常数，当提供 profile 时严格采用 profile 实测功率，无 profile 时动态按比例自适应伸缩。
+     */
+    @Test
+    fun testAdaptiveRangeEnvelopesWithoutHardcodedConstants() {
+        val overview = PowerOverviewStats(
+            avgPowerWatts = 2.0f,
+            screenOnPowerWatts = 2.5f,
+            screenOffPowerWatts = 0.2f,
+            screenOnDurationMs = 3_600_000L,
+            screenOffDurationMs = 3_600_000L,
+            totalDurationMs = 7_200_000L
+        )
+
+        // 1. 无 profile：验证亮屏输出的 min / max 续航区间满足 min <= normal <= max
+        val tripleNoProfile = estimator.estimateTripleRuntimes(
+            overview = overview,
+            sevenDaysStats = null,
+            batteryLevelPercent = 50.0f,
+            totalCapacityWh = 20.0f,
+            tempCelsius = 25.0f
+        )
+        val onEst = tripleNoProfile.screenOnEstimate
+        assertNotNull(onEst.remainingMs)
+        assertNotNull(onEst.minRemainingMs)
+        assertNotNull(onEst.maxRemainingMs)
+        assertTrue("最小亮屏续航 <= 预测亮屏续航", onEst.minRemainingMs!! <= onEst.remainingMs!!)
+        assertTrue("预测亮屏续航 <= 最大亮屏续航", onEst.remainingMs!! <= onEst.maxRemainingMs!!)
+
+        // 2. 有 profile：传入画像中的实测重载与轻载功率
+        val profile = com.battery.analysis.domain.estimator.model.RuntimeProfile(
+            windowStartMs = 0L,
+            windowEndMs = 0L,
+            windowDays = 7,
+            effectiveDischargeMs = 3600_000L,
+            screenOnMs = 1800_000L,
+            screenOffMs = 1800_000L,
+            screenOnRatio = 0.5,
+            screenOffRatio = 0.5,
+            lightMs = 600_000L,
+            normalMs = 600_000L,
+            heavyMs = 600_000L,
+            lightRatio = 0.33,
+            normalRatio = 0.33,
+            heavyRatio = 0.34,
+            lightPowerW = 1.25,
+            normalPowerW = 2.5,
+            heavyPowerW = 5.0,
+            typicalScreenOnPowerW = 2.5,
+            offLowPowerW = 0.05,
+            offHighPowerW = 0.5,
+            typicalScreenOffPowerW = 0.2
+        )
+        val fullChargeResult = com.battery.analysis.domain.estimator.model.FullChargeRuntimeResult(
+            fullRuntimeMs = 36_000_000L,
+            fullEnergyWh = 20.0,
+            predictedPowerWatts = 2.0,
+            confidenceLevel = com.battery.analysis.domain.estimator.model.RuntimeConfidenceLevel.HIGH,
+            energySource = com.battery.analysis.domain.estimator.model.EnergySource.FCC_TIMES_NOMINAL_VOLTAGE,
+            effectiveHistoryMs = 3600_000L,
+            usedRegimeModel = true,
+            profile = profile
+        )
+        val sevenDaysStatsWithProfile = SevenDaysDischargeStats(
+            v2Result = fullChargeResult
+        )
+
+        val tripleWithProfile = estimator.estimateTripleRuntimes(
+            overview = overview,
+            sevenDaysStats = sevenDaysStatsWithProfile,
+            batteryLevelPercent = 50.0f,
+            totalCapacityWh = 20.0f,
+            tempCelsius = 25.0f
+        )
+        val onProfileEst = tripleWithProfile.screenOnEstimate
+        assertNotNull(onProfileEst.minRemainingMs)
+        assertNotNull(onProfileEst.maxRemainingMs)
+        // 剩余能量 10.0Wh，重载 5.0W -> 2小时 = 7,200,000 ms
+        // 轻载 1.25W -> 8小时 = 28,800,000 ms
+        assertEquals(7_200_000L, onProfileEst.minRemainingMs!!)
+        assertEquals(28_800_000L, onProfileEst.maxRemainingMs!!)
+    }
 }

@@ -1172,4 +1172,105 @@ class FullChargeRuntimeEstimatorTest {
         assertNotNull("满电理论续航结果不为 null", result.fullRuntimeMs)
         assertEquals("估计结果模型版本号已成功升级至 FULL_RUNTIME_V2_2", RuntimeModelVersion.FULL_RUNTIME_V2_2, result.modelVersion)
     }
+
+    /**
+     * 测试 14：验证息屏典型工况缺失时安全降级至全局加权均值 pGlobal，严禁把综合续航缩水为纯亮屏续航。
+     * 当只有亮屏工况（例如 3.0W）与非息屏工况时，综合预测功率预测必须忠实等于全局样本能量与时间物理均值 pGlobal，
+     * 且 usedRegimeModel 标记为 false，qualityReasons 中明确记录息屏样本缺失的降级说明。
+     */
+    @Test
+    fun testFallbackWhenScreenOffMissing_UsesGlobalAverageNotScreenOnPower() {
+        val fullEnergy = FullChargeEnergyEstimate(
+            energyWh = 20.0,
+            source = EnergySource.FCC_TIMES_NOMINAL_VOLTAGE,
+            quality = DataQuality.VALID
+        )
+
+        val now = System.currentTimeMillis()
+        // 构造仅有亮屏工况（轻载 1.0 W 持续 1 小时，中载 3.0 W 持续 3 小时），完全缺失息屏待机工况样本
+        // 总时长 4 小时，总能耗 1.0*1 + 3.0*3 = 10.0 Wh，全局真实加权功率 pGlobal = 10.0 / 4 = 2.5 W
+        val intervals = listOf(
+            DischargeInterval(
+                startTimeMs = now - 4L * 3600L * 1000L,
+                endTimeMs = now - 3L * 3600L * 1000L,
+                durationMs = 1L * 3600L * 1000L,
+                energyWh = 1.0,
+                powerWatts = 1.0,
+                isScreenOn = true
+            ),
+            DischargeInterval(
+                startTimeMs = now - 3L * 3600L * 1000L,
+                endTimeMs = now,
+                durationMs = 3L * 3600L * 1000L,
+                energyWh = 9.0,
+                powerWatts = 3.0,
+                isScreenOn = true
+            )
+        )
+
+        val result = estimator.estimateFromIntervals(intervals, fullEnergy)
+
+        assertNotNull("满电理论续航结果不为 null", result.fullRuntimeMs)
+        assertFalse("由于典型息屏工况缺失，不得启用有偏的工况加权模型", result.usedRegimeModel)
+        assertEquals("综合预测功率必须忠实降级退回全局物理加权均值 pGlobal (2.5 W)", 2.5, result.predictedPowerWatts!!, 0.01)
+        val expectedRuntimeMs = (20.0 / 2.5 * 3600_000.0).toLong()
+        assertEquals("综合满电续航应严格由 pGlobal 导出，杜绝纯亮屏高功耗导致的缩水", expectedRuntimeMs, result.fullRuntimeMs!!)
+        assertTrue("质量说明中必须明确注明降级原因", result.qualityReasons.any { it.contains("降级") || it.contains("息屏") })
+    }
+
+    /**
+     * 测试 15：验证宏观历史记录解析时起止时间戳跨度裁剪比例守恒且比率严格小于等于 1.0。
+     * 当历史记录包含亮屏、息屏唤醒与深睡区间，且部分跨越窗口边界时，
+     * 所有子区间应按物理有效时间戳截断，且比例 ratio = validSpanMs / spanMs 严格 <= 1.0，
+     * 绝不发生能量膨胀或时间倒流。
+     */
+    @Test
+    fun testMacroRecordBoundaryClipping_ValidSpanRatioConservation() {
+        val now = System.currentTimeMillis()
+        val targetWindowMs = 24L * 3600L * 1000L // 24小时目标窗口
+
+        // 构造一个结束于 now - 12h，持续 20h 的宏观记录（从 now - 32h 到 now - 12h）
+        // 目标窗口边界为 now - 24h，因此该记录在窗口内的有效时间为从 now - 24h 到 now - 12h，共计 12h
+        // 总跨度 20h，落在窗口内 12h，截断比例严格为 12 / 20 = 0.6
+        val record = PowerUsageRecord(
+            id = now - 12L * 3600L * 1000L,
+            recordTime = "2026-10-18 10:00:00",
+            levelPercent = 80,
+            voltageVolts = 3.85f,
+            temperature = 25f,
+            energyWh = 20f,
+            isCharging = false,
+            avgPowerWatts = 1.0f,
+            screenOnPowerWatts = 2.0f,
+            screenOffPowerWatts = 0.5f,
+            screenOnDurationText = "10h",
+            screenOffDurationText = "10h",
+            totalDurationText = "20h",
+            remainingScreenOnText = "",
+            remainingCompositeText = "",
+            remainingScreenOffText = "",
+            isShizukuRealData = false,
+            appCount = 0,
+            trendPointsJson = "",
+            appListJson = "",
+            screenOnEnergyWh = 15f,
+            screenOffEnergyWh = 5f,
+            totalEnergyWh = 20f
+        )
+
+        val intervals = sampleNormalizer.extractDischargeIntervals(
+            currentOverview = null,
+            allRecords = listOf(record),
+            maxTargetDurationMs = targetWindowMs,
+            baseTimestamp = now
+        )
+
+        val totalDurMs = intervals.sumOf { it.durationMs }
+        val totalEnergyWh = intervals.sumOf { it.energyWh }
+        val expectedDurMs = 12L * 3600L * 1000L
+
+        assertEquals("跨越边界的宏观记录截断后时长严格等于落入窗口的有效时长 12h", expectedDurMs, totalDurMs)
+        assertTrue("截断后每个区间的持续时间必须严格小于等于其原始分配时长", intervals.all { it.durationMs <= 10L * 3600L * 1000L })
+        assertTrue("截断后能量守恒且严格小于原始总能量", totalEnergyWh < 20.0)
+    }
 }

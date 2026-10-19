@@ -159,10 +159,10 @@ object SevenDaysDischargeCalculator {
         val dbHelper = PowerUsageDbHelper.getInstance(context)
         val allRecords = dbHelper.getAllRecords()
 
-        // 筛选符合 168 小时滚动墙钟窗口与基准时间戳的历史记录（排除 7 天以前陈旧记录、充电异常记录与未来时间戳记录）
+        // 筛选符合 168 小时滚动墙钟窗口与基准时间戳的历史记录（排除未来时间戳记录与充电异常记录）
         val windowStartTs = baseTimestamp - SEVEN_DAYS_MS
         val eligibleRecords = allRecords.filter { record ->
-            !record.isCharging && record.id >= windowStartTs && record.id <= (baseTimestamp + 60_000L)
+            !record.isCharging && record.id <= (baseTimestamp + 60_000L)
         }
 
         for (record in eligibleRecords) {
@@ -171,24 +171,62 @@ object SevenDaysDischargeCalculator {
                 continue
             }
 
+            val recEndTs = record.id
+            // 若记录完全早于 7 天自然时间窗口起点，终止遍历更早记录
+            if (recEndTs <= windowStartTs) {
+                break
+            }
+
             // 若三个维度均已累积满 7 天（168 小时），提前终止遍历以提高性能
             if (onAcc.isFull() && offAcc.isFull() && globalAcc.isFull()) {
                 break
             }
 
-            val onDur = record.getScreenOnDurationMs()
-            val offDur = record.getScreenOffDurationMs()
+            val rawGDur = record.getDurationMs()
+            val rawGEnergy = if (record.totalEnergyWh > 0f) {
+                record.totalEnergyWh.toDouble()
+            } else if (record.avgPowerWatts > 0f && rawGDur > 0L) {
+                record.avgPowerWatts.toDouble() * (rawGDur / 3600000.0)
+            } else {
+                0.0
+            }
+
+            val rawOnDur = record.getScreenOnDurationMs()
+            val rawOnEnergy = if (record.screenOnEnergyWh > 0f) {
+                record.screenOnEnergyWh.toDouble()
+            } else if (record.screenOnPowerWatts > 0f && rawOnDur > 0L) {
+                record.screenOnPowerWatts.toDouble() * (rawOnDur / 3600000.0)
+            } else {
+                0.0
+            }
+
+            val rawOffDur = record.getScreenOffDurationMs()
+            val rawOffEnergy = if (record.screenOffEnergyWh > 0f) {
+                record.screenOffEnergyWh.toDouble()
+            } else if (record.screenOffPowerWatts > 0f && rawOffDur > 0L) {
+                record.screenOffPowerWatts.toDouble() * (rawOffDur / 3600000.0)
+            } else {
+                0.0
+            }
+
+            // 计算记录是否跨越 7 天（168 小时）滚动自然时间窗口起点并执行边界物理等比裁剪
+            val recStartTs = recEndTs - rawGDur
+            val isCrossingBoundary = recStartTs < windowStartTs
+            val boundaryRatio = if (isCrossingBoundary && rawGDur > 0L) {
+                ((recEndTs - windowStartTs).toDouble() / rawGDur.toDouble()).coerceIn(0.0, 1.0)
+            } else {
+                1.0
+            }
+
+            val gDur = if (boundaryRatio < 1.0) (rawGDur.toDouble() * boundaryRatio).toLong().coerceAtLeast(1L) else rawGDur
+            val gEnergy = rawGEnergy * boundaryRatio
+            val onDur = if (boundaryRatio < 1.0) (rawOnDur.toDouble() * boundaryRatio).toLong() else rawOnDur
+            val onEnergy = rawOnEnergy * boundaryRatio
+            val offDur = if (boundaryRatio < 1.0) (rawOffDur.toDouble() * boundaryRatio).toLong() else rawOffDur
+            val offEnergy = rawOffEnergy * boundaryRatio
 
             // 全局放电指标倒序累加
-            if (!globalAcc.isFull()) {
-                val gDur = record.getDurationMs()
-                val gEnergy = if (record.totalEnergyWh > 0f) {
-                    record.totalEnergyWh.toDouble()
-                } else if (record.avgPowerWatts > 0f && gDur > 0L) {
-                    record.avgPowerWatts.toDouble() * (gDur / 3600000.0)
-                } else {
-                    0.0
-                }
+            if (!globalAcc.isFull() && gDur > 0L && gEnergy > 0.0) {
                 val gRatio = globalAcc.add(gDur, gEnergy)
                 if (gRatio > 0.0) {
                     globalScopeOnDur += (onDur * gRatio).toLong()
@@ -197,27 +235,18 @@ object SevenDaysDischargeCalculator {
             }
 
             // 亮屏放电指标倒序累加
-            if (!onAcc.isFull()) {
-                val onEnergy = if (record.screenOnEnergyWh > 0f) {
-                    record.screenOnEnergyWh.toDouble()
-                } else if (record.screenOnPowerWatts > 0f && onDur > 0L) {
-                    record.screenOnPowerWatts.toDouble() * (onDur / 3600000.0)
-                } else {
-                    0.0
-                }
+            if (!onAcc.isFull() && onDur > 0L && onEnergy > 0.0) {
                 onAcc.add(onDur, onEnergy)
             }
 
             // 息屏放电指标倒序累加
-            if (!offAcc.isFull()) {
-                val offEnergy = if (record.screenOffEnergyWh > 0f) {
-                    record.screenOffEnergyWh.toDouble()
-                } else if (record.screenOffPowerWatts > 0f && offDur > 0L) {
-                    record.screenOffPowerWatts.toDouble() * (offDur / 3600000.0)
-                } else {
-                    0.0
-                }
+            if (!offAcc.isFull() && offDur > 0L && offEnergy > 0.0) {
                 offAcc.add(offDur, offEnergy)
+            }
+
+            // 若本条记录已跨越自然时间窗口起始边界，更早的历史记录无需继续遍历
+            if (isCrossingBoundary) {
+                break
             }
         }
 

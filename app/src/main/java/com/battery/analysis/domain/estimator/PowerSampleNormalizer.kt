@@ -329,19 +329,22 @@ class PowerSampleNormalizer {
                 intervals.add(interval)
                 return false
             } else {
-                // 跨越 168 小时墙钟窗口边界：执行边界物理等比裁剪
-                val validDurMs = interval.endTimeMs - windowStartTs
-                if (validDurMs > 0L) {
-                    val ratio = validDurMs.toDouble() / interval.durationMs.toDouble()
+                // 跨越自然时间窗口边界：执行边界物理等比裁剪
+                val spanMs = (interval.endTimeMs - interval.startTimeMs).coerceAtLeast(1L)
+                val validSpanMs = (interval.endTimeMs - windowStartTs).coerceIn(0L, spanMs)
+                if (validSpanMs > 0L) {
+                    val ratio = (validSpanMs.toDouble() / spanMs.toDouble()).coerceIn(0.0, 1.0)
                     val clippedEnergy = interval.energyWh * ratio
+                    val clippedDurationMs = (interval.durationMs.toDouble() * ratio).roundToLong().coerceAtLeast(1L)
                     val clippedInterval = DischargeInterval(
                         startTimeMs = windowStartTs,
                         endTimeMs = interval.endTimeMs,
-                        durationMs = validDurMs,
+                        durationMs = clippedDurationMs,
                         energyWh = clippedEnergy,
                         powerWatts = interval.powerWatts, // 平均功率保持守恒
                         isScreenOn = interval.isScreenOn,
-                        quality = interval.quality
+                        quality = interval.quality,
+                        ageWeight = interval.ageWeight
                     )
                     intervals.add(clippedInterval)
                 }
@@ -471,10 +474,13 @@ class PowerSampleNormalizer {
                 }
                 if (reachedLimit) break
             } else {
-                // 降级使用宏观记录
+                // 降级使用宏观记录：先归集本条记录的所有有效子区间，统一依序处理，防止息屏数据被提前截断丢弃
+                var recordReachedLimit = false
+                val subIntervals = mutableListOf<DischargeInterval>()
+
                 if (onDur > 0L && onEnergy > 0.0) {
                     val pOn = onEnergy / (onDur.toDouble() / 3600000.0)
-                    val isFull = tryAppendInterval(
+                    subIntervals.add(
                         DischargeInterval(
                             startTimeMs = recEndTs - onDur,
                             endTimeMs = recEndTs,
@@ -485,7 +491,6 @@ class PowerSampleNormalizer {
                             quality = DataQuality.VALID
                         )
                     )
-                    if (isFull) break
                 }
 
                 // 息屏细分：若具备深度休眠与唤醒的细分数据，则拆分为两个更具物理代表性的独立区间
@@ -497,7 +502,7 @@ class PowerSampleNormalizer {
                     val awakeEnergy = record.screenOffAwakeEnergyWh.toDouble()
                     if (awakeDur > 0L && awakeEnergy > 0.0) {
                         val pAwake = awakeEnergy / (awakeDur.toDouble() / 3600000.0)
-                        val isFull = tryAppendInterval(
+                        subIntervals.add(
                             DischargeInterval(
                                 startTimeMs = recEndTs - onDur - awakeDur,
                                 endTimeMs = recEndTs - onDur,
@@ -508,14 +513,13 @@ class PowerSampleNormalizer {
                                 quality = DataQuality.VALID
                             )
                         )
-                        if (isFull) break
                     }
 
                     val sleepDur = record.screenOffDeepSleepDurationMs
                     val sleepEnergy = record.screenOffDeepSleepEnergyWh.toDouble()
                     if (sleepDur > 0L && sleepEnergy > 0.0) {
                         val pSleep = sleepEnergy / (sleepDur.toDouble() / 3600000.0)
-                        val isFull = tryAppendInterval(
+                        subIntervals.add(
                             DischargeInterval(
                                 startTimeMs = recEndTs - onDur - awakeDur - sleepDur,
                                 endTimeMs = recEndTs - onDur - awakeDur,
@@ -526,13 +530,12 @@ class PowerSampleNormalizer {
                                 quality = DataQuality.VALID
                             )
                         )
-                        if (isFull) break
                     }
                 } else {
                     // 无细分时作为综合息屏区间纳入
                     if (offDur > 0L && offEnergy > 0.0) {
                         val pOff = offEnergy / (offDur.toDouble() / 3600000.0)
-                        val isFull = tryAppendInterval(
+                        subIntervals.add(
                             DischargeInterval(
                                 startTimeMs = recEndTs - onDur - offDur,
                                 endTimeMs = recEndTs - onDur,
@@ -543,9 +546,16 @@ class PowerSampleNormalizer {
                                 quality = DataQuality.VALID
                             )
                         )
-                        if (isFull) break
                     }
                 }
+
+                for (sub in subIntervals) {
+                    val isFull = tryAppendInterval(sub)
+                    if (isFull) {
+                        recordReachedLimit = true
+                    }
+                }
+                if (recordReachedLimit) break
             }
         }
 

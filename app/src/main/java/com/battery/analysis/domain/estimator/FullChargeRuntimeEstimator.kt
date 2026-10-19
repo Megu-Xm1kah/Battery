@@ -238,15 +238,19 @@ class FullChargeRuntimeEstimator(
         if (offLowPower != null && offLowPower > 0.0) totalValidRegimeCount++
         if (offHighPower != null && offHighPower > 0.0) totalValidRegimeCount++
 
-        val pGlobalComposite = if (pTypicalScreenOn != null && pTypicalScreenOn > 0.0 && pTypicalScreenOff != null && pTypicalScreenOff > 0.0) {
-            screenOnRatio * pTypicalScreenOn + screenOffRatio * pTypicalScreenOff
-        } else if (pTypicalScreenOn != null && pTypicalScreenOn > 0.0) {
-            pTypicalScreenOn
+        // 严格遵循两态工况融合要求：仅当亮屏与息屏均具备有效代表功耗且时间占比合法时，方可启用综合融合模型；
+        // 若任一核心场景工况数据缺失，严禁将亮屏功耗冒充为整机日常综合功耗，必须安全降级至全局大样本物理历史加权均值 pGlobal
+        val hasBothScenePowers = pTypicalScreenOn != null && pTypicalScreenOn > 0.0 &&
+                pTypicalScreenOff != null && pTypicalScreenOff > 0.0 &&
+                screenOnRatio in 0.0..1.0 && screenOffRatio in 0.0..1.0
+
+        val pGlobalComposite = if (hasBothScenePowers) {
+            screenOnRatio * pTypicalScreenOn!! + screenOffRatio * pTypicalScreenOff!!
         } else {
             pGlobal
         }
 
-        val canUseRegimeModel = (totalValidRegimeCount >= 2 && pGlobalComposite > 0.0 && pGlobalComposite.isFinite())
+        val canUseRegimeModel = hasBothScenePowers && totalValidRegimeCount >= 2 && pGlobalComposite > 0.0 && pGlobalComposite.isFinite()
         val finalPredictedPower = if (canUseRegimeModel) pGlobalComposite else pGlobal
         if (finalPredictedPower <= 0.0 || !finalPredictedPower.isFinite()) {
             return FullChargeRuntimeResult(
@@ -342,11 +346,21 @@ class FullChargeRuntimeEstimator(
             val heavyPct = String.format(java.util.Locale.US, "%.1f%%", heavyRatio * 100.0)
             qualityReasons.add("覆盖 $stableOnRegimeCount 类亮屏工况建模 (轻载 $lightPct, 普通 $normalPct, 重载 $heavyPct)")
         } else {
-            qualityReasons.add("工况类别不足($stableOnRegimeCount 类)，安全平滑降级至全局历史物理均值")
+            val reason = when {
+                !hasBothScenePowers -> "缺乏完整的亮屏或息屏工况样本，安全平滑降级至全局历史物理均值"
+                else -> "工况类别不足($stableOnRegimeCount 类)，安全平滑降级至全局历史物理均值"
+            }
+            qualityReasons.add(reason)
         }
 
         if (pTypicalScreenOn != null && pGlobalOn != null && kotlin.math.abs(pTypicalScreenOn - pGlobalOn) < 0.05) {
             qualityReasons.add("亮屏工况典型功耗贴合历史加权均值，新旧模型预测一致")
+        }
+
+        val fallbackReason = when {
+            canUseRegimeModel -> null
+            !hasBothScenePowers -> "缺乏完整的亮屏或息屏工况数据，已安全降级至全局加权均值"
+            else -> "工况样本类别不足，已安全降级至全局加权均值"
         }
 
         return FullChargeRuntimeResult(
@@ -358,7 +372,7 @@ class FullChargeRuntimeEstimator(
             energySource = energyEstimate.source,
             effectiveHistoryMs = totalHistoryMs,
             usedRegimeModel = canUseRegimeModel,
-            fallbackReason = if (!canUseRegimeModel) "工况样本类别不足，已安全降级至全局加权均值" else null,
+            fallbackReason = fallbackReason,
             screenOnFullRuntimeMs = if (screenOnMsResult != null && screenOnMsResult > 0L) screenOnMsResult else null,
             screenOffFullRuntimeMs = if (screenOffMsResult != null && screenOffMsResult > 0L) screenOffMsResult else null,
             predictedScreenOnPowerWatts = pTypicalScreenOn,

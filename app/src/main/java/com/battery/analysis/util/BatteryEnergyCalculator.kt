@@ -803,7 +803,7 @@ object BatteryEnergyCalculator {
                     append("• 速度由硬件功耗与电池总容量折算\n")
                     append("• 满电续航按7天实际亮屏加权推算\n")
                     append("• 升级模型自适应历史窗口与衰减权重\n")
-                    append("• 剩余续航融合实时工况与温度修正")
+                    append("• 剩余续航基于物理能量与自适应多时间尺度推算")
                 }
             }
             ROW_SCREEN_OFF -> {
@@ -875,7 +875,7 @@ object BatteryEnergyCalculator {
                     append("• 速度反映熄屏待机电量消耗\n")
                     append("• 待机时长按7天实际待机时间加权推算\n")
                     append("• 升级模型解构深睡底噪与后台唤醒\n")
-                    append("• 待机续航融合多时间尺度与温度修正")
+                    append("• 待机续航基于物理能量与多时间尺度稳态推算")
                 }
             }
             ROW_GLOBAL -> {
@@ -950,7 +950,7 @@ object BatteryEnergyCalculator {
                     append("• 模式1忠实反映历史全周期能量总积分\n")
                     append("• 模式2解构亮屏与待机两态比例\n")
                     append("• 升级模型自适应历史窗口与工况建模\n")
-                    append("• 剩余续航融合多时间尺度与温度修正")
+                    append("• 剩余续航基于物理能量与多时间尺度综合推算")
                 }
             }
             else -> ""
