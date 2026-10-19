@@ -89,13 +89,40 @@ data class ChargingHistoryRecord(
     }
 
     /**
+     * 获取经过物理守恒与真实采样点自愈校准后的真实结束电量百分比。
+     * 当历史数据因进程断电异常被放电电量污染时，依据真实采样点终点值与息屏充入物理增量自愈恢复真实结束电量。
+     *
+     * @return 校准后的真实结束电量百分比
+     */
+    fun getEffectiveEndLevel(): Int {
+        val points = getSamplePoints()
+        val sampleLastLevel = points.lastOrNull()?.batteryLevel ?: -1
+        val sampleMaxLevel = if (points.isNotEmpty()) points.maxOf { it.batteryLevel } else -1
+        val candidateLevel = maxOf(endLevel, sampleLastLevel, sampleMaxLevel)
+        return maxOf(candidateLevel, startLevel + screenOffLevelGain).coerceIn(0, 100)
+    }
+
+    /**
+     * 获取经过校准后的总充入电量增量百分比。
+     * 确保总充入电量不低于息屏充入电量，忠实反映真实充电增量。
+     *
+     * @return 真实充入电量增量百分比
+     */
+    fun getEffectiveLevelGain(): Int {
+        val effectiveEnd = getEffectiveEndLevel()
+        val computedGain = (effectiveEnd - startLevel).coerceAtLeast(0)
+        return maxOf(levelGain, computedGain, screenOffLevelGain)
+    }
+
+    /**
      * 计算亮屏充电充入电量百分比。
-     * 由总充入电量增量与息屏充入电量增量的差值计算得出。
+     * 由总充入电量增量与息屏充入电量增量的差值计算得出，确保符合物理守恒（非负）。
      *
      * @return 亮屏充电充入电量增量百分比
      */
     fun getScreenOnLevelGain(): Int {
-        return levelGain - screenOffLevelGain
+        val effectiveGain = getEffectiveLevelGain()
+        return (effectiveGain - screenOffLevelGain).coerceAtLeast(0)
     }
 
     /**
@@ -189,8 +216,10 @@ data class ChargingHistoryRecord(
         } else {
             String.format(java.util.Locale.getDefault(), "%02dm", minutes)
         }
-        val gainSign = if (levelGain >= 0) "+$levelGain%" else "$levelGain%"
-        return "$shortDur · $startLevel%~$endLevel%($gainSign)"
+        val effectiveEnd = getEffectiveEndLevel()
+        val effectiveGain = getEffectiveLevelGain()
+        val gainSign = if (effectiveGain >= 0) "+$effectiveGain%" else "$effectiveGain%"
+        return "$shortDur · $startLevel%~$effectiveEnd%($gainSign)"
     }
 
     /**

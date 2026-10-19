@@ -375,7 +375,7 @@ class ChargingHistoryDbHelper private constructor(context: Context) :
         cursor.use {
             val sampleIdx = it.getColumnIndex(COL_SAMPLE_POINTS_JSON)
             while (it.moveToNext()) {
-                val record = ChargingHistoryRecord(
+                val rawRecord = ChargingHistoryRecord(
                     id = it.getLong(it.getColumnIndexOrThrow(COL_ID)),
                     recordTime = it.getString(it.getColumnIndexOrThrow(COL_RECORD_TIME)),
                     startTimestamp = it.getLong(it.getColumnIndexOrThrow(COL_START_TIMESTAMP)),
@@ -394,6 +394,23 @@ class ChargingHistoryDbHelper private constructor(context: Context) :
                     screenOffEnergyWh = it.getFloat(it.getColumnIndexOrThrow(COL_SCREEN_OFF_ENERGY_WH)),
                     samplePointsJson = if (sampleIdx >= 0) it.getString(sampleIdx) ?: "" else ""
                 )
+                val effectiveEnd = rawRecord.getEffectiveEndLevel()
+                val effectiveGain = rawRecord.getEffectiveLevelGain()
+                val record = if (effectiveEnd != rawRecord.endLevel || effectiveGain != rawRecord.levelGain) {
+                    val corrected = rawRecord.copy(endLevel = effectiveEnd, levelGain = effectiveGain)
+                    try {
+                        val updateValues = ContentValues().apply {
+                            put(COL_END_LEVEL, effectiveEnd)
+                            put(COL_LEVEL_GAIN, effectiveGain)
+                        }
+                        db.update(TABLE_NAME, updateValues, "$COL_ID = ?", arrayOf(rawRecord.id.toString()))
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                    corrected
+                } else {
+                    rawRecord
+                }
                 list.add(record)
             }
         }

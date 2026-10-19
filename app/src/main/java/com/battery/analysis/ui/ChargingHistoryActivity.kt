@@ -516,8 +516,10 @@ class ChargingHistoryActivity : AppCompatActivity() {
         tvDesc.text = "删除后该条充电历史记录将从本地永久移除，无法找回。"
         tvPreviewCat.text = if (record.chargeType.isNotEmpty()) record.chargeType else "充电记录"
         tvPreviewTime.text = record.recordTime
-        val sign = if (record.levelGain >= 0) "+${record.levelGain}%" else "${record.levelGain}%"
-        tvPreviewSummary.text = "⚡ $sign (${record.startLevel}% → ${record.endLevel}%)   •   ⏱️ ${record.getFormattedDuration()}"
+        val effEnd = record.getEffectiveEndLevel()
+        val effGain = record.getEffectiveLevelGain()
+        val sign = if (effGain >= 0) "+${effGain}%" else "${effGain}%"
+        tvPreviewSummary.text = "⚡ $sign (${record.startLevel}% → ${effEnd}%)   •   ⏱️ ${record.getFormattedDuration()}"
 
         val dialog = AlertDialog.Builder(this)
             .setView(dialogView)

@@ -50,6 +50,18 @@ class ChargingHistoryDetailActivity : AppCompatActivity() {
     }
 
     /**
+     * 界面恢复交互时同步系统栏外观，并根据最新的全局电量单位设置刷新趋势图与详情数据。
+     */
+    override fun onResume() {
+        super.onResume()
+        updateSystemBarAppearance()
+        val prefs = getSharedPreferences(PowerDisplayUnit.PREFS_NAME, Context.MODE_PRIVATE)
+        val unit = PowerDisplayUnit.fromId(prefs.getInt(PowerDisplayUnit.PREF_KEY_POWER_DISPLAY_UNIT, PowerDisplayUnit.WH.id))
+        binding.chargingChartView.setDisplayUnit(unit)
+        currentRecord?.let { renderRecordDetails(it) }
+    }
+
+    /**
      * 根据当前日夜间主题适配状态栏明暗图标色彩。
      */
     private fun updateSystemBarAppearance() {
@@ -141,11 +153,14 @@ class ChargingHistoryDetailActivity : AppCompatActivity() {
         binding.tvScreenOnDuration.text = record.getFormattedScreenOnDuration()
         binding.tvScreenOffDuration.text = record.getFormattedScreenOffDuration()
 
-        val sign = if (record.levelGain >= 0) "+${record.levelGain}%" else "${record.levelGain}%"
-        binding.tvLevelChange.text = "${record.startLevel}% → ${record.endLevel}% ($sign)"
+        val effEnd = record.getEffectiveEndLevel()
+        val effGain = record.getEffectiveLevelGain()
+        val sign = if (effGain >= 0) "+${effGain}%" else "${effGain}%"
+        binding.tvLevelChange.text = "${record.startLevel}% → ${effEnd}% ($sign)"
 
         val prefs = getSharedPreferences(PowerDisplayUnit.PREFS_NAME, Context.MODE_PRIVATE)
         val unit = PowerDisplayUnit.fromId(prefs.getInt(PowerDisplayUnit.PREF_KEY_POWER_DISPLAY_UNIT, PowerDisplayUnit.WH.id))
+        binding.chargingChartView.setDisplayUnit(unit)
 
         binding.tvChargedEnergy.text = BatteryEnergyCalculator.formatChargingDetailEnergy(
             record.chargedEnergyWh,
@@ -247,8 +262,10 @@ class ChargingHistoryDetailActivity : AppCompatActivity() {
         tvDesc.text = "删除后该条充电历史记录将从本地永久移除，无法找回。"
         tvPreviewCat.text = if (record.chargeType.isNotEmpty()) record.chargeType else "充电记录"
         tvPreviewTime.text = record.recordTime
-        val sign = if (record.levelGain >= 0) "+${record.levelGain}%" else "${record.levelGain}%"
-        tvPreviewSummary.text = "⚡ $sign (${record.startLevel}% → ${record.endLevel}%)   •   ⏱️ ${record.getFormattedDuration()}"
+        val effEnd = record.getEffectiveEndLevel()
+        val effGain = record.getEffectiveLevelGain()
+        val sign = if (effGain >= 0) "+${effGain}%" else "${effGain}%"
+        tvPreviewSummary.text = "⚡ $sign (${record.startLevel}% → ${effEnd}%)   •   ⏱️ ${record.getFormattedDuration()}"
 
         val dialog = AlertDialog.Builder(this)
             .setView(dialogView)

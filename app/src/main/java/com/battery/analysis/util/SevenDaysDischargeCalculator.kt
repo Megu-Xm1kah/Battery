@@ -4,6 +4,7 @@ import android.content.Context
 import com.battery.analysis.db.PowerUsageDbHelper
 import com.battery.analysis.manager.PowerOverviewStats
 import com.battery.analysis.model.SevenDaysDischargeStats
+import java.util.Locale
 
 /**
  * 累积 7 天物理使用时间核心放电统计指标与充满电可用时长物理计算器。
@@ -82,13 +83,15 @@ object SevenDaysDischargeCalculator {
      * @param currentOverview 当前正在进行的放电会话统计数据（可为空）
      * @param totalCapacityWh 电池标称总能量容量（单位：Wh）
      * @param baseTimestamp 统计基准时间戳（毫秒，默认当前系统时间）
+     * @param currentTrendPoints 当前活跃放电会话的时序采样点列表（可选，若提供则优先细粒度切片）
      * @return 累积 7 天使用时间统计计算结果实体 [SevenDaysDischargeStats]
      */
     fun calculateSevenDaysStats(
         context: Context,
         currentOverview: PowerOverviewStats?,
         totalCapacityWh: Float?,
-        baseTimestamp: Long = System.currentTimeMillis()
+        baseTimestamp: Long = System.currentTimeMillis(),
+        currentTrendPoints: List<com.battery.analysis.model.PowerDischargePoint>? = null
     ): SevenDaysDischargeStats {
         if (totalCapacityWh == null || totalCapacityWh <= 0f) {
             return SevenDaysDischargeStats()
@@ -261,7 +264,7 @@ object SevenDaysDischargeCalculator {
             null
         }
 
-        // 4. 执行自适应历史时间窗口满电续航算法升级（v2.1）影子模式计算
+        // 4. 执行自适应历史时间窗口与细粒度工况切片满电续航算法升级（v2.2）影子模式计算
         val v2Result = try {
             val v2Estimator = com.battery.analysis.domain.estimator.FullChargeRuntimeEstimator()
             val v2EnergyEstimate = com.battery.analysis.domain.estimator.model.FullChargeEnergyEstimate(
@@ -270,15 +273,55 @@ object SevenDaysDischargeCalculator {
                 quality = com.battery.analysis.domain.estimator.model.DataQuality.VALID
             )
             val v2Normalizer = com.battery.analysis.domain.estimator.PowerSampleNormalizer()
+            val runningDraftPoints = if (currentOverview != null && currentTrendPoints.isNullOrEmpty()) {
+                allRecords.firstOrNull { !it.isCompleted }?.let { rec ->
+                    com.battery.analysis.domain.estimator.PowerSampleNormalizer.parseTrendPoints(rec.trendPointsJson)
+                }
+            } else null
+            val effectiveTrendPoints = currentTrendPoints ?: runningDraftPoints
             val (v2Intervals, v2Metrics) = v2Normalizer.extractAdaptiveDischargeIntervals(
                 currentOverview = currentOverview,
                 allRecords = allRecords,
-                baseTimestamp = baseTimestamp
+                baseTimestamp = baseTimestamp,
+                currentTrendPoints = effectiveTrendPoints
             )
             v2Estimator.estimateFromIntervals(v2Intervals, v2EnergyEstimate, v2Metrics)
         } catch (_: Exception) {
             null
         }
+
+        try {
+            val sb = StringBuilder()
+            sb.append("\n================= 满电续航底层高精度核算日志 =================")
+            sb.append(String.format(Locale.US, "\n1. 电池可用总容量: %.6f Wh", totalCapacityWh))
+            sb.append("\n2. 升级前算术平均:")
+            val onHours = onAcc.accumulatedDurationMs / 3600000.0
+            val rawAvgOnWatts = if (onHours > 0.0) onAcc.accumulatedEnergyWh / onHours else 0.0
+            sb.append(String.format(Locale.US, "\n  - 亮屏总时长: %d ms (%s)", onAcc.accumulatedDurationMs, BatteryEnergyCalculator.formatDurationWithSeconds(onAcc.accumulatedDurationMs)))
+            sb.append(String.format(Locale.US, "\n  - 亮屏总能量: %.6f Wh", onAcc.accumulatedEnergyWh))
+            sb.append(String.format(Locale.US, "\n  - 原始平均功耗: %.6f W (速率: %.4f %%/h)", rawAvgOnWatts, screenOnRate ?: 0f))
+            sb.append(String.format(Locale.US, "\n  - 满电亮屏续航: %d ms (%s)", fullOnDuration ?: 0L, BatteryEnergyCalculator.formatDurationWithSeconds(fullOnDuration)))
+            if (v2Result != null) {
+                sb.append("\n3. 升级模型 v2.2 工况细分 (原始未舍入数值):")
+                val prof = v2Result.profile
+                if (prof != null) {
+                    sb.append(String.format(Locale.US, "\n  - 轻载工况: 原始占比=%.6f%%, 原始功耗=%.6f W", prof.lightRatio * 100.0, prof.lightPowerW ?: 0.0))
+                    sb.append(String.format(Locale.US, "\n  - 普通工况: 原始占比=%.6f%%, 原始功耗=%.6f W", prof.normalRatio * 100.0, prof.normalPowerW ?: 0.0))
+                    sb.append(String.format(Locale.US, "\n  - 重载工况: 原始占比=%.6f%%, 原始功耗=%.6f W", prof.heavyRatio * 100.0, prof.heavyPowerW ?: 0.0))
+                }
+                val v2OnWatts = v2Result.predictedScreenOnPowerWatts ?: 0.0
+                val v2OnMs = v2Result.screenOnFullRuntimeMs ?: 0L
+                sb.append(String.format(Locale.US, "\n  - 加权典型功耗: %.6f W", v2OnWatts))
+                sb.append(String.format(Locale.US, "\n  - 满电亮屏续航: %d ms (%s)", v2OnMs, BatteryEnergyCalculator.formatDurationWithSeconds(v2OnMs)))
+                if (fullOnDuration != null && v2OnMs > 0L) {
+                    val diffMs = v2OnMs - fullOnDuration
+                    val diffW = v2OnWatts - rawAvgOnWatts
+                    sb.append(String.format(Locale.US, "\n4. 新旧模型绝对差值: 功耗差=%.6f W, 续航差=%d ms (%.3f 秒)", diffW, diffMs, diffMs / 1000.0))
+                }
+            }
+            sb.append("\n=============================================================")
+            android.util.Log.d("FullChargeEstimator", sb.toString())
+        } catch (_: Throwable) {}
 
         return SevenDaysDischargeStats(
             screenOnDischargeRatePercentPerHour = screenOnRate,

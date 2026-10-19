@@ -1134,6 +1134,7 @@ class PowerUsageFragment : Fragment() {
         chargingView.chargingChartView.setSelectedMetrics(
             chargingView.chargingMetricSelectorView.getSelectedMetrics()
         )
+        chargingView.chargingChartView.setDisplayUnit(currentDisplayUnit)
         chargingView.chargingMetricSelectorView.setOnMetricsChangedListener { selectedMetrics ->
             chargingView.chargingChartView.setSelectedMetrics(selectedMetrics)
         }
@@ -1460,7 +1461,9 @@ class PowerUsageFragment : Fragment() {
             sceneFullDurationMs = if (rowType == ROW_GLOBAL) sevenDays?.fullChargeSceneCompositeDurationMs else null,
             remainingDurationMs = remDurationMs,
             v2Result = sevenDays?.v2Result,
-            remainingEstimate = remEstimate
+            remainingEstimate = remEstimate,
+            displayUnit = currentDisplayUnit,
+            nominalVoltageVolts = pkg?.batterySnapshot?.voltageVolts ?: BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS
         )
         if (message.isNotBlank()) {
             showBubbleTooltip(anchorView, message, autoDismissMs = 0L)
@@ -1733,7 +1736,8 @@ class PowerUsageFragment : Fragment() {
                 context = appContext,
                 currentOverview = overview,
                 totalCapacityWh = totalCapacityWh,
-                baseTimestamp = System.currentTimeMillis()
+                baseTimestamp = System.currentTimeMillis(),
+                currentTrendPoints = fullPackage.trendPoints
             )
             withContext(Dispatchers.Main) {
                 if (isAdded && _binding != null) {
@@ -1773,6 +1777,7 @@ class PowerUsageFragment : Fragment() {
         )
 
         // 1. 同步更新三合一走势折线图 (功率: 绿/橙, 电量: 蓝, 温度: 红, 电压: 黄)
+        chargingView.chargingChartView.setDisplayUnit(currentDisplayUnit)
         val currentChartPointsCount = chargingView.chargingChartView.getPointsCount()
         val isNewSession = summary.startTimestamp != lastRenderedSessionStart
         if (isNewSession || currentChartPointsCount == 0 || points.size != currentChartPointsCount || lastRenderedPointsCount == -1) {
@@ -2227,7 +2232,8 @@ class PowerUsageFragment : Fragment() {
                 context = fullDataAppContext,
                 currentOverview = if (isViewingSnapshot) null else overview,
                 totalCapacityWh = totalCapacityWh,
-                baseTimestamp = baseTs
+                baseTimestamp = baseTs,
+                currentTrendPoints = if (isViewingSnapshot) null else lastRenderedPackage?.trendPoints
             )
             withContext(Dispatchers.Main) {
                 if (isAdded && _binding != null) {
@@ -2764,6 +2770,8 @@ class PowerUsageFragment : Fragment() {
 
         chargingHistoryAdapter = ChargingHistoryAdapter(
             onItemClick = { record ->
+                val effEnd = record.getEffectiveEndLevel()
+                val effGain = record.getEffectiveLevelGain()
                 val detailDialog = AlertDialog.Builder(requireContext())
                     .setTitle("充电详情 (${record.recordTime})")
                     .setMessage(
@@ -2771,7 +2779,7 @@ class PowerUsageFragment : Fragment() {
                         "总充电时长：${record.getFormattedDuration()}\n" +
                         "亮屏充电时长：${record.getFormattedScreenOnDuration()}\n" +
                         "息屏充电时长：${record.getFormattedScreenOffDuration()}\n" +
-                        "电量变化：${record.startLevel}% → ${record.endLevel}% (+${record.levelGain}%)\n" +
+                        "电量变化：${record.startLevel}% → ${effEnd}% (+${effGain}%)\n" +
                         "充入能量：+${String.format(Locale.getDefault(), "%.2f", record.chargedEnergyWh)} Wh\n" +
                         "平均功率：${String.format(Locale.getDefault(), "%.2f", record.avgPowerWatts)} W\n" +
                         "峰值功率：${String.format(Locale.getDefault(), "%.2f", record.maxPowerWatts)} W\n" +
@@ -2796,8 +2804,10 @@ class PowerUsageFragment : Fragment() {
                 tvDesc.text = "删除后该条充电历史记录将从本地永久移除，无法找回。"
                 tvCat.text = if (record.chargeType.isNotEmpty()) record.chargeType else "充电记录"
                 tvTime.text = record.recordTime
-                val sign = if (record.levelGain >= 0) "+${record.levelGain}%" else "${record.levelGain}%"
-                tvSummary.text = "⚡ $sign (${record.startLevel}% → ${record.endLevel}%)   •   ⏱️ ${record.getFormattedDuration()}"
+                val effEnd = record.getEffectiveEndLevel()
+                val effGain = record.getEffectiveLevelGain()
+                val sign = if (effGain >= 0) "+${effGain}%" else "${effGain}%"
+                tvSummary.text = "⚡ $sign (${record.startLevel}% → ${effEnd}%)   •   ⏱️ ${record.getFormattedDuration()}"
 
                 val delDialog = AlertDialog.Builder(requireContext())
                     .setView(deleteView)

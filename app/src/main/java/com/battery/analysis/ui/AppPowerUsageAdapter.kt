@@ -108,6 +108,7 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         if (currentDisplayUnit != newUnit) {
             currentDisplayUnit = newUnit
             overviewHolder?.binding?.batteryTimelineView?.setDisplayUnit(newUnit)
+            chargingHolder?.binding?.layoutChargingContent?.chargingChartView?.setDisplayUnit(newUnit)
             sleepAwakeHolder?.let { bindSleepAwakeMetrics(it) }
             dischargeSpeedHolder?.let { bindDischargeSpeed(it) }
             safeNotifyDataSetChanged()

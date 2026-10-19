@@ -436,6 +436,110 @@ class ChargingHistoryRecordTest {
         assertEquals(25, record.levelGain)
         assertEquals(45 * 60 * 1000L + 2000L, record.durationMs)
     }
+
+    /**
+     * 测试当充电记录的结束电量因断电异常被放电电量污染时，基于采样点与息屏增量进行自愈校准。
+     * 复现用户真实场景：19% 充到 95%，息屏充了 73%，亮屏充了 3%；但因断电时应用被杀导致记录了 22%，
+     * 验证自愈机制能够将结束电量校准为 95%，增量校准为 76%，亮屏充入量校准为 +3%（杜绝 -70% 负数异常）。
+     */
+    @Test
+    fun testEffectiveLevelCalibrationWhenEndLevelPollutedByDischarge() {
+        val startTs = 1700000000000L
+        val endTs = startTs + 4616000L // 01h16m56s
+        val points = listOf(
+            ChargingSamplePoint(
+                timestamp = startTs,
+                powerWatts = 15.0f,
+                batteryLevel = 19,
+                temperature = 37.0f,
+                voltageVolts = 4.0f,
+                currentMa = 3500f,
+                isScreenOn = true
+            ),
+            ChargingSamplePoint(
+                timestamp = startTs + 114000L, // 01m54s
+                powerWatts = 20.0f,
+                batteryLevel = 22,
+                temperature = 38.0f,
+                voltageVolts = 4.2f,
+                currentMa = 4000f,
+                isScreenOn = false
+            ),
+            ChargingSamplePoint(
+                timestamp = endTs,
+                powerWatts = 5.0f,
+                batteryLevel = 95,
+                temperature = 39.0f,
+                voltageVolts = 4.54f,
+                currentMa = 1000f,
+                isScreenOn = false
+            )
+        )
+        val pointsJson = ChargingHistoryRecord.pointsToJson(points)
+
+        // 模拟异常脏数据：endLevel 被写成了 22，levelGain 被写成了 3
+        val record = ChargingHistoryRecord(
+            id = endTs,
+            recordTime = "2026-10-18 16:50:22",
+            startTimestamp = startTs,
+            endTimestamp = endTs,
+            durationMs = 4616000L,
+            startLevel = 19,
+            endLevel = 22, // 脏数据
+            levelGain = 3, // 脏数据
+            chargedEnergyWh = 20.5f,
+            avgPowerWatts = 15.7f,
+            maxPowerWatts = 22.17f,
+            maxTemperature = 40.0f,
+            chargeType = "交流快充",
+            screenOffDurationMs = 4501000L,
+            screenOffLevelGain = 73,
+            screenOffEnergyWh = 19.8f,
+            samplePointsJson = pointsJson
+        )
+
+        // 验证自愈后的结束电量为真实采样点末端电量 95%
+        assertEquals(95, record.getEffectiveEndLevel())
+        // 验证自愈后的总电量净增量为 95 - 19 = 76%
+        assertEquals(76, record.getEffectiveLevelGain())
+        // 验证亮屏充入电量为 76 - 73 = 3%（绝非 -70%）
+        assertEquals(3, record.getScreenOnLevelGain())
+        // 验证时长与摘要文本
+        assertTrue(record.getFormattedDurationAndGain().contains("19%~95%(+76%)"))
+    }
+
+    /**
+     * 测试无采样点的历史老数据当 levelGain 小于 screenOffLevelGain 时基于物理守恒自愈校准。
+     */
+    @Test
+    fun testEffectiveLevelCalibrationWithoutPointsFallbackToConservation() {
+        val record = ChargingHistoryRecord(
+            id = 1700000000000L,
+            recordTime = "2026-10-18 16:50:22",
+            startTimestamp = 1700000000000L,
+            endTimestamp = 1700004616000L,
+            durationMs = 4616000L,
+            startLevel = 19,
+            endLevel = 22, // 脏数据
+            levelGain = 3,  // 脏数据
+            chargedEnergyWh = 20.5f,
+            avgPowerWatts = 15.7f,
+            maxPowerWatts = 22.17f,
+            maxTemperature = 40.0f,
+            chargeType = "交流快充",
+            screenOffDurationMs = 4501000L,
+            screenOffLevelGain = 73,
+            screenOffEnergyWh = 19.8f,
+            samplePointsJson = "" // 无采样点
+        )
+
+        // 物理守恒：结束电量至少为 19 + 73 = 92%
+        assertEquals(92, record.getEffectiveEndLevel())
+        // 真实充入量至少为息屏充入量 73%
+        assertEquals(73, record.getEffectiveLevelGain())
+        // 亮屏充入量不为负数
+        assertEquals(0, record.getScreenOnLevelGain())
+    }
 }
 
 

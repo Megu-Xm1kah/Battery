@@ -15,11 +15,14 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import com.battery.analysis.manager.PowerUsageManager
 import com.battery.analysis.model.ChargingSamplePoint
+import com.battery.analysis.model.PowerDisplayUnit
 import com.battery.analysis.timeline.domain.AppTimelineEvent
 import com.battery.analysis.timeline.presentation.TimelineMetric
 import com.battery.analysis.timeline.util.DrawableBitmapCache
 import com.battery.analysis.timeline.util.TimelineLayoutCalculator
+import com.battery.analysis.util.BatteryEnergyCalculator
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -52,6 +55,8 @@ class ChargingChartView @JvmOverloads constructor(
          */
         fun onPointSelected(point: ChargingSamplePoint?)
     }
+
+    private var displayUnit: PowerDisplayUnit = loadSavedDisplayUnit()
 
     private val dataPoints = mutableListOf<ChargingSamplePoint>()
     private val powerPoints = mutableListOf<PointF>()
@@ -392,6 +397,66 @@ class ChargingChartView @JvmOverloads constructor(
     }
 
     /**
+     * 从偏好设置中读取并加载持久化的能量显示单位配置。
+     * 确保视图创建时直接与全局设置的电量单位（Wh 或 mAh）保持一致。
+     *
+     * @return 当前偏好的电量显示单位 [PowerDisplayUnit]
+     */
+    private fun loadSavedDisplayUnit(): PowerDisplayUnit {
+        return try {
+            val prefs = context.getSharedPreferences(PowerDisplayUnit.PREFS_NAME, android.content.Context.MODE_PRIVATE)
+            val unitId = prefs.getInt(PowerDisplayUnit.PREF_KEY_POWER_DISPLAY_UNIT, PowerDisplayUnit.WH.id)
+            PowerDisplayUnit.fromId(unitId)
+        } catch (e: Exception) {
+            PowerDisplayUnit.WH
+        }
+    }
+
+    /**
+     * 设置当前电量与能量显示单位。
+     *
+     * @param unit 电量与能量显示单位枚举 [PowerDisplayUnit]
+     */
+    fun setDisplayUnit(unit: PowerDisplayUnit) {
+        if (this.displayUnit != unit) {
+            this.displayUnit = unit
+            invalidate()
+        }
+    }
+
+    /**
+     * 获取当前电量与能量显示单位。
+     *
+     * @return 当前电量与能量显示单位 [PowerDisplayUnit]
+     */
+    fun getDisplayUnit(): PowerDisplayUnit {
+        return this.displayUnit
+    }
+
+    /**
+     * 格式化顶部固定看板展示的紧凑能量文本（样式占比与耗电趋势图保持完全一致）。
+     *
+     * @param energyWh 物理剩余能量数值（单位：Wh）
+     * @param unit 当前电量呈现单位 [PowerDisplayUnit]
+     * @return 格式化后的带单位紧凑字符串，数据缺失时返回 null
+     */
+    private fun formatHeaderEnergy(energyWh: Double?, unit: PowerDisplayUnit): String? {
+        if (energyWh == null || energyWh.isNaN() || energyWh < 0.0) return null
+        return if (unit == PowerDisplayUnit.MAH) {
+            val mah = (energyWh * 1000.0) / BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS
+            if (mah >= 100.0) {
+                String.format(Locale.getDefault(), "%.0fmAh", mah)
+            } else if (mah > 0.0) {
+                String.format(Locale.getDefault(), "%.1fmAh", mah)
+            } else {
+                "0mAh"
+            }
+        } else {
+            String.format(Locale.getDefault(), "%.1fWh", energyWh)
+        }
+    }
+
+    /**
      * 设置并更新充电采样点数据集，触发重新测量与视图重绘。
      *
      * @param points 最新的采样点列表
@@ -615,13 +680,15 @@ class ChargingChartView @JvmOverloads constructor(
                 paddingLeft + chartWidth * ratio
             }
 
-            // 电量曲线：映射至顶部区间 (0.05 ~ 0.45)，防止与中间温度和底部功率重叠
-            val levelNorm = (p.batteryLevel / 100f).coerceIn(0f, 1f) * 0.40f + 0.55f
+            // 电量曲线：从 0% 到 100% 完整对应从底部 (chartBottom) 到顶部 (chartTop)
+            val levelNorm = (p.batteryLevel / 100f).coerceIn(0f, 1f)
             val levelY = chartTop + chartHeight * (1f - levelNorm)
             levelPoints.add(obtainPointF(levelPointPool, i, x, levelY))
 
-            // 能量曲线：与电量走势同比例平滑映射至顶部区间
-            energyPoints.add(obtainPointF(energyPointPool, i, x, levelY))
+            // 能量曲线：从 0% 到 100% 完整对应从底部 (chartBottom) 到顶部 (chartTop)
+            val energyNorm = (p.batteryLevel / 100f).coerceIn(0f, 1f)
+            val energyY = chartTop + chartHeight * (1f - energyNorm)
+            energyPoints.add(obtainPointF(energyPointPool, i, x, energyY))
 
             // 温度曲线：映射至中层区间 (0.35 ~ 0.65)
             val tempNorm = if (p.temperature > 0f) {
@@ -948,6 +1015,14 @@ class ChargingChartView @JvmOverloads constructor(
 
         val timeStr = timeFormatter.format(Date(curTs))
         val levelStr = "${point.batteryLevel}%"
+        val totalCapMah = PowerUsageManager.getInstance(context).getEffectiveDeviceCapacityMah()
+        val totalEnergyWh = PowerUsageManager.getInstance(context).getTotalEnergyWh()
+            ?: (totalCapMah.takeIf { it > 0f }?.let { BatteryEnergyCalculator.calculateTotalEnergyWh(it) })
+        val curWh = totalEnergyWh?.takeIf { it > 0f }?.let {
+            (point.batteryLevel / 100.0) * it
+        }
+        val energyStr = formatHeaderEnergy(curWh, displayUnit)
+
         val pWatts = point.powerWatts
         val pLabel = if (pWatts >= 0f) {
             String.format(Locale.getDefault(), "+%.2fW", pWatts)
@@ -985,29 +1060,65 @@ class ChargingChartView @JvmOverloads constructor(
             }
         }
 
-        // 3. 中间 4 个指标（电量、功率、温度、电压）在时间与图标之间按比例等分居中排布（无分隔符，无中文字符前缀）
+        // 3. 中间 5 个指标（电量、能量、功率、温度、电压）在时间与图标之间按比例自适应居中排布（样式占比完全跟随耗电趋势图）
         val middleLeft = paddingLeft + paddingH + timeWidth + dp6
         val middleRight = w - paddingRight - paddingH - iconSize - dp6
         val middleWidth = maxOf(0f, middleRight - middleLeft)
-        val colWidth = middleWidth / 4f
+
+        val isMahUnit = (displayUnit == PowerDisplayUnit.MAH)
+        // 动态分配 5 列宽度权重：电量（3-4字符）分配较小比例；能量在 mAh 模式下由于数值位数较多（如 2649mAh）加大占比，避免拥挤截断
+        val wLevel = if (isMahUnit) 0.70f else 0.85f
+        val wEnergy = if (isMahUnit) 1.40f else 1.15f
+        val wPower = 1.00f
+        val wTemp = if (isMahUnit) 0.95f else 1.00f
+        val wVolt = if (isMahUnit) 0.95f else 1.00f
+        val totalWeight = wLevel + wEnergy + wPower + wTemp + wVolt
+
+        val colLevelWidth = middleWidth * (wLevel / totalWeight)
+        val colEnergyWidth = middleWidth * (wEnergy / totalWeight)
+        val colPowerWidth = middleWidth * (wPower / totalWeight)
+        val colTempWidth = middleWidth * (wTemp / totalWeight)
+        val colVoltWidth = middleWidth * (wVolt / totalWeight)
+
+        val colLevelLeft = middleLeft
+        val colLevelCenter = colLevelLeft + colLevelWidth * 0.5f
+
+        val colEnergyLeft = colLevelLeft + colLevelWidth
+        val colEnergyRight = colEnergyLeft + colEnergyWidth
+        val colEnergyCenter = colEnergyLeft + colEnergyWidth * 0.5f
+
+        val colPowerLeft = colEnergyRight
+        val colPowerCenter = colPowerLeft + colPowerWidth * 0.5f
+
+        val colTempLeft = colPowerLeft + colPowerWidth
+        val colTempCenter = colTempLeft + colTempWidth * 0.5f
+
+        val colVoltLeft = colTempLeft + colTempWidth
+        val colVoltCenter = colVoltLeft + colVoltWidth * 0.5f
 
         headerMetricValuePaint.textAlign = Paint.Align.CENTER
 
         // 绘制电量（深天蓝 #3A7FF0，第 1 列居中）
         headerMetricValuePaint.color = colorLevel
-        canvas.drawText(levelStr, middleLeft + colWidth * 0.5f, textY, headerMetricValuePaint)
+        canvas.drawText(levelStr, colLevelCenter, textY, headerMetricValuePaint)
 
-        // 绘制功率（充电浅天蓝 #90CAF9 / 放电橙色 #FF9800，第 2 列居中）
+        // 绘制能量（紧随电量之后，同深天蓝 #3A7FF0，第 2 列居中）
+        if (energyStr != null) {
+            headerMetricValuePaint.color = colorLevel
+            canvas.drawText(energyStr, colEnergyCenter, textY, headerMetricValuePaint)
+        }
+
+        // 绘制功率（充电浅天蓝 #90CAF9 / 放电橙色 #FF9800，第 3 列居中）
         headerMetricValuePaint.color = pColor
-        canvas.drawText(pLabel, middleLeft + colWidth * 1.5f, textY, headerMetricValuePaint)
+        canvas.drawText(pLabel, colPowerCenter, textY, headerMetricValuePaint)
 
-        // 绘制温度（红色 #FF5252，第 3 列居中）
+        // 绘制温度（红色 #FF5252，第 4 列居中）
         headerMetricValuePaint.color = colorTemp
-        canvas.drawText(tempStr, middleLeft + colWidth * 2.5f, textY, headerMetricValuePaint)
+        canvas.drawText(tempStr, colTempCenter, textY, headerMetricValuePaint)
 
-        // 绘制电压（金黄 #FFD54F，第 4 列居中）
+        // 绘制电压（金黄 #FFD54F，第 5 列居中）
         headerMetricValuePaint.color = colorVoltage
-        canvas.drawText(voltStr, middleLeft + colWidth * 3.5f, textY, headerMetricValuePaint)
+        canvas.drawText(voltStr, colVoltCenter, textY, headerMetricValuePaint)
     }
 
     /**
@@ -1487,6 +1598,16 @@ class ChargingChartView @JvmOverloads constructor(
             }
         }
         return isTouching || super.onTouchEvent(event)
+    }
+
+    /**
+     * 无障碍标准点击回调。
+     *
+     * @return 若事件已处理返回 true
+     */
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
     }
 
     /**

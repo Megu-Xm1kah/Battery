@@ -944,7 +944,8 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
             sceneFullDurationMs = if (rowType == BatteryEnergyCalculator.ROW_GLOBAL) sevenDays?.fullChargeSceneCompositeDurationMs else null,
             remainingDurationMs = remDurationMs,
             v2Result = sevenDays?.v2Result,
-            remainingEstimate = remEstimate
+            remainingEstimate = remEstimate,
+            displayUnit = currentDisplayUnit
         )
         if (message.isNotBlank()) {
             showBubbleTooltip(anchorView, message, autoDismissMs = 0L)

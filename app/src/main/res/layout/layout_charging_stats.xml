@@ -437,8 +437,8 @@
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingHorizontal="14dp"
-            android:paddingVertical="11dp">
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="8dp">
 
             <!-- 左侧：日期与起止时间换行呈现，字体颜色统一 -->
             <LinearLayout
@@ -486,7 +486,7 @@
 
                     <!-- 亮屏时间容器：包含亮屏图标与时间数值 -->
                     <LinearLayout
-                        android:layout_width="78dp"
+                        android:layout_width="80dp"
                         android:layout_height="wrap_content"
                         android:gravity="end|center_vertical"
                         android:orientation="horizontal">
@@ -515,7 +515,7 @@
                     <!-- 亮屏充入百分比 -->
                     <TextView
                         android:id="@+id/tv_charging_screen_on_level_gain"
-                        android:layout_width="55dp"
+                        android:layout_width="45dp"
                         android:layout_height="wrap_content"
                         android:gravity="end"
                         android:singleLine="true"
@@ -523,12 +523,12 @@
                         android:textSize="12.5sp"
                         tools:text="+0%" />
 
-                    <!-- 亮屏充入能量 -->
+                    <!-- 亮屏充入能量（红框部分，水平占比增大） -->
                     <TextView
                         android:id="@+id/tv_charging_screen_on_energy_gain"
-                        android:layout_width="wrap_content"
+                        android:layout_width="75dp"
                         android:layout_height="wrap_content"
-                        android:minWidth="65dp"
+                        android:layout_marginStart="8dp"
                         android:gravity="end"
                         android:singleLine="true"
                         android:textColor="?android:attr/textColorPrimary"
@@ -546,7 +546,7 @@
 
                     <!-- 息屏时间容器：包含息屏图标与时间数值 -->
                     <LinearLayout
-                        android:layout_width="78dp"
+                        android:layout_width="80dp"
                         android:layout_height="wrap_content"
                         android:gravity="end|center_vertical"
                         android:orientation="horizontal">
@@ -576,7 +576,7 @@
                     <!-- 息屏充入百分比 -->
                     <TextView
                         android:id="@+id/tv_charging_screen_off_level_gain"
-                        android:layout_width="55dp"
+                        android:layout_width="45dp"
                         android:layout_height="wrap_content"
                         android:gravity="end"
                         android:singleLine="true"
@@ -584,12 +584,12 @@
                         android:textSize="12.5sp"
                         tools:text="+0%" />
 
-                    <!-- 息屏充入能量 -->
+                    <!-- 息屏充入能量（红框部分，水平占比增大） -->
                     <TextView
                         android:id="@+id/tv_charging_screen_off_energy_gain"
-                        android:layout_width="wrap_content"
+                        android:layout_width="75dp"
                         android:layout_height="wrap_content"
-                        android:minWidth="65dp"
+                        android:layout_marginStart="8dp"
                         android:gravity="end"
                         android:singleLine="true"
                         android:textColor="?android:attr/textColorPrimary"

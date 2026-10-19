@@ -134,7 +134,9 @@ enum class RuntimeModelVersion {
     /** 升级算法：有效历史窗口 + 工况条件化行为占比与稳健能量模型 */
     FULL_RUNTIME_V2,
     /** 阶段三修正升级版本（v2.1）：自适应历史窗口(7~30天) + 时间衰减权重 + FCC满电优先级 + 严谨数据质量追溯 */
-    FULL_RUNTIME_V2_1
+    FULL_RUNTIME_V2_1,
+    /** 阶段四细粒度升级版本（v2.2）：基于时序采样点工况连续切片 + 能量守恒校准 + 细粒度行为重构 */
+    FULL_RUNTIME_V2_2
 }
 
 /**
@@ -171,6 +173,70 @@ enum class RuntimeConfidenceLevel(val description: String) {
 }
 
 /**
+ * 用户典型用机工况画像与时间占比物理统计实体类（RuntimeProfile v2.1）。
+ * 完整记录自适应历史时间窗口内的有效放电物理时长、亮屏/息屏时间占比、
+ * 亮屏内部轻/中/重载时间与占比、各工况代表放电功率及最终典型加权功耗，
+ * 为满电理论续航提供完整、可溯源的物理依据。
+ *
+ * @property windowStartMs 统计窗口起始绝对系统时间戳（毫秒）
+ * @property windowEndMs 统计窗口结束绝对系统时间戳（毫秒）
+ * @property windowDays 实际选定的日历历史窗口天数（7, 14 或 30 天）
+ * @property effectiveDischargeMs 窗口内参与统计的有效放电累计物理时长（毫秒）
+ * @property screenOnMs 亮屏有效放电物理时长（毫秒）
+ * @property screenOffMs 息屏有效放电物理时长（毫秒）
+ * @property screenOnRatio 亮屏有效时长占总有效放电时长的物理比例（0.0 ~ 1.0）
+ * @property screenOffRatio 息屏有效时长占总有效放电时长的物理比例（0.0 ~ 1.0）
+ * @property lightMs 亮屏轻载工况累计有效物理时长（毫秒）
+ * @property normalMs 亮屏日常中载工况累计有效物理时长（毫秒）
+ * @property heavyMs 亮屏重载工况累计有效物理时长（毫秒）
+ * @property lightRatio 亮屏轻载工况在亮屏内部的时间占比（0.0 ~ 1.0）
+ * @property normalRatio 亮屏日常中载工况在亮屏内部的时间占比（0.0 ~ 1.0）
+ * @property heavyRatio 亮屏重载工况在亮屏内部的时间占比（0.0 ~ 1.0）
+ * @property lightPowerW 亮屏轻载工况实测代表放电功率（单位：W，若样本不足为 null）
+ * @property normalPowerW 亮屏日常中载工况实测代表放电功率（单位：W，若样本不足为 null）
+ * @property heavyPowerW 亮屏重载工况实测代表放电功率（单位：W，若样本不足为 null）
+ * @property typicalScreenOnPowerW 亮屏典型加权放电功耗（单位：W，若样本不足为 null）
+ * @property offLowMs 息屏深度休眠低载工况累计有效物理时长（毫秒）
+ * @property offHighMs 息屏活跃唤醒高载工况累计有效物理时长（毫秒）
+ * @property offLowRatio 息屏低载在息屏内部的时间占比（0.0 ~ 1.0）
+ * @property offHighRatio 息屏高载在息屏内部的时间占比（0.0 ~ 1.0）
+ * @property offLowPowerW 息屏低载工况代表放电功率（单位：W，若样本不足为 null）
+ * @property offHighPowerW 息屏高载工况代表放电功率（单位：W，若样本不足为 null）
+ * @property typicalScreenOffPowerW 息屏典型加权放电功耗（单位：W，若样本不足为 null）
+ * @property typicalGlobalPowerW 全局综合典型加权放电功耗（单位：W，若样本不足为 null）
+ * @property confidence 数据与工况置信度等级 [RuntimeConfidenceLevel]
+ */
+data class RuntimeProfile(
+    val windowStartMs: Long,
+    val windowEndMs: Long,
+    val windowDays: Int,
+    val effectiveDischargeMs: Long,
+    val screenOnMs: Long,
+    val screenOffMs: Long,
+    val screenOnRatio: Double,
+    val screenOffRatio: Double,
+    val lightMs: Long,
+    val normalMs: Long,
+    val heavyMs: Long,
+    val lightRatio: Double,
+    val normalRatio: Double,
+    val heavyRatio: Double,
+    val lightPowerW: Double?,
+    val normalPowerW: Double?,
+    val heavyPowerW: Double?,
+    val typicalScreenOnPowerW: Double?,
+    val offLowMs: Long = 0L,
+    val offHighMs: Long = 0L,
+    val offLowRatio: Double = 0.0,
+    val offHighRatio: Double = 0.0,
+    val offLowPowerW: Double? = null,
+    val offHighPowerW: Double? = null,
+    val typicalScreenOffPowerW: Double? = null,
+    val typicalGlobalPowerW: Double? = null,
+    val confidence: RuntimeConfidenceLevel = RuntimeConfidenceLevel.UNAVAILABLE
+)
+
+/**
  * 满电续航算法统一输出聚合实体类。
  * 封装全局综合、纯亮屏与纯息屏待机三维度的满电理论可用时长与对应预测功耗。
  *
@@ -193,6 +259,7 @@ enum class RuntimeConfidenceLevel(val description: String) {
  * @property dataSufficiency 历史样本数据充分性等级 [DataSufficiencyLevel]
  * @property screenOnEffectiveMs 实际统计的亮屏有效放电时长（单位：毫秒，可选）
  * @property screenOffEffectiveMs 实际统计的息屏有效放电时长（单位：毫秒，可选）
+ * @property profile 详细的自适应用机工况画像与时间占比物理统计实体 [RuntimeProfile]（可选）
  */
 data class FullChargeRuntimeResult(
     val fullRuntimeMs: Long?,
@@ -213,5 +280,6 @@ data class FullChargeRuntimeResult(
     val effectiveDischargeDurationMs: Long = effectiveHistoryMs,
     val dataSufficiency: DataSufficiencyLevel = DataSufficiencyLevel.SUFFICIENT,
     val screenOnEffectiveMs: Long? = null,
-    val screenOffEffectiveMs: Long? = null
+    val screenOffEffectiveMs: Long? = null,
+    val profile: RuntimeProfile? = null
 )

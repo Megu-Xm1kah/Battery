@@ -187,36 +187,97 @@ class RuntimeEstimatorTest {
     /**
      * 测试会话时长连续线性插值与凸组合工况跃迁响应机制（v2.1 升级特性）。
      * 验证：
-     * 1. 在 5m、10m、20m、30m、45m、60m 各时间节点的权重和严格恒等于 1.0，且连续变化无突跳；
-     * 2. 工况跃迁激活时，凸组合响应因子平滑拉升 Fast 权重，且权重和始终自洽归一（1.0）。
+     * 1. 验证 0m、5m、10m、20m、30m、60m、120m 这 7 级时间锚点的精确权重值与理论设计完全一致；
+     * 2. 在所有区间分界点前后（如 5m、10m、20m、30m、60m、120m）权重连续平滑过渡，无阶跃跳变；
+     * 3. 在无 7 天历史基线（Long 为 null）时，Fast 与 Medium 依据既定插值比率自适应重归一化；
+     * 4. 验证功耗模型置信度（Confidence）随 7 级时间尺度平滑递增。
      */
     @Test
     fun testContinuousWeightInterpolationAndConvexCombinationRegimeChange() {
         val estimator = PowerEstimator()
 
-        // 1. 测试各时间节点的连续插值权重
-        val checkDurations = listOf(
-            0L,
-            300_000L,   // 5min
-            600_000L,   // 10min
-            1_200_000L, // 20min
-            1_800_000L, // 30min
-            2_700_000L, // 45min
-            3_600_000L, // 60min
-            7_200_000L  // 120min
+        // 1. 验证 7 个关键锚点的精确权重值（误差 < 1e-6）
+        val expectedAnchors = listOf(
+            0L to Triple(0.05, 0.15, 0.80),
+            300_000L to Triple(0.10, 0.20, 0.70),      // 5 min
+            600_000L to Triple(0.15, 0.25, 0.60),      // 10 min
+            1_200_000L to Triple(0.20, 0.35, 0.45),    // 20 min
+            1_800_000L to Triple(0.25, 0.40, 0.35),    // 30 min
+            3_600_000L to Triple(0.25, 0.50, 0.25),    // 60 min
+            7_200_000L to Triple(0.25, 0.55, 0.20),    // 120 min
+            10_800_000L to Triple(0.25, 0.55, 0.20)    // 180 min (超出120min保持超稳态)
         )
 
-        for (dur in checkDurations) {
+        for ((dur, expected) in expectedAnchors) {
             val (wf, wm, wl) = estimator.interpolateBaselineWeights(dur)
+            assertEquals("会话时长 $dur ms 的 Fast 权重匹配", expected.first, wf, 1e-6)
+            assertEquals("会话时长 $dur ms 的 Medium 权重匹配", expected.second, wm, 1e-6)
+            assertEquals("会话时长 $dur ms 的 Long 权重匹配", expected.third, wl, 1e-6)
             assertEquals("会话时长 $dur ms 的权重归一化和恒等于 1.0", 1.0, wf + wm + wl, 1e-9)
             assertTrue("各分量非负", wf >= 0.0 && wm >= 0.0 && wl >= 0.0)
         }
 
-        // 2. 验证 10min 边界前后的连续性（9.99min vs 10.01min 不出现跳跃）
-        val (wfBefore, wmBefore, wlBefore) = estimator.interpolateBaselineWeights(599_000L)
-        val (wfAfter, wmAfter, wlAfter) = estimator.interpolateBaselineWeights(601_000L)
-        assertTrue("10min边界前后的Fast权重平滑连续", kotlin.math.abs(wfBefore - wfAfter) < 0.005)
-        assertTrue("10min边界前后的Medium权重平滑连续", kotlin.math.abs(wmBefore - wmAfter) < 0.005)
-        assertTrue("10min边界前后的Long权重平滑连续", kotlin.math.abs(wlBefore - wlAfter) < 0.005)
+        // 2. 验证各个时间锚点边界前后的平滑连续性（前后差值残差 < 0.005）
+        val boundaryChecks = listOf(
+            300_000L,   // 5 min
+            600_000L,   // 10 min
+            1_200_000L, // 20 min
+            1_800_000L, // 30 min
+            3_600_000L, // 60 min
+            7_200_000L  // 120 min
+        )
+
+        for (boundary in boundaryChecks) {
+            val (wfBefore, wmBefore, wlBefore) = estimator.interpolateBaselineWeights(boundary - 1_000L)
+            val (wfAfter, wmAfter, wlAfter) = estimator.interpolateBaselineWeights(boundary + 1_000L)
+            assertTrue("边界 ${boundary}ms 前后的 Fast 权重平滑连续", kotlin.math.abs(wfBefore - wfAfter) < 0.005)
+            assertTrue("边界 ${boundary}ms 前后的 Medium 权重平滑连续", kotlin.math.abs(wmBefore - wmAfter) < 0.005)
+            assertTrue("边界 ${boundary}ms 前后的 Long 权重平滑连续", kotlin.math.abs(wlBefore - wlAfter) < 0.005)
+        }
+
+        // 3. 验证无 Long 历史基准时的自适应比率降级归一化
+        estimator.reset(initialLongPowerWatts = null)
+        // 0min: baseWf = 0.05, baseWm = 0.15 -> 降级归一化为 0.05/0.20 = 0.25, 0.15/0.20 = 0.75
+        estimator.seedCurrentSession(durationMs = 0L, powerWatts = 3.0f)
+        val (wf0, wm0, wl0) = estimator.calculateAdaptiveWeights()
+        assertEquals(0.0, wl0, 1e-6)
+        assertEquals(0.25, wf0, 1e-3)
+        assertEquals(0.75, wm0, 1e-3)
+        assertEquals(1.0, wf0 + wm0, 1e-9)
+
+        // 120min: baseWf = 0.25, baseWm = 0.55 -> 降级归一化为 0.25/0.80 = 0.3125, 0.55/0.80 = 0.6875
+        estimator.seedCurrentSession(durationMs = 7_200_000L, powerWatts = 3.0f)
+        val (wf120, wm120, wl120) = estimator.calculateAdaptiveWeights()
+        assertEquals(0.0, wl120, 1e-6)
+        assertEquals(0.3125, wf120, 1e-3)
+        assertEquals(0.6875, wm120, 1e-3)
+        assertEquals(1.0, wf120 + wm120, 1e-9)
+    }
+
+    /**
+     * 验证多时间尺度模型置信度（Confidence）随 7 级时间尺度平滑递增的特性。
+     */
+    @Test
+    fun testConfidenceScaleProgression() {
+        val estimator = PowerEstimator()
+        estimator.reset(initialLongPowerWatts = 3.0)
+
+        // 验证置信度阶梯：0min -> 5min -> 10min -> 20min -> 30min -> 60min -> 120min
+        val durationsAndExpectedScores = listOf(
+            0L to 0.35,          // 基础 0.30 + Long 0.05
+            100_000L to 0.40,    // 0~5min: 基础 0.35 + Long 0.05
+            300_000L to 0.50,    // 5~10min: 基础 0.45 + Long 0.05
+            600_000L to 0.60,    // 10~20min: 基础 0.55 + Long 0.05
+            1_200_000L to 0.70,  // 20~30min: 基础 0.65 + Long 0.05
+            1_800_000L to 0.80,  // 30~60min: 基础 0.75 + Long 0.05
+            3_600_000L to 0.90,  // 60~120min: 基础 0.85 + Long 0.05
+            7_200_000L to 1.00   // >=120min: 基础 0.95 + Long 0.05 = 1.00
+        )
+
+        for ((dur, expected) in durationsAndExpectedScores) {
+            estimator.seedCurrentSession(durationMs = dur, powerWatts = 3.0f)
+            val conf = estimator.getConfidence()
+            assertEquals("会话时长 $dur ms 的置信度应为 $expected", expected, conf, 1e-6)
+        }
     }
 }

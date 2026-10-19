@@ -17,11 +17,17 @@ class FullChargeRuntimeEstimator(
     private val sampleNormalizer: PowerSampleNormalizer = PowerSampleNormalizer(),
     private val classifier: PowerRegimeClassifier = PowerRegimeClassifier(),
     private val profileEstimator: UsageProfileEstimator = UsageProfileEstimator(),
-    private val regimePowerEstimator: RegimePowerEstimator = RegimePowerEstimator()
+    private val regimePowerEstimator: RegimePowerEstimator = RegimePowerEstimator(),
+    private val windowSelector: HistoricalWindowSelector = DefaultHistoricalWindowSelector()
 ) {
 
     /**
      * 基于预先提取并裁剪后的有效放电物理区间集合，推算设备满电理论可用续航结果。
+     * 遵循严格物理守恒模型（FullChargeRuntimeEstimator v2.1）：
+     * 1. 分离亮屏/息屏时间占比（第一层）与亮屏内部工况占比（第二层）；
+     * 2. 各工况独立计算实际做功放电功率 P_i = Sum(w_k * E_k) / Sum(w_k * Delta t_k)；
+     * 3. 典型亮屏功耗 = Sum(R_i * P_i)；
+     * 4. 满电续航严格按 T_full = E_full / P_typical 推导并支持全链路追溯。
      *
      * @param intervals 经过自适应历史时间窗口提取并带有时间衰减权重的有效放电物理区间列表
      * @param energyEstimate 满充物理可用能量估算结果 [FullChargeEnergyEstimate]
@@ -47,7 +53,8 @@ class FullChargeRuntimeEstimator(
                 fallbackReason = "满充物理总能量不可用",
                 historyWindowDays = windowMetrics?.windowDays ?: 7.0,
                 effectiveDischargeDurationMs = 0L,
-                dataSufficiency = DataSufficiencyLevel.INSUFFICIENT
+                dataSufficiency = DataSufficiencyLevel.INSUFFICIENT,
+                profile = null
             )
         }
 
@@ -55,9 +62,8 @@ class FullChargeRuntimeEstimator(
         val weightedHistoryMs = intervals.sumOf { it.durationMs.toDouble() * it.ageWeight }
         val weightedHistoryWh = intervals.sumOf { it.energyWh * it.ageWeight }
 
-        val (evalSufficiency, _) = sampleNormalizer.evaluateSufficiency(intervals)
-        val finalSufficiency = windowMetrics?.sufficiency ?: evalSufficiency
         val windowDays = windowMetrics?.windowDays ?: 7.0
+        val windowDaysInt = windowDays.toInt().coerceAtLeast(7)
 
         // 若历史有效放电记录不足 10 分钟，无法建立统计模型，如实返回未知
         if (totalHistoryMs < 600_000L || weightedHistoryMs <= 0.0 || weightedHistoryWh <= 0.0) {
@@ -73,49 +79,181 @@ class FullChargeRuntimeEstimator(
                 fallbackReason = "历史有效放电时长不足 10 分钟",
                 historyWindowDays = windowDays,
                 effectiveDischargeDurationMs = totalHistoryMs,
-                dataSufficiency = DataSufficiencyLevel.INSUFFICIENT
+                dataSufficiency = DataSufficiencyLevel.INSUFFICIENT,
+                profile = null
             )
         }
 
-        // 1. 先计算全局历史物理加权平均功率 P_global 作为基准与降级底线 (引入时间衰减权重)
+        // 1. 全局历史物理加权平均功率 P_global 作为基准底线 (用于比对与工况缺失时的安全降级)
         val pGlobal = weightedHistoryWh / (weightedHistoryMs / 3600000.0)
 
-        // 2. 按工况归集放电物理区间 (累计加权持续时长)
+        // 2. 按工况细分归集有效放电物理区间 (累计加权持续时长与物理时长)
         val intervalsByRegime = mutableMapOf<PowerRegime, MutableList<DischargeInterval>>()
-        val durByRegime = mutableMapOf<PowerRegime, Double>()
+        val rawDurByRegime = mutableMapOf<PowerRegime, Long>()
+        val weightedDurByRegime = mutableMapOf<PowerRegime, Double>()
 
         for (interval in intervals) {
             val regime = classifier.classify(interval)
             intervalsByRegime.getOrPut(regime) { mutableListOf() }.add(interval)
+            rawDurByRegime[regime] = (rawDurByRegime[regime] ?: 0L) + interval.durationMs
             val weightedDur = interval.durationMs.toDouble() * interval.ageWeight
-            durByRegime[regime] = (durByRegime[regime] ?: 0.0) + weightedDur
+            weightedDurByRegime[regime] = (weightedDurByRegime[regime] ?: 0.0) + weightedDur
         }
 
-        // 3. 计算各工况代表功率与经衰减加权的时间占比概率
+        // 3. 计算各工况代表功率 (单工况累计有效时长 >= 60s)
         val regimePowers = regimePowerEstimator.estimateAllRegimePowers(intervalsByRegime)
-        val ratios = profileEstimator.computeWeightedTimeRatios(durByRegime)
 
-        var pTypicalFuture = 0.0
-        var validRegimeCount = 0
+        // 4. 第一层时间占比：亮屏 vs 息屏时间占比计算 (按持续时长加权计算，严禁按采样点数计算)
+        val onIntervals = intervals.filter { it.isScreenOn }
+        val offIntervals = intervals.filter { !it.isScreenOn }
 
-        for ((regime, ratio) in ratios) {
-            val pRegime = regimePowers[regime]
-            if (pRegime != null && pRegime > 0.0) {
-                pTypicalFuture += ratio * pRegime
-                validRegimeCount++
+        val onDurMs = onIntervals.sumOf { it.durationMs }
+        val offDurMs = offIntervals.sumOf { it.durationMs }
+
+        val onDurWeighted = onIntervals.sumOf { it.durationMs.toDouble() * it.ageWeight }
+        val offDurWeighted = offIntervals.sumOf { it.durationMs.toDouble() * it.ageWeight }
+        val totalDurWeighted = onDurWeighted + offDurWeighted
+
+        val screenOnRatio = if (totalDurWeighted > 0.0) (onDurWeighted / totalDurWeighted) else 0.0
+        val screenOffRatio = if (totalDurWeighted > 0.0) (offDurWeighted / totalDurWeighted) else 0.0
+
+        // 5. 第二层时间占比与各工况功耗：亮屏内部工况占比分解 (ON_LIGHT, ON_NORMAL, ON_HEAVY)
+        val lightMs = rawDurByRegime[PowerRegime.ON_LIGHT] ?: 0L
+        val normalMs = rawDurByRegime[PowerRegime.ON_NORMAL] ?: 0L
+        val heavyMs = rawDurByRegime[PowerRegime.ON_HEAVY] ?: 0L
+
+        val lightDurWeighted = weightedDurByRegime[PowerRegime.ON_LIGHT] ?: 0.0
+        val normalDurWeighted = weightedDurByRegime[PowerRegime.ON_NORMAL] ?: 0.0
+        val heavyDurWeighted = weightedDurByRegime[PowerRegime.ON_HEAVY] ?: 0.0
+
+        val (lightRatio, normalRatio, heavyRatio) = if (onDurWeighted > 0.0) {
+            val rL = lightDurWeighted / onDurWeighted
+            val rN = normalDurWeighted / onDurWeighted
+            val rH = heavyDurWeighted / onDurWeighted
+            val rSum = rL + rN + rH
+            if (rSum > 0.0) {
+                Triple(rL / rSum, rN / rSum, rH / rSum)
+            } else {
+                Triple(0.0, 0.0, 0.0)
             }
+        } else {
+            Triple(0.0, 0.0, 0.0)
         }
 
-        // 4. 判定工况模型是否充分有效（至少覆盖 2 类有效核心工况）
-        val canUseRegimeModel = (validRegimeCount >= 2 && pTypicalFuture > 0.0 && pTypicalFuture.isFinite())
-        val finalPredictedPower = if (canUseRegimeModel) pTypicalFuture else pGlobal
+        val lightPower = regimePowers[PowerRegime.ON_LIGHT]
+        val normalPower = regimePowers[PowerRegime.ON_NORMAL]
+        val heavyPower = regimePowers[PowerRegime.ON_HEAVY]
 
+        // 亮屏稳定工况计数 (达到最小有效时长 60s 且具有有效功率)
+        var stableOnRegimeCount = 0
+        if (lightPower != null && lightPower > 0.0) stableOnRegimeCount++
+        if (normalPower != null && normalPower > 0.0) stableOnRegimeCount++
+        if (heavyPower != null && heavyPower > 0.0) stableOnRegimeCount++
+
+        val onEnergyWeighted = onIntervals.sumOf { it.energyWh * it.ageWeight }
+        val pGlobalOn = if (onDurWeighted > 0.0 && onEnergyWeighted > 0.0) {
+            onEnergyWeighted / (onDurWeighted / 3600000.0)
+        } else null
+
+        // 典型亮屏功耗推算：P_typical,on = R_light * P_light + R_normal * P_normal + R_heavy * P_heavy
+        val pTypicalScreenOn = if (onDurMs >= 60_000L && onDurWeighted > 0.0) {
+            var weightedPowerSum = 0.0
+            var effectiveRatioSum = 0.0
+            if (lightPower != null && lightPower > 0.0 && lightRatio > 0.0) {
+                weightedPowerSum += lightRatio * lightPower
+                effectiveRatioSum += lightRatio
+            }
+            if (normalPower != null && normalPower > 0.0 && normalRatio > 0.0) {
+                weightedPowerSum += normalRatio * normalPower
+                effectiveRatioSum += normalRatio
+            }
+            if (heavyPower != null && heavyPower > 0.0 && heavyRatio > 0.0) {
+                weightedPowerSum += heavyRatio * heavyPower
+                effectiveRatioSum += heavyRatio
+            }
+
+            if (effectiveRatioSum > 0.0) {
+                weightedPowerSum / effectiveRatioSum
+            } else {
+                pGlobalOn
+            }
+        } else {
+            null
+        }
+
+        // 6. 息屏内部工况占比分解 (OFF_LOW, OFF_HIGH)
+        val offLowMs = rawDurByRegime[PowerRegime.OFF_LOW] ?: 0L
+        val offHighMs = rawDurByRegime[PowerRegime.OFF_HIGH] ?: 0L
+        val offLowDurWeighted = weightedDurByRegime[PowerRegime.OFF_LOW] ?: 0.0
+        val offHighDurWeighted = weightedDurByRegime[PowerRegime.OFF_HIGH] ?: 0.0
+
+        val (offLowRatio, offHighRatio) = if (offDurWeighted > 0.0) {
+            val rL = offLowDurWeighted / offDurWeighted
+            val rH = offHighDurWeighted / offDurWeighted
+            val rSum = rL + rH
+            if (rSum > 0.0) {
+                Pair(rL / rSum, rH / rSum)
+            } else {
+                Pair(0.0, 0.0)
+            }
+        } else {
+            Pair(0.0, 0.0)
+        }
+
+        val offLowPower = regimePowers[PowerRegime.OFF_LOW]
+        val offHighPower = regimePowers[PowerRegime.OFF_HIGH]
+
+        val offEnergyWeighted = offIntervals.sumOf { it.energyWh * it.ageWeight }
+        val pGlobalOff = if (offDurWeighted > 0.0 && offEnergyWeighted > 0.0) {
+            offEnergyWeighted / (offDurWeighted / 3600000.0)
+        } else null
+
+        // 典型息屏功耗推算：P_typical,off = R_off_low * P_off_low + R_off_high * P_off_high
+        val pTypicalScreenOff = if (offDurMs >= 60_000L && offDurWeighted > 0.0) {
+            var weightedOffPowerSum = 0.0
+            var effectiveOffRatioSum = 0.0
+            if (offLowPower != null && offLowPower > 0.0 && offLowRatio > 0.0) {
+                weightedOffPowerSum += offLowRatio * offLowPower
+                effectiveOffRatioSum += offLowRatio
+            }
+            if (offHighPower != null && offHighPower > 0.0 && offHighRatio > 0.0) {
+                weightedOffPowerSum += offHighRatio * offHighPower
+                effectiveOffRatioSum += offHighRatio
+            }
+
+            if (effectiveOffRatioSum > 0.0) {
+                weightedOffPowerSum / effectiveOffRatioSum
+            } else {
+                pGlobalOff
+            }
+        } else {
+            null
+        }
+
+        // 7. 全局综合典型功耗：P_global = R_on * P_on + (1 - R_on) * P_off (方案第 21 节)
+        var totalValidRegimeCount = 0
+        if (lightPower != null && lightPower > 0.0) totalValidRegimeCount++
+        if (normalPower != null && normalPower > 0.0) totalValidRegimeCount++
+        if (heavyPower != null && heavyPower > 0.0) totalValidRegimeCount++
+        if (offLowPower != null && offLowPower > 0.0) totalValidRegimeCount++
+        if (offHighPower != null && offHighPower > 0.0) totalValidRegimeCount++
+
+        val pGlobalComposite = if (pTypicalScreenOn != null && pTypicalScreenOn > 0.0 && pTypicalScreenOff != null && pTypicalScreenOff > 0.0) {
+            screenOnRatio * pTypicalScreenOn + screenOffRatio * pTypicalScreenOff
+        } else if (pTypicalScreenOn != null && pTypicalScreenOn > 0.0) {
+            pTypicalScreenOn
+        } else {
+            pGlobal
+        }
+
+        val canUseRegimeModel = (totalValidRegimeCount >= 2 && pGlobalComposite > 0.0 && pGlobalComposite.isFinite())
+        val finalPredictedPower = if (canUseRegimeModel) pGlobalComposite else pGlobal
         if (finalPredictedPower <= 0.0 || !finalPredictedPower.isFinite()) {
             return FullChargeRuntimeResult(
                 fullRuntimeMs = null,
                 fullEnergyWh = fullWh,
                 predictedPowerWatts = null,
-                modelVersion = RuntimeModelVersion.FULL_RUNTIME_V2_1,
+                modelVersion = RuntimeModelVersion.FULL_RUNTIME_V2_2,
                 confidenceLevel = RuntimeConfidenceLevel.UNAVAILABLE,
                 energySource = energyEstimate.source,
                 effectiveHistoryMs = totalHistoryMs,
@@ -123,103 +261,115 @@ class FullChargeRuntimeEstimator(
                 fallbackReason = "计算预测功率非有限正数",
                 historyWindowDays = windowDays,
                 effectiveDischargeDurationMs = totalHistoryMs,
-                dataSufficiency = finalSufficiency
+                dataSufficiency = DataSufficiencyLevel.INSUFFICIENT,
+                profile = null
             )
         }
 
-        // 5. 核心物理公式推导满电理论可用时长：T_full = E_full / P_typical
+        // 8. 物理续航推导：T_full = E_full / P_typical
         val fullHours = fullWh / finalPredictedPower
         val fullMs = (fullHours * 3600.0 * 1000.0).roundToLong()
 
-        // 6. 亮屏工况代表性功耗与满电亮屏续航推导（v2.1 加权积分）
-        val onIntervals = intervals.filter { it.isScreenOn }
-        val onDurTotal = onIntervals.sumOf { it.durationMs }
-        val onDurWeighted = onIntervals.sumOf { it.durationMs.toDouble() * it.ageWeight }
-        val onEnergyWeighted = onIntervals.sumOf { it.energyWh * it.ageWeight }
+        val screenOnMsResult = if (pTypicalScreenOn != null && pTypicalScreenOn > 0.0) {
+            ((fullWh / pTypicalScreenOn) * 3600.0 * 1000.0).roundToLong()
+        } else null
 
-        val (screenOnPower, screenOnMs) = if (onDurTotal >= 60_000L && onDurWeighted > 0.0 && onEnergyWeighted > 0.0) {
-            val onRegimes = setOf(PowerRegime.ON_LIGHT, PowerRegime.ON_NORMAL, PowerRegime.ON_HEAVY)
-            val onDurMap = durByRegime.filterKeys { it in onRegimes }
-            val onRatios = profileEstimator.computeWeightedTimeRatios(onDurMap)
-            var pTypicalOn = 0.0
-            for ((r, ratio) in onRatios) {
-                val p = regimePowers[r]
-                if (p != null && p > 0.0) {
-                    pTypicalOn += ratio * p
-                }
-            }
-            val pEffectiveOn = if (pTypicalOn > 0.0) pTypicalOn else (onEnergyWeighted / (onDurWeighted / 3600000.0))
-            val ms = if (pEffectiveOn > 0.0) ((fullWh / pEffectiveOn) * 3600.0 * 1000.0).roundToLong() else null
-            Pair(pEffectiveOn, ms)
-        } else {
-            Pair(null, null)
+        val screenOffMsResult = if (pTypicalScreenOff != null && pTypicalScreenOff > 0.0) {
+            ((fullWh / pTypicalScreenOff) * 3600.0 * 1000.0).roundToLong()
+        } else null
+
+        // 9. 数据充分性与置信度多维评定 (方案第 14 节)
+        val sufficiency = windowMetrics?.sufficiency ?: when {
+            onDurMs >= 12L * 3600L * 1000L && stableOnRegimeCount >= 2 -> DataSufficiencyLevel.SUFFICIENT
+            onDurMs >= 3L * 3600L * 1000L && stableOnRegimeCount >= 1 -> DataSufficiencyLevel.MODERATE
+            else -> DataSufficiencyLevel.INSUFFICIENT
         }
 
-        // 7. 息屏工况代表性功耗与满电待机续航推导（v2.1 加权积分）
-        val offIntervals = intervals.filter { !it.isScreenOn }
-        val offDurTotal = offIntervals.sumOf { it.durationMs }
-        val offDurWeighted = offIntervals.sumOf { it.durationMs.toDouble() * it.ageWeight }
-        val offEnergyWeighted = offIntervals.sumOf { it.energyWh * it.ageWeight }
-
-        val (screenOffPower, screenOffMs) = if (offDurTotal >= 60_000L && offDurWeighted > 0.0 && offEnergyWeighted > 0.0) {
-            val offRegimes = setOf(PowerRegime.OFF_LOW, PowerRegime.OFF_HIGH)
-            val offDurMap = durByRegime.filterKeys { it in offRegimes }
-            val offRatios = profileEstimator.computeWeightedTimeRatios(offDurMap)
-            var pTypicalOff = 0.0
-            for ((r, ratio) in offRatios) {
-                val p = regimePowers[r]
-                if (p != null && p > 0.0) {
-                    pTypicalOff += ratio * p
-                }
-            }
-            val pEffectiveOff = if (pTypicalOff > 0.0) pTypicalOff else (offEnergyWeighted / (offDurWeighted / 3600000.0))
-            val ms = if (pEffectiveOff > 0.0) ((fullWh / pEffectiveOff) * 3600.0 * 1000.0).roundToLong() else null
-            Pair(pEffectiveOff, ms)
-        } else {
-            Pair(null, null)
-        }
-
-        // 8. 结合自适应数据充分性与工况完整度的综合置信度评级
         val confidence = when {
-            finalSufficiency == DataSufficiencyLevel.SUFFICIENT && canUseRegimeModel -> RuntimeConfidenceLevel.HIGH
-            finalSufficiency == DataSufficiencyLevel.MODERATE || (totalHistoryMs >= 3600000L * 6L) -> RuntimeConfidenceLevel.MEDIUM
-            else -> RuntimeConfidenceLevel.LOW
+            sufficiency == DataSufficiencyLevel.SUFFICIENT && canUseRegimeModel && windowDays <= 14.1 -> RuntimeConfidenceLevel.HIGH
+            sufficiency == DataSufficiencyLevel.SUFFICIENT || sufficiency == DataSufficiencyLevel.MODERATE || onDurMs >= 3L * 3600L * 1000L -> RuntimeConfidenceLevel.MEDIUM
+            totalHistoryMs >= 600_000L -> RuntimeConfidenceLevel.LOW
+            else -> RuntimeConfidenceLevel.UNAVAILABLE
         }
 
+        // 10. 构建 RuntimeProfile 画像实体 (方案第 18 节)
+        val nowMs = intervals.maxOfOrNull { it.endTimeMs } ?: System.currentTimeMillis()
+        val windowStartMs = nowMs - (windowDays * 86_400_000.0).roundToLong()
+        val profile = RuntimeProfile(
+            windowStartMs = windowStartMs,
+            windowEndMs = nowMs,
+            windowDays = windowDaysInt,
+            effectiveDischargeMs = totalHistoryMs,
+            screenOnMs = onDurMs,
+            screenOffMs = offDurMs,
+            screenOnRatio = screenOnRatio,
+            screenOffRatio = screenOffRatio,
+            lightMs = lightMs,
+            normalMs = normalMs,
+            heavyMs = heavyMs,
+            lightRatio = lightRatio,
+            normalRatio = normalRatio,
+            heavyRatio = heavyRatio,
+            lightPowerW = lightPower,
+            normalPowerW = normalPower,
+            heavyPowerW = heavyPower,
+            typicalScreenOnPowerW = pTypicalScreenOn,
+            offLowMs = offLowMs,
+            offHighMs = offHighMs,
+            offLowRatio = offLowRatio,
+            offHighRatio = offHighRatio,
+            offLowPowerW = offLowPower,
+            offHighPowerW = offHighPower,
+            typicalScreenOffPowerW = pTypicalScreenOff,
+            typicalGlobalPowerW = pGlobalComposite,
+            confidence = confidence
+        )
+
+        // 11. 构建质量说明与追溯依据 (方案第 12、13 节)
         val qualityReasons = mutableListOf<String>()
         qualityReasons.addAll(energyEstimate.notes)
-        if (canUseRegimeModel) {
-            qualityReasons.add("覆盖 $validRegimeCount 类典型工况行为建模")
-        } else {
-            qualityReasons.add("工况样本不足，降级至自适应历史全局加权均值")
-        }
+
         if (windowDays > 7.1) {
             val daysStr = String.format(java.util.Locale.US, "%.1f", windowDays)
-            qualityReasons.add("7天样本不足，自适应扩展至近 $daysStr 天 (衰减加权)")
+            qualityReasons.add("7天样本不足，自适应扩展至近 $daysStr 天 (时间衰减加权)")
         } else {
             qualityReasons.add("基于最近 7 天完整周期作息建模")
+        }
+
+        if (canUseRegimeModel) {
+            val lightPct = String.format(java.util.Locale.US, "%.1f%%", lightRatio * 100.0)
+            val normalPct = String.format(java.util.Locale.US, "%.1f%%", normalRatio * 100.0)
+            val heavyPct = String.format(java.util.Locale.US, "%.1f%%", heavyRatio * 100.0)
+            qualityReasons.add("覆盖 $stableOnRegimeCount 类亮屏工况建模 (轻载 $lightPct, 普通 $normalPct, 重载 $heavyPct)")
+        } else {
+            qualityReasons.add("工况类别不足($stableOnRegimeCount 类)，安全平滑降级至全局历史物理均值")
+        }
+
+        if (pTypicalScreenOn != null && pGlobalOn != null && kotlin.math.abs(pTypicalScreenOn - pGlobalOn) < 0.05) {
+            qualityReasons.add("亮屏工况典型功耗贴合历史加权均值，新旧模型预测一致")
         }
 
         return FullChargeRuntimeResult(
             fullRuntimeMs = if (fullMs > 0L) fullMs else null,
             fullEnergyWh = fullWh,
             predictedPowerWatts = finalPredictedPower,
-            modelVersion = RuntimeModelVersion.FULL_RUNTIME_V2_1,
+            modelVersion = RuntimeModelVersion.FULL_RUNTIME_V2_2,
             confidenceLevel = confidence,
             energySource = energyEstimate.source,
             effectiveHistoryMs = totalHistoryMs,
             usedRegimeModel = canUseRegimeModel,
             fallbackReason = if (!canUseRegimeModel) "工况样本类别不足，已安全降级至全局加权均值" else null,
-            screenOnFullRuntimeMs = if (screenOnMs != null && screenOnMs > 0L) screenOnMs else null,
-            screenOffFullRuntimeMs = if (screenOffMs != null && screenOffMs > 0L) screenOffMs else null,
-            predictedScreenOnPowerWatts = screenOnPower,
-            predictedScreenOffPowerWatts = screenOffPower,
+            screenOnFullRuntimeMs = if (screenOnMsResult != null && screenOnMsResult > 0L) screenOnMsResult else null,
+            screenOffFullRuntimeMs = if (screenOffMsResult != null && screenOffMsResult > 0L) screenOffMsResult else null,
+            predictedScreenOnPowerWatts = pTypicalScreenOn,
+            predictedScreenOffPowerWatts = pTypicalScreenOff,
             qualityReasons = qualityReasons,
             historyWindowDays = windowDays,
             effectiveDischargeDurationMs = totalHistoryMs,
-            dataSufficiency = finalSufficiency,
-            screenOnEffectiveMs = onDurTotal,
-            screenOffEffectiveMs = offDurTotal
+            dataSufficiency = sufficiency,
+            screenOnEffectiveMs = onDurMs,
+            screenOffEffectiveMs = offDurMs,
+            profile = profile
         )
     }
 
@@ -255,12 +405,12 @@ class FullChargeRuntimeEstimator(
             sohPercent = sohPercent
         )
 
-        val (intervals, metrics) = sampleNormalizer.extractAdaptiveDischargeIntervals(
-            currentOverview = currentOverview,
-            allRecords = allRecords,
-            baseTimestamp = baseTimestamp
+        val window = windowSelector.select(
+            nowMs = baseTimestamp,
+            records = allRecords,
+            currentOverview = currentOverview
         )
 
-        return estimateFromIntervals(intervals, energyEstimate, metrics)
+        return estimateFromIntervals(window.intervals, energyEstimate, window.metrics)
     }
 }

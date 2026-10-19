@@ -25,6 +25,20 @@ class PowerEstimator(
         private const val TAU_MEDIUM_SEC = 1800.0
         /** 滑动对照窗口最大样本量上限 */
         private const val MAX_WINDOW_SIZE = 30
+
+        /**
+         * 7 级关键时间锚点静态配置列表。
+         * 严格对应会话时长：0min, 5min, 10min, 20min, 30min, 60min, >=120min。
+         */
+        val WEIGHT_ANCHORS = listOf(
+            WeightAnchor(0L, 0.05, 0.15, 0.80),
+            WeightAnchor(300_000L, 0.10, 0.20, 0.70),      // 5 min
+            WeightAnchor(600_000L, 0.15, 0.25, 0.60),      // 10 min
+            WeightAnchor(1_200_000L, 0.20, 0.35, 0.45),    // 20 min
+            WeightAnchor(1_800_000L, 0.25, 0.40, 0.35),    // 30 min
+            WeightAnchor(3_600_000L, 0.25, 0.50, 0.25),    // 60 min
+            WeightAnchor(7_200_000L, 0.25, 0.55, 0.20)     // 120 min
+        )
     }
 
     /** 最近样本滑动窗口，用于计算 Median + MAD */
@@ -85,7 +99,7 @@ class PowerEstimator(
      * @param powerWatts 当前会话测得的平均物理功率（单位：W）
      */
     fun seedCurrentSession(durationMs: Long, powerWatts: Float) {
-        if (durationMs > 0L && powerWatts > 0f) {
+        if (durationMs >= 0L && powerWatts > 0f) {
             totalSessionDurationMs = durationMs
             val p = powerWatts.toDouble()
             fastPowerWatts = p
@@ -173,6 +187,21 @@ class PowerEstimator(
     fun getLongPower(): Double? = longPowerWatts?.takeIf { it > 0.0 }
 
     /**
+     * 会话时间尺度权重锚点定义数据包。
+     *
+     * @property durationMs 放电会话物理持续时间戳（毫秒）
+     * @property wf Fast 尺度基础权重
+     * @property wm Medium 尺度基础权重
+     * @property wl Long 尺度基础权重
+     */
+    data class WeightAnchor(
+        val durationMs: Long,
+        val wf: Double,
+        val wm: Double,
+        val wl: Double
+    )
+
+    /**
      * 结合当前已积累的数据量、多尺度间方差稳定性与工况迁移状态，
      * 自适应计算 Fast/Medium/Long 三个模型的动态归一化权重。
      * 满足 w_fast + w_medium + w_long == 1.0 且均 >= 0.0。
@@ -188,10 +217,15 @@ class PowerEstimator(
             return Triple(0.0, 0.0, 0.0)
         }
 
-        // 若部分数据源缺失，退化处理
+        // 1. 基础时间连续权重插值分配（依据当前会话已持续物理时长平滑过渡，杜绝阶跃跳变）
+        val (baseWf, baseWm, baseWl) = interpolateBaselineWeights(totalSessionDurationMs)
+
+        // 2. 若部分数据源缺失，依据既定插值比率自适应重归一化，保持平滑连续性
         if (!hasLong && hasFast && hasMedium) {
-            val total = 0.40 + 0.60
-            return Triple(0.40 / total, 0.60 / total, 0.0)
+            val sumFM = baseWf + baseWm
+            val normWf = if (sumFM > 0.0) baseWf / sumFM else 0.5
+            val normWm = if (sumFM > 0.0) baseWm / sumFM else 0.5
+            return applyRegimeChangeIfNeeded(normWf, normWm, 0.0)
         } else if (!hasLong && hasFast) {
             return Triple(1.0, 0.0, 0.0)
         } else if (!hasLong && hasMedium) {
@@ -199,15 +233,29 @@ class PowerEstimator(
         } else if (hasLong && !hasFast && !hasMedium) {
             return Triple(0.0, 0.0, 1.0)
         } else if (hasLong && hasFast && !hasMedium) {
-            val total = 0.60 + 0.40
-            return Triple(0.60 / total, 0.0, 0.40 / total)
+            val sumFL = baseWf + baseWl
+            val normWf = if (sumFL > 0.0) baseWf / sumFL else 0.5
+            val normWl = if (sumFL > 0.0) baseWl / sumFL else 0.5
+            return applyRegimeChangeIfNeeded(normWf, 0.0, normWl)
         }
 
-        // 1. 基础时间连续权重插值分配（依据当前会话已持续物理时长平滑过渡，杜绝阶跃跳变）
-        val (baseWf, baseWm, baseWl) = interpolateBaselineWeights(totalSessionDurationMs)
+        // 3. 完整三数据源均存在时的稳定性修正与工况突变响应
+        return applyRegimeChangeIfNeeded(baseWf, baseWm, baseWl)
+    }
 
-        // 2. 稳定性修正与工况突变响应（升级为凸组合模型，天然保持权重和严格归一为 1.0）：
-        // 若检测到工况跃迁激活（如进入 3D 游戏或启动重载相机），提高对 Fast 敏捷度的信任程度 gamma，并同比例平滑压制 Medium 与 Long
+    /**
+     * 根据工况突变状态对基准权重进行凸组合动态调整并严格归一化。
+     *
+     * @param baseWf Fast 基础权重
+     * @param baseWm Medium 基础权重
+     * @param baseWl Long 基础权重
+     * @return 经过工况响应与归一化后的 (w_fast, w_medium, w_long) 权重三元组 [Triple]
+     */
+    private fun applyRegimeChangeIfNeeded(
+        baseWf: Double,
+        baseWm: Double,
+        baseWl: Double
+    ): Triple<Double, Double, Double> {
         val (finalWf, finalWm, finalWl) = if (stateDetector.isRegimeChanging) {
             val mult = stateDetector.getResponsivenessMultiplier()
             // 计算响应因子 gamma，范围在 0.40 至 0.85 之间
@@ -220,7 +268,7 @@ class PowerEstimator(
             // 稳态下若 Fast 与 Medium 差异很小（稳定运行），温和降低 Long 依赖
             val f = fastPowerWatts ?: 0.0
             val m = mediumPowerWatts ?: 0.0
-            if (f > 0.0 && m > 0.0 && abs(f - m) / m < 0.15) {
+            if (f > 0.0 && m > 0.0 && abs(f - m) / m < 0.15 && baseWl > 0.0) {
                 val shift = baseWl * 0.15
                 Triple(baseWf, baseWm + shift, baseWl - shift)
             } else {
@@ -239,44 +287,45 @@ class PowerEstimator(
 
     /**
      * 根据会话持续物理时长在预设时间锚点间进行连续线性插值，求解平滑连续的基础权重分布。
-     * 锚点：
-     * - 0min: (0.10, 0.20, 0.70)
-     * - 10min: (0.25, 0.30, 0.45)
-     * - 30min: (0.40, 0.40, 0.20)
-     * - >=60min: (0.30, 0.50, 0.20)
+     *
+     * 7 级关键时间锚点配置：
+     * - 0 分钟：(0.05, 0.15, 0.80)
+     * - 5 分钟：(0.10, 0.20, 0.70)
+     * - 10 分钟：(0.15, 0.25, 0.60)
+     * - 20 分钟：(0.20, 0.35, 0.45)
+     * - 30 分钟：(0.25, 0.40, 0.35)
+     * - 60 分钟：(0.25, 0.50, 0.25)
+     * - >=120 分钟：(0.25, 0.55, 0.20)
      *
      * @param durationMs 当前放电会话物理持续毫秒数
      * @return 连续平滑插值后的 (wFast, wMedium, wLong) 基础权重三元组，和恒等于 1.0
      */
     fun interpolateBaselineWeights(durationMs: Long): Triple<Double, Double, Double> {
-        return when {
-            durationMs <= 0L -> Triple(0.10, 0.20, 0.70)
-            durationMs < 600_000L -> {
-                // 0 ~ 10 分钟平滑插值
-                val p = durationMs.toDouble() / 600_000.0
-                val wf = 0.10 + p * (0.25 - 0.10)
-                val wm = 0.20 + p * (0.30 - 0.20)
-                val wl = 0.70 + p * (0.45 - 0.70)
-                Triple(wf, wm, wl)
-            }
-            durationMs < 1_800_000L -> {
-                // 10 ~ 30 分钟平滑插值
-                val p = (durationMs - 600_000L).toDouble() / 1_200_000.0
-                val wf = 0.25 + p * (0.40 - 0.25)
-                val wm = 0.30 + p * (0.40 - 0.30)
-                val wl = 0.45 + p * (0.20 - 0.45)
-                Triple(wf, wm, wl)
-            }
-            durationMs < 3_600_000L -> {
-                // 30 ~ 60 分钟平滑插值
-                val p = (durationMs - 1_800_000L).toDouble() / 1_800_000.0
-                val wf = 0.40 + p * (0.30 - 0.40)
-                val wm = 0.40 + p * (0.50 - 0.40)
-                val wl = 0.20
-                Triple(wf, wm, wl)
-            }
-            else -> Triple(0.30, 0.50, 0.20)
+        if (durationMs <= WEIGHT_ANCHORS.first().durationMs) {
+            val first = WEIGHT_ANCHORS.first()
+            return Triple(first.wf, first.wm, first.wl)
         }
+        val last = WEIGHT_ANCHORS.last()
+        if (durationMs >= last.durationMs) {
+            return Triple(last.wf, last.wm, last.wl)
+        }
+
+        // 线性扫描区间 [a0, a1] 进行连续平滑插值
+        for (i in 0 until WEIGHT_ANCHORS.size - 1) {
+            val a0 = WEIGHT_ANCHORS[i]
+            val a1 = WEIGHT_ANCHORS[i + 1]
+            if (durationMs in a0.durationMs..a1.durationMs) {
+                val span = (a1.durationMs - a0.durationMs).toDouble()
+                val p = if (span > 0.0) ((durationMs - a0.durationMs).toDouble() / span).coerceIn(0.0, 1.0) else 0.0
+                val wf = a0.wf + p * (a1.wf - a0.wf)
+                val wm = a0.wm + p * (a1.wm - a0.wm)
+                val wl = a0.wl + p * (a1.wl - a0.wl)
+                val sum = wf + wm + wl
+                return if (sum > 0.0) Triple(wf / sum, wm / sum, wl / sum) else Triple(a0.wf, a0.wm, a0.wl)
+            }
+        }
+
+        return Triple(last.wf, last.wm, last.wl)
     }
 
     /**
@@ -296,6 +345,7 @@ class PowerEstimator(
 
     /**
      * 计算当前功耗预测模型的综合可信度指数（Confidence）。
+     * 对齐 0m, 5m, 10m, 20m, 30m, 60m, 120m 七个时间尺度。
      *
      * @return 介于 0.0 至 1.0 之间的置信度指数
      */
@@ -306,14 +356,17 @@ class PowerEstimator(
         if (!hasCurrent && !hasLong) return 0.0
 
         var baseScore = when {
-            totalSessionDurationMs >= 3_600_000L -> 0.85
-            totalSessionDurationMs >= 1_800_000L -> 0.70
-            totalSessionDurationMs >= 600_000L -> 0.55
-            totalSessionDurationMs > 0L -> 0.40
+            totalSessionDurationMs >= 7_200_000L -> 0.95 // >= 120min 超稳态
+            totalSessionDurationMs >= 3_600_000L -> 0.85 // >= 60min
+            totalSessionDurationMs >= 1_800_000L -> 0.75 // >= 30min
+            totalSessionDurationMs >= 1_200_000L -> 0.65 // >= 20min
+            totalSessionDurationMs >= 600_000L -> 0.55   // >= 10min
+            totalSessionDurationMs >= 300_000L -> 0.45   // >= 5min
+            totalSessionDurationMs > 0L -> 0.35          // < 5min
             else -> 0.30
         }
 
-        if (hasLong) baseScore += 0.10
+        if (hasLong) baseScore += 0.05
         if (stateDetector.isRegimeChanging) baseScore -= 0.15
 
         return baseScore.coerceIn(0.10, 1.0)

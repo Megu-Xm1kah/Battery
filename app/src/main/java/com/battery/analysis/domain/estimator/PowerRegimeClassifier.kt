@@ -17,20 +17,28 @@ class PowerRegimeClassifier {
 
         /** 行业常规智能手机中位亮度普通交互平均参考功率（单位：W） */
         const val DEFAULT_MEDIAN_ON_WATTS: Double = 1.80
+
+        /** 亮屏持续重载确立所需的最小持续物理时长门槛（毫秒，默认 10 秒 = 10,000 ms） */
+        const val MIN_HEAVY_SUSTAIN_MS: Long = 10_000L
     }
 
     /**
      * 将单个放电物理区间判定归入对应的功耗工况分类。
+     * 自动区分瞬态短时尖峰与真实持续重载：当放电功率超过重载门槛时，若区间持续时间
+     * 短于持续门槛 [minHeavySustainMs]（如瞬时脉冲或启动毛刺），不直接建立重载工况，
+     * 而是平滑归入日常工况 [PowerRegime.ON_NORMAL]；达到持续时间门槛时方确立为真实重载 [PowerRegime.ON_HEAVY]。
      *
      * @param interval 待分类的放电物理区间实体 [DischargeInterval]
      * @param baselineOffWatts 该设备测得的息屏待机基准功率（单位：W，默认 0.15W）
      * @param medianOnWatts 该设备测得的亮屏日常中位功率（单位：W，默认 1.80W）
+     * @param minHeavySustainMs 确立为持续重载工况所需的最小持续毫秒数（默认 10,000 ms）
      * @return 对应的物理工况枚举 [PowerRegime]
      */
     fun classify(
         interval: DischargeInterval,
         baselineOffWatts: Double = DEFAULT_BASELINE_OFF_WATTS,
-        medianOnWatts: Double = DEFAULT_MEDIAN_ON_WATTS
+        medianOnWatts: Double = DEFAULT_MEDIAN_ON_WATTS,
+        minHeavySustainMs: Long = MIN_HEAVY_SUSTAIN_MS
     ): PowerRegime {
         val p = interval.powerWatts
         if (p <= 0.0 || !p.isFinite()) {
@@ -52,7 +60,15 @@ class PowerRegimeClassifier {
             when {
                 p < safeOnMedian * 0.65 -> PowerRegime.ON_LIGHT
                 p <= safeOnMedian * 2.20 -> PowerRegime.ON_NORMAL
-                else -> PowerRegime.ON_HEAVY
+                else -> {
+                    // 对于高功耗区间，严格区分偶发尖峰与真实持续重载
+                    if (interval.durationMs >= minHeavySustainMs) {
+                        PowerRegime.ON_HEAVY
+                    } else {
+                        // 短时偶发脉冲不单独建立 HEAVY 工况，归为日常中载中的瞬态波动
+                        PowerRegime.ON_NORMAL
+                    }
+                }
             }
         }
     }
