@@ -334,6 +334,108 @@ data class PowerUsageRecord(
     private val cachedStartBatteryLevel: Int by lazy { computeStartBatteryLevel() }
 
     /**
+     * 本地缓存的本次放电会话实际起始物理时间戳（毫秒，通过 lazy 懒加载仅计算一次）。
+     */
+    @delegate:Transient
+    private val cachedEffectiveStartTimeMs: Long by lazy { computeEffectiveStartTimeMs() }
+
+    /**
+     * 本地缓存的本次放电会话实际结束物理时间戳（毫秒，通过 lazy 懒加载仅计算一次）。
+     */
+    @delegate:Transient
+    private val cachedEffectiveEndTimeMs: Long by lazy { computeEffectiveEndTimeMs() }
+
+    /**
+     * 获取本次放电会话实际起始物理时间戳（单位：毫秒）。
+     * 优先提取趋势点集首点物理时间戳，若无点集则采用拔电会话起始时间戳 [id]，
+     * 若仍不可用则根据记录完成时间与持续时长反推。
+     *
+     * @return 实际起始物理时间戳（毫秒值）
+     */
+    fun getEffectiveStartTimeMs(): Long {
+        return cachedEffectiveStartTimeMs
+    }
+
+    /**
+     * 获取本次放电会话实际结束物理时间戳（单位：毫秒）。
+     * 优先提取趋势点集末点物理时间戳；若无点集且存在增量检查点，则取 [lastCheckpointTime]；
+     * 若已正式归档完成，则读取 [recordTime] 解析时间；
+     * 兜底采用起始时间戳累加本次放电实际持续时长 [getDurationMs]，彻底杜绝将拔电起始时间当成结束时间。
+     *
+     * @return 实际结束物理时间戳（毫秒值）
+     */
+    fun getEffectiveEndTimeMs(): Long {
+        return cachedEffectiveEndTimeMs
+    }
+
+    /**
+     * 实际计算本次放电会话起始物理时间戳的内部实现。
+     *
+     * @return 起始物理时间戳（毫秒值）
+     */
+    private fun computeEffectiveStartTimeMs(): Long {
+        val (fastStartTs, _, _) = extractFirstAndLastTsAndLvl(trendPointsJson)
+        if (fastStartTs > 0L) {
+            return fastStartTs
+        }
+        if (id > 0L) {
+            return id
+        }
+        val endParsed = try {
+            DATE_FORMAT_INPUT.get()?.parse(recordTime)?.time ?: 0L
+        } catch (_: Exception) {
+            0L
+        }
+        val durMs = getDurationMs()
+        return if (endParsed > 0L && durMs > 0L) {
+            (endParsed - durMs).coerceAtLeast(0L)
+        } else {
+            0L
+        }
+    }
+
+    /**
+     * 实际计算本次放电会话结束物理时间戳的内部实现。
+     * 遵循物理时间戳优先原则：
+     * 1. 优先提取趋势点集末点物理时间戳；
+     * 2. 若存在晚于起始时间的检查点时间戳 [lastCheckpointTime]，则作为结束物理时间戳；
+     * 3. 若拔电时间 [id] 与持续时长 [getDurationMs] 均有效，则结束时间严格为 id + durationMs；
+     * 4. 若具备单独的 [lastCheckpointTime]，则取之；
+     * 5. 仅当物理时间戳均缺失时，回退解析 [recordTime] 日期格式化字符串；
+     * 6. 最终兜底返回拔电时间 [id] 或当前系统时间。
+     *
+     * @return 结束物理时间戳（毫秒值）
+     */
+    private fun computeEffectiveEndTimeMs(): Long {
+        val (_, fastEndTs, _) = extractFirstAndLastTsAndLvl(trendPointsJson)
+        if (fastEndTs > 0L) {
+            return fastEndTs
+        }
+        if (lastCheckpointTime > id && lastCheckpointTime > 0L) {
+            return lastCheckpointTime
+        }
+        val durMs = getDurationMs()
+        if (id > 0L && durMs > 0L) {
+            return id + durMs
+        }
+        if (lastCheckpointTime > 0L) {
+            return lastCheckpointTime
+        }
+        val endParsed = try {
+            DATE_FORMAT_INPUT.get()?.parse(recordTime)?.time ?: 0L
+        } catch (_: Exception) {
+            0L
+        }
+        if (endParsed > 0L) {
+            return endParsed
+        }
+        if (id > 0L) {
+            return id
+        }
+        return System.currentTimeMillis()
+    }
+
+    /**
      * 解析并获取本次耗电记录的起止时间范围文本（包含开始时间与结束时间）。
      * 若起止为同一天则显示为 "yyyy/MM/dd HH:mm~HH:mm"；
      * 若起止为同年跨天则显示为 "yyyy/MM/dd HH:mm~MM/dd HH:mm"（去掉结束时间年份）；
@@ -351,29 +453,8 @@ data class PowerUsageRecord(
      * @return 格式化后的起止时间范围字符串
      */
     private fun computeFormattedTimeRange(): String {
-        var startTs = 0L
-        var endTs = id
-
-        // 尝试从轻量扫描方法提取起止时间戳，避免全量反序列化庞大 JSON
-        val (fastStartTs, fastEndTs, _) = extractFirstAndLastTsAndLvl(trendPointsJson)
-        if (fastStartTs > 0L) {
-            startTs = fastStartTs
-            if (fastEndTs > 0L) {
-                endTs = fastEndTs
-            }
-        }
-
-        // 若无法从点集获取开始时间，则尝试从 recordTime 及 totalDurationText 进行推算
-        if (startTs <= 0L) {
-            val endParsed = try {
-                DATE_FORMAT_INPUT.get()?.parse(recordTime)?.time ?: id
-            } catch (_: Exception) {
-                id
-            }
-            endTs = endParsed
-            val durMs = getDurationMs()
-            startTs = (endTs - durMs).coerceAtLeast(0L)
-        }
+        val startTs = getEffectiveStartTimeMs()
+        val endTs = getEffectiveEndTimeMs()
 
         val startDate = java.util.Date(startTs)
         val endDate = java.util.Date(endTs)
@@ -523,6 +604,41 @@ data class PowerUsageRecord(
      */
     fun getScreenOnDurationMs(): Long {
         return cachedScreenOnDurationMs
+    }
+
+    /**
+     * 将本记录持久化的 [trendPointsJson] 字符串反序列化为放电走势与采样点列表。
+     * 若 JSON 为空或解析失败则返回空列表。
+     *
+     * @return 解析得出的放电采样点列表 [PowerDischargePoint]
+     */
+    fun parseTrendPointsList(): List<PowerDischargePoint> {
+        if (trendPointsJson.isBlank()) return emptyList()
+        val list = mutableListOf<PowerDischargePoint>()
+        try {
+            val jsonArray = JSONArray(trendPointsJson)
+            val len = jsonArray.length()
+            val startTs = if (len > 0) jsonArray.getJSONObject(0).optLong("ts", 0L) else 0L
+            for (i in 0 until len) {
+                val obj = jsonArray.getJSONObject(i)
+                val ts = obj.optLong("ts", 0L)
+                val elapsedHours = if (startTs > 0L && ts >= startTs) {
+                    ((ts - startTs).toDouble() / 3600000.0).toFloat()
+                } else 0f
+                list.add(
+                    PowerDischargePoint(
+                        timestamp = ts,
+                        elapsedHours = elapsedHours,
+                        batteryLevel = obj.optInt("lvl", 0),
+                        voltageVolts = obj.optDouble("volt", 0.0).toFloat(),
+                        temperature = obj.optDouble("temp", 0.0).toFloat(),
+                        powerWatts = obj.optDouble("pwr", 0.0).toFloat(),
+                        isScreenOn = obj.optBoolean("screenOn", true)
+                    )
+                )
+            }
+        } catch (_: Exception) {}
+        return list
     }
 
     /**

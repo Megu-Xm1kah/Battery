@@ -1,8 +1,10 @@
 package com.battery.analysis.domain.estimator
 
+import com.battery.analysis.domain.estimator.model.PowerSample
 import com.battery.analysis.domain.estimator.model.RemainingModelVersion
 import com.battery.analysis.domain.estimator.model.RuntimeEstimate
 import com.battery.analysis.domain.estimator.model.RuntimeModelType
+import com.battery.analysis.domain.estimator.model.ScreenPowerState
 import kotlin.math.roundToLong
 
 /**
@@ -132,8 +134,7 @@ class RuntimeEstimator(
         val hours = usableEnergyWh / predictedPower
         val remainingMs = (hours * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
 
-        // 亮屏工况预期范围：优先采用设备真实大样本实测的重载与轻载工况功率；
-        // 若无大样本画像，则基于当前预测功耗进行物理自适应动态包络推导，彻底消除人为绝对数值硬编码钳位
+        // 亮屏工况预期范围：优先采用大样本历史实测的轻重载功率画像；缺失画像时基于当前预测放电功率推算动态置信区间包络
         val pHeavyOn = heavyPowerW?.takeIf { it > predictedPower } ?: (predictedPower * 1.60)
         val pLightOn = lightPowerW?.takeIf { it < predictedPower && it > 0.0 } ?: (predictedPower * 0.70)
         val minOnMs = ((usableEnergyWh / pHeavyOn) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
@@ -214,7 +215,7 @@ class RuntimeEstimator(
         val hours = usableEnergyWh / predictedPower
         val remainingMs = (hours * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
 
-        // 息屏工况预期范围：优先采用大样本实测唤醒与深睡功率；无画像时采用动态物理包络，移除绝对数值硬编码钳位
+        // 息屏工况预期范围：优先采用大样本历史实测的高耗电唤醒与深睡休眠画像；缺失画像时基于当前预测待机功耗推算动态置信区间包络
         val pHeavyOff = offHighPowerW?.takeIf { it > predictedPower } ?: (predictedPower * 1.80)
         val pLightOff = offLowPowerW?.takeIf { it < predictedPower && it > 0.0 } ?: (predictedPower * 0.65)
         val minOffMs = ((usableEnergyWh / pHeavyOff) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
@@ -303,6 +304,7 @@ class RuntimeEstimator(
                 val hours = usableEnergyWh / pGlobal
                 val remainingMs = (hours * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
 
+                // 全局工况预期范围：优先采用大样本历史实测全局轻重载功率画像；缺失画像时基于融合功耗推导动态置信区间包络
                 val pHeavyGlobal = heavyGlobalPowerW?.takeIf { it > pGlobal } ?: (pGlobal * 1.40)
                 val pLightGlobal = lightGlobalPowerW?.takeIf { it < pGlobal && it > 0.0 } ?: (pGlobal * 0.70)
                 val minGlobalMs = ((usableEnergyWh / pHeavyGlobal) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
@@ -347,6 +349,7 @@ class RuntimeEstimator(
             val hours = usableEnergyWh / pFallback
             val remainingMs = (hours * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
 
+            // 降级模式工况预期范围：优先采用历史实测画像；缺失画像时基于当前降级功耗推导动态置信区间包络
             val pHeavyFallback = heavyGlobalPowerW?.takeIf { it > pFallback } ?: (pFallback * 1.40)
             val pLightFallback = lightGlobalPowerW?.takeIf { it < pFallback && it > 0.0 } ?: (pFallback * 0.70)
             val minFallbackMs = ((usableEnergyWh / pHeavyFallback) * 3600.0 * 1000.0).roundToLong().coerceAtLeast(0L)
@@ -398,15 +401,18 @@ class RuntimeEstimator(
      * @param remainingEnergyWh 当前电池剩余能量（单位：Wh，可选）
      * @param totalCapacityWh 电池满充总能量容量（单位：Wh，可选）
      * @param tempCelsius 当前电池温度（单位：℃，可选）
+     * @param currentTrendPoints 当前放电周期的细粒度趋势采样点集合（可选，用于激活 Fast 尺度实时跟踪与工况突变敏捷响应）
      * @return 包含亮屏、息屏与全局综合预测结果的聚合实体 [TripleRuntimeResult]
      */
+    @Suppress("UNUSED_PARAMETER")
     fun estimateTripleRuntimes(
         overview: com.battery.analysis.manager.PowerOverviewStats?,
         sevenDaysStats: com.battery.analysis.model.SevenDaysDischargeStats?,
         batteryLevelPercent: Float?,
         remainingEnergyWh: Float? = null,
         totalCapacityWh: Float? = null,
-        tempCelsius: Float? = null
+        tempCelsius: Float? = null,
+        currentTrendPoints: List<com.battery.analysis.model.PowerDischargePoint>? = null
     ): TripleRuntimeResult {
         val usableEnergy = calculateUsableEnergyWh(
             remainingEnergyWh = remainingEnergyWh,
@@ -436,13 +442,6 @@ class RuntimeEstimator(
             val durMs = if (overview.screenOnDurationMs > 0L) overview.screenOnDurationMs else 0L
             onEstimator.seedCurrentSession(durMs, overview.screenOnPowerWatts)
         }
-        val onEstimate = estimateScreenOn(
-            usableEnergyWh = usableEnergy,
-            onPowerEstimator = onEstimator,
-            batteryLevelPercent = batteryLevelPercent,
-            heavyPowerW = heavyOnW,
-            lightPowerW = lightOnW
-        )
 
         // 2. 构建息屏待机多时间尺度估计器（优先对接 v2Result 预测功耗作为 Long 尺度基准）
         val offEstimator = PowerEstimator()
@@ -458,13 +457,6 @@ class RuntimeEstimator(
             val durMs = if (overview.screenOffDurationMs > 0L) overview.screenOffDurationMs else 0L
             offEstimator.seedCurrentSession(durMs, overview.screenOffPowerWatts)
         }
-        val offEstimate = estimateScreenOff(
-            usableEnergyWh = usableEnergy,
-            offPowerEstimator = offEstimator,
-            batteryLevelPercent = batteryLevelPercent,
-            offHighPowerW = offHighW,
-            offLowPowerW = offLowW
-        )
 
         // 3. 构建全局直接估计器备用（优先对接 v2Result 预测功耗作为 Long 尺度基准）
         val globalFallbackEstimator = PowerEstimator()
@@ -481,8 +473,26 @@ class RuntimeEstimator(
             globalFallbackEstimator.seedCurrentSession(durMs, overview.avgPowerWatts)
         }
 
-        // 4. 全局综合续航推算（融合亮屏/待机占空比与真实工况）
-        val screenOnRatio = sevenDaysStats?.sceneScreenOnRatio?.toDouble()
+        // 4. 亮屏与息屏剩余续航独立计算（严格基于会话累计物理稳态均值与历史大样本基准，杜绝被瞬态噪声冲垮）
+        val onEstimate = estimateScreenOn(
+            usableEnergyWh = usableEnergy,
+            onPowerEstimator = onEstimator,
+            batteryLevelPercent = batteryLevelPercent,
+            heavyPowerW = heavyOnW,
+            lightPowerW = lightOnW
+        )
+
+        val offEstimate = estimateScreenOff(
+            usableEnergyWh = usableEnergy,
+            offPowerEstimator = offEstimator,
+            batteryLevelPercent = batteryLevelPercent,
+            offHighPowerW = offHighW,
+            offLowPowerW = offLowW
+        )
+
+        // 5. 全局综合续航推算（融合亮屏/待机占空比与真实工况，优先采用 v2Result 画像中的精确占空比）
+        val screenOnRatio = sevenDaysStats?.v2Result?.profile?.screenOnRatio
+            ?: sevenDaysStats?.sceneScreenOnRatio?.toDouble()
         val heavyGlobalW = if (screenOnRatio != null && heavyOnW != null && offHighW != null) {
             screenOnRatio * heavyOnW + (1.0 - screenOnRatio) * offHighW
         } else null

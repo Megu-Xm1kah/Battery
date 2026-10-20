@@ -834,6 +834,7 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
         val batteryLevel = currentRecord?.levelPercent?.toFloat()
         val remainingEnergyWh = currentRecord?.energyWh
         val tempCelsius = currentRecord?.temperature
+        val trendPoints = currentRecord?.parseTrendPointsList()
         PowerDischargeMetricsViewBinder.bindDischargeSpeed(
             binding = hBinding.layoutDischargeSpeed,
             overview = cachedOverviewStats,
@@ -842,6 +843,7 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
             batteryLevelPercent = batteryLevel,
             remainingEnergyWh = remainingEnergyWh,
             tempCelsius = tempCelsius,
+            currentTrendPoints = trendPoints,
             onCardClick = { anchorView, rowType ->
                 showDischargeSpeedDetailBubble(anchorView, rowType)
             }
@@ -915,13 +917,15 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
 
         val batteryPercent = currentRecord?.levelPercent?.toFloat()
         val remainingEnergyWh = currentRecord?.energyWh
+        val trendPoints = currentRecord?.parseTrendPointsList()
         val tripleResult = BatteryEnergyCalculator.estimateTripleRuntimes(
             overview = overview,
             sevenDaysStats = sevenDays,
             batteryLevelPercent = batteryPercent,
             remainingEnergyWh = remainingEnergyWh,
             totalCapacityWh = totalCapacityWh,
-            tempCelsius = currentRecord?.temperature
+            tempCelsius = currentRecord?.temperature,
+            currentTrendPoints = trendPoints
         )
 
         val remEstimate = when (rowType) {

@@ -209,7 +209,8 @@ class FullChargeRuntimeEstimatorTest {
         // 构造一个结束于 now - 120h，持续 100 小时的历史记录（跨越 now - 168h 边界 52 小时）
         // 落在 [now - 168h, now] 窗口内的有效放电时长为 100h + 48h = 148h
         val record = PowerUsageRecord(
-            id = now - 120L * 3600L * 1000L,
+            id = now - 220L * 3600L * 1000L,
+            lastCheckpointTime = now - 120L * 3600L * 1000L,
             recordTime = "2026-10-10 10:00:00",
             levelPercent = 80,
             voltageVolts = 3.85f,
@@ -428,7 +429,8 @@ class FullChargeRuntimeEstimatorTest {
 
         // 14 天前存在 20 小时息屏记录与 10 小时亮屏记录
         val pastRec = PowerUsageRecord(
-            id = now - 14L * 24L * 3600L * 1000L,
+            id = now - 14L * 24L * 3600L * 1000L - 30L * 3600L * 1000L,
+            lastCheckpointTime = now - 14L * 24L * 3600L * 1000L,
             recordTime = "2026-10-02 10:00:00",
             levelPercent = 80,
             voltageVolts = 3.85f,
@@ -1233,7 +1235,8 @@ class FullChargeRuntimeEstimatorTest {
         // 目标窗口边界为 now - 24h，因此该记录在窗口内的有效时间为从 now - 24h 到 now - 12h，共计 12h
         // 总跨度 20h，落在窗口内 12h，截断比例严格为 12 / 20 = 0.6
         val record = PowerUsageRecord(
-            id = now - 12L * 3600L * 1000L,
+            id = now - 32L * 3600L * 1000L,
+            lastCheckpointTime = now - 12L * 3600L * 1000L,
             recordTime = "2026-10-18 10:00:00",
             levelPercent = 80,
             voltageVolts = 3.85f,

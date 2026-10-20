@@ -2,6 +2,7 @@ package com.battery.analysis
 
 import com.battery.analysis.model.PowerUsageRecord
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -211,5 +212,50 @@ class PowerUsageRecordTest {
         )
         val isCompletedInvalid = completedZeroPower.isCompleted && completedZeroPower.avgPowerWatts <= 0.001f && completedZeroPower.getDurationMs() >= 60_000L
         assertEquals("已完结结案且零功耗超1分钟的记录必须判定为异常记录", true, isCompletedInvalid)
+    }
+
+    /**
+     * 测试放电记录实际起止物理时间戳的提取与计算，验证彻底杜绝将拔电起始时间误当结束时间导致的倒流平移。
+     */
+    @Test
+    fun testEffectiveStartAndEndTimeComputation() {
+        val unplugStartTs = 1700000000000L // 拔电起始时刻
+        val durationMs = 8 * 3600 * 1000L  // 放电持续 8 小时
+        val endTs = unplugStartTs + durationMs
+
+        // 场景 1：具备采样点集，精准从首末点提取
+        val trendPointsJson = """[{"ts":$unplugStartTs,"lvl":100},{"ts":$endTs,"lvl":30}]"""
+        val recordWithPoints = PowerUsageRecord(
+            id = unplugStartTs,
+            recordTime = "2026-09-24 18:00:00",
+            levelPercent = 30,
+            voltageVolts = 3.8f,
+            temperature = 28f,
+            energyWh = 15f,
+            isCharging = false,
+            avgPowerWatts = 1.8f,
+            screenOnPowerWatts = 2.2f,
+            screenOffPowerWatts = 0.3f,
+            screenOnDurationText = "4h",
+            screenOffDurationText = "4h",
+            totalDurationText = "8h",
+            remainingScreenOnText = "5h",
+            remainingCompositeText = "10h",
+            remainingScreenOffText = "30h",
+            isShizukuRealData = false,
+            appCount = 5,
+            trendPointsJson = trendPointsJson,
+            appListJson = "[]",
+            isCompleted = true
+        )
+
+        assertEquals("起始时间应与首点对齐", unplugStartTs, recordWithPoints.getEffectiveStartTimeMs())
+        assertEquals("结束时间应与末点对齐", endTs, recordWithPoints.getEffectiveEndTimeMs())
+
+        // 场景 2：无采样点集（历史精简模式），起始取拔电时间 id，结束时间基于持续时长正向推导
+        val recordNoPoints = recordWithPoints.copy(trendPointsJson = "[]")
+        assertEquals("无点集时起始时间应为拔电时间 id", unplugStartTs, recordNoPoints.getEffectiveStartTimeMs())
+        assertEquals("无点集时结束时间应为起始时间正向累加持续时长", endTs, recordNoPoints.getEffectiveEndTimeMs())
+        assertTrue("结束时间绝不能早于或等于拔电起始时间", recordNoPoints.getEffectiveEndTimeMs() > recordNoPoints.getEffectiveStartTimeMs())
     }
 }

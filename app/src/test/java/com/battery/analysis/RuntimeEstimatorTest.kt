@@ -472,5 +472,179 @@ class RuntimeEstimatorTest {
         assertEquals("亮屏 Long 尺度基线必须优先采纳 v2Result 高阶建模功率 2.2W", 2.2, result.screenOnEstimate.predictedPowerWatts!!, 0.001)
         assertEquals("息屏 Long 尺度基线必须优先采纳 v2Result 高阶建模功率 0.15W", 0.15, result.screenOffEstimate.predictedPowerWatts!!, 0.001)
     }
+
+    /**
+     * 测试从 v2Result.profile.screenOnRatio 优先提取占空比并推算全局综合续航。
+     * 验证当历史简单统计 sceneScreenOnRatio 为 null 时，算法依然能精准融合亮屏与待机模型，
+     * 杜绝退化为单项亮屏功耗的断层缺陷。
+     */
+    @Test
+    fun testProfileScreenOnRatioPriorityAndGlobalComposite() {
+        val profile = com.battery.analysis.domain.estimator.model.RuntimeProfile(
+            windowStartMs = 1700000000000L,
+            windowEndMs = 1700604800000L,
+            windowDays = 7,
+            effectiveDischargeMs = 7 * 86400 * 1000L,
+            screenOnMs = 2 * 86400 * 1000L,
+            screenOffMs = 5 * 86400 * 1000L,
+            screenOnRatio = 0.25, // 25% 亮屏，75% 息屏
+            screenOffRatio = 0.75,
+            lightMs = 10000L, normalMs = 10000L, heavyMs = 10000L,
+            lightRatio = 0.3, normalRatio = 0.4, heavyRatio = 0.3,
+            lightPowerW = 1.5, normalPowerW = 2.5, heavyPowerW = 4.5,
+            typicalScreenOnPowerW = 2.8,
+            offLowPowerW = 0.10, offHighPowerW = 0.30,
+            typicalScreenOffPowerW = 0.15
+        )
+
+        val v2Result = com.battery.analysis.domain.estimator.model.FullChargeRuntimeResult(
+            fullRuntimeMs = 36_000_000L,
+            fullEnergyWh = 20.0,
+            predictedPowerWatts = 0.8125,
+            predictedScreenOnPowerWatts = 2.8,
+            predictedScreenOffPowerWatts = 0.15,
+            modelVersion = com.battery.analysis.domain.estimator.model.RuntimeModelVersion.FULL_RUNTIME_V2_2,
+            confidenceLevel = com.battery.analysis.domain.estimator.model.RuntimeConfidenceLevel.HIGH,
+            energySource = com.battery.analysis.domain.estimator.model.EnergySource.FCC_TIMES_NOMINAL_VOLTAGE,
+            effectiveHistoryMs = 7 * 86400 * 1000L,
+            usedRegimeModel = true,
+            profile = profile
+        )
+
+        // sceneScreenOnRatio 故意为 null
+        val sevenDays = SevenDaysDischargeStats(
+            screenOnDischargeRatePercentPerHour = null,
+            screenOffDischargeRatePercentPerHour = null,
+            globalDischargeRatePercentPerHour = null,
+            sceneScreenOnRatio = null,
+            v2Result = v2Result
+        )
+
+        val overview = PowerOverviewStats(
+            avgPowerWatts = 0.81f,
+            screenOnPowerWatts = 2.8f,
+            screenOffPowerWatts = 0.15f,
+            screenOnDurationMs = 1_800_000L,
+            screenOffDurationMs = 5_400_000L,
+            totalDurationMs = 7_200_000L
+        )
+
+        val result = estimator.estimateTripleRuntimes(
+            overview = overview,
+            sevenDaysStats = sevenDays,
+            batteryLevelPercent = 50.0f,
+            totalCapacityWh = 20.0f,
+            tempCelsius = 25.0f
+        )
+
+        // 验证全局预测采用复合场景融合：0.25 * 2.8 + 0.75 * 0.15 = 0.70 + 0.1125 = 0.8125W
+        assertEquals("全局预测模型类型应为复合融合模型", RuntimeModelType.GLOBAL_COMPOSITE, result.globalEstimate.modelType)
+        assertEquals("全局功耗应基于 profile 占空比精确加权", 0.8125, result.globalEstimate.predictedPowerWatts!!, 0.01)
+        assertNotNull("全局综合续航绝不能为 null", result.globalEstimate.remainingMs)
+    }
+
+    /**
+     * 测试工况预期范围的严谨物理行为：
+     * 1. 当无大样本工况实测画像时，基于当前预测功率自适应推导动态包络（min <= normal <= max）；
+     * 2. 当提供真实工况画像（如 heavyPowerW = 5.0W, lightPowerW = 2.0W）时，精准按画像计算上下限区间。
+     */
+    @Test
+    fun testZeroFakeDataEnvelopeBounds() {
+        val onEstimator = PowerEstimator()
+        onEstimator.seedCurrentSession(1_800_000L, 2.5f) // 亮屏 2.5W
+
+        // 1. 无大样本画像时：基于预测放电功率推导自适应动态包络
+        val noProfileResult = estimator.estimateScreenOn(
+            usableEnergyWh = 10.0,
+            onPowerEstimator = onEstimator,
+            batteryLevelPercent = 50.0f,
+            heavyPowerW = null,
+            lightPowerW = null
+        )
+        assertNotNull("主预测续航必须真实有效", noProfileResult.remainingMs)
+        assertNotNull("无大样本画像时应具备动态自适应下限", noProfileResult.minRemainingMs)
+        assertNotNull("无大样本画像时应具备动态自适应上限", noProfileResult.maxRemainingMs)
+        assertTrue("下限 <= 主预测 <= 上限",
+            noProfileResult.minRemainingMs!! <= noProfileResult.remainingMs!! &&
+            noProfileResult.remainingMs!! <= noProfileResult.maxRemainingMs!!
+        )
+
+        // 2. 具备真实实测工况画像时：根据实测功率推导区间
+        // usableEnergyWh = 10.0, heavy = 5.0W -> min = 2h = 7,200,000 ms
+        // light = 2.0W -> max = 5h = 18,000,000 ms
+        val withProfileResult = estimator.estimateScreenOn(
+            usableEnergyWh = 10.0,
+            onPowerEstimator = onEstimator,
+            batteryLevelPercent = 50.0f,
+            heavyPowerW = 5.0,
+            lightPowerW = 2.0
+        )
+        assertNotNull("具备实测工况时 minRemainingMs 应有效", withProfileResult.minRemainingMs)
+        assertNotNull("具备实测工况时 maxRemainingMs 应有效", withProfileResult.maxRemainingMs)
+        assertEquals(7_200_000L, withProfileResult.minRemainingMs!!)
+        assertEquals(18_000_000L, withProfileResult.maxRemainingMs!!)
+        assertTrue("min 应小于等于主预测，max 应大于等于主预测",
+            withProfileResult.minRemainingMs!! <= withProfileResult.remainingMs!! &&
+            withProfileResult.maxRemainingMs!! >= withProfileResult.remainingMs!!
+        )
+    }
+
+    /**
+     * 测试大样本会话下剩余续航预测的物理稳健性：长程稳态物理均值（如 2.0W）占主导，
+     * 绝不因瞬间离线采样点噪声而发生续航腰斩或每次刷新剧烈跳动，保证与卡片放电速率高度物理自洽。
+     */
+    @Test
+    fun testSessionSteadyStateDominanceAndNoiseImmunity() {
+        val overview = PowerOverviewStats(
+            avgPowerWatts = 1.0f,
+            screenOnPowerWatts = 2.0f,
+            screenOffPowerWatts = 0.2f,
+            screenOnDurationMs = 3_600_000L,
+            totalDurationMs = 7_200_000L
+        )
+
+        val result = estimator.estimateTripleRuntimes(
+            overview = overview,
+            sevenDaysStats = null,
+            batteryLevelPercent = 50.0f,
+            totalCapacityWh = 20.0f,
+            tempCelsius = 25.0f
+        )
+
+        // 剩余可用能量 10Wh / 2W = 5 小时 = 18,000,000 ms
+        assertNotNull("亮屏预测续航有效", result.screenOnEstimate.remainingMs)
+        assertEquals("亮屏预测续航应严格由长程稳态均值主导 (10Wh / 2.0W = 5h)", 18_000_000L, result.screenOnEstimate.remainingMs!!)
+        assertEquals("亮屏预测功率应忠实反映会话物理功率 2.0W", 2.0, result.screenOnEstimate.predictedPowerWatts!!, 0.05)
+    }
+
+    /**
+     * 测试 PowerEstimator 在线流式接收采样点时的多时间尺度平滑与工况突变识别。
+     */
+    @Test
+    fun testPowerEstimatorStreamingUpdate() {
+        val streamEstimator = PowerEstimator()
+        streamEstimator.seedCurrentSession(3_600_000L, 2.0f)
+        val initialPower = streamEstimator.getPredictedPower()
+        assertNotNull(initialPower)
+        assertEquals(2.0, initialPower!!, 0.01)
+
+        // 模拟在线流式连续接收高负载采样
+        val now = System.currentTimeMillis()
+        for (i in 1..5) {
+            streamEstimator.update(
+                com.battery.analysis.domain.estimator.model.PowerSample(
+                    timestampMs = now + i * 10_000L,
+                    voltageVolts = 3.8f,
+                    currentAmperes = null,
+                    powerWatts = 5.0f,
+                    batteryLevelPercent = 50f,
+                    state = com.battery.analysis.domain.estimator.model.ScreenPowerState.SCREEN_ON
+                )
+            )
+        }
+        val updatedPower = streamEstimator.getPredictedPower()
+        assertNotNull(updatedPower)
+        assertTrue("在线流式持续输入高负载后预测功率应逐步上升", updatedPower!! > initialPower)
+    }
 }
 

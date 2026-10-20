@@ -22,6 +22,7 @@ import com.battery.analysis.databinding.LayoutChargingStatsBinding
 import com.battery.analysis.manager.PowerOverviewStats
 import com.battery.analysis.manager.PowerUsageManager
 import com.battery.analysis.model.AppPowerUsageItem
+import com.battery.analysis.model.PowerDischargePoint
 import com.battery.analysis.model.PowerDisplayUnit
 import com.battery.analysis.model.PowerUsageItem
 import com.battery.analysis.model.SevenDaysDischargeStats
@@ -154,6 +155,8 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     // 当前电池电量百分比与剩余能量
     private var cachedBatteryLevelPercent: Float? = null
     private var cachedRemainingEnergyWh: Float? = null
+    // 当前放电会话最近细粒度趋势点集缓存
+    private var cachedTrendPoints: List<PowerDischargePoint>? = null
 
     // 弱保持当前活跃的卡片 ViewHolder 引用以提供平滑桥接
     var dischargeSpeedHolder: DischargeSpeedViewHolder? = null
@@ -544,6 +547,7 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
             batteryLevelPercent = cachedBatteryLevelPercent,
             remainingEnergyWh = cachedRemainingEnergyWh,
             tempCelsius = cachedTemperature.takeIf { it != 0f },
+            currentTrendPoints = cachedTrendPoints,
             onCardClick = { anchorView, rowType ->
                 onMetricModuleClickedListener?.invoke(anchorView, rowType)
             }
@@ -1328,6 +1332,7 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
      * @param batteryLevelPercent 当前电池电量百分比（可选）
      * @param remainingEnergyWh 当前电池剩余能量（Wh，可选）
      * @param tempCelsius 当前电池温度（单位：℃，可选）
+     * @param trendPoints 当前周期的细粒度趋势采样点集合（可选）
      */
     fun updateOverviewStats(
         overviewStats: PowerOverviewStats?,
@@ -1335,7 +1340,8 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         sevenDaysStats: SevenDaysDischargeStats? = null,
         batteryLevelPercent: Float? = null,
         remainingEnergyWh: Float? = null,
-        tempCelsius: Float? = null
+        tempCelsius: Float? = null,
+        trendPoints: List<PowerDischargePoint>? = null
     ) {
         cachedOverviewStats = overviewStats
         if (totalCapacityWh != null && totalCapacityWh > 0f) {
@@ -1352,6 +1358,9 @@ class AppPowerUsageAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         }
         if (tempCelsius != null && tempCelsius != 0f) {
             cachedTemperature = tempCelsius
+        }
+        if (trendPoints != null) {
+            cachedTrendPoints = trendPoints
         }
         dischargeSpeedHolder?.let { bindDischargeSpeed(it) }
         sleepAwakeHolder?.let { bindSleepAwakeMetrics(it) }

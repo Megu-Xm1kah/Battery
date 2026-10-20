@@ -159,11 +159,11 @@ object SevenDaysDischargeCalculator {
         val dbHelper = PowerUsageDbHelper.getInstance(context)
         val allRecords = dbHelper.getAllRecords()
 
-        // 筛选符合 168 小时滚动墙钟窗口与基准时间戳的历史记录（排除未来时间戳记录与充电异常记录）
+        // 筛选符合 168 小时滚动墙钟窗口与基准时间戳的历史记录（排除未来时间戳记录与充电异常记录，并按有效结束时间倒序排序）
         val windowStartTs = baseTimestamp - SEVEN_DAYS_MS
         val eligibleRecords = allRecords.filter { record ->
-            !record.isCharging && record.id <= (baseTimestamp + 60_000L)
-        }
+            !record.isCharging && record.getEffectiveStartTimeMs() <= (baseTimestamp + 60_000L)
+        }.sortedByDescending { it.getEffectiveEndTimeMs() }
 
         for (record in eligibleRecords) {
             // 若历史记录中包含未完结的检查点草稿，且当前存在实时会话 currentOverview，则跳过旧草稿以当前最新数据为准
@@ -171,7 +171,8 @@ object SevenDaysDischargeCalculator {
                 continue
             }
 
-            val recEndTs = record.id
+            val recEndTs = record.getEffectiveEndTimeMs()
+            val recStartTs = record.getEffectiveStartTimeMs()
             // 若记录完全早于 7 天自然时间窗口起点，终止遍历更早记录
             if (recEndTs <= windowStartTs) {
                 break
@@ -210,10 +211,10 @@ object SevenDaysDischargeCalculator {
             }
 
             // 计算记录是否跨越 7 天（168 小时）滚动自然时间窗口起点并执行边界物理等比裁剪
-            val recStartTs = recEndTs - rawGDur
             val isCrossingBoundary = recStartTs < windowStartTs
             val boundaryRatio = if (isCrossingBoundary && rawGDur > 0L) {
-                ((recEndTs - windowStartTs).toDouble() / rawGDur.toDouble()).coerceIn(0.0, 1.0)
+                val effectiveSpanMs = (recEndTs - recStartTs).coerceAtLeast(rawGDur).toDouble()
+                ((recEndTs - windowStartTs).toDouble() / effectiveSpanMs).coerceIn(0.0, 1.0)
             } else {
                 1.0
             }

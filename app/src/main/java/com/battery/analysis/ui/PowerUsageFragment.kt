@@ -1480,7 +1480,8 @@ class PowerUsageFragment : Fragment() {
             batteryLevelPercent = batteryPercent,
             remainingEnergyWh = remainingEnergyWh,
             totalCapacityWh = totalCapacityWh,
-            tempCelsius = pkg?.batterySnapshot?.temperature
+            tempCelsius = pkg?.batterySnapshot?.temperature,
+            currentTrendPoints = pkg?.trendPoints
         )
 
         val remEstimate = when (rowType) {
@@ -1768,7 +1769,8 @@ class PowerUsageFragment : Fragment() {
             totalCapacityWh = totalCapacityWh,
             batteryLevelPercent = snapshot.levelPercent.toFloat(),
             remainingEnergyWh = snapshot.energyWh,
-            tempCelsius = snapshot.temperature
+            tempCelsius = snapshot.temperature,
+            trendPoints = fullPackage.trendPoints
         )
 
         // 异步更新过去 7 天加权放电统计速度与充满电使用时间
@@ -2259,7 +2261,8 @@ class PowerUsageFragment : Fragment() {
             totalCapacityWh = totalCapacityWh,
             batteryLevelPercent = currentLevel,
             remainingEnergyWh = currentEnergy,
-            tempCelsius = currentTemp
+            tempCelsius = currentTemp,
+            trendPoints = fullPackage.trendPoints
         )
 
         // 异步更新过去 7 天加权放电统计速度与充满电使用时间

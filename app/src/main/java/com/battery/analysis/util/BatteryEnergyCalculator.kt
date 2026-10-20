@@ -1089,6 +1089,7 @@ object BatteryEnergyCalculator {
      * @param remainingEnergyWh 当前电池剩余能量（单位：Wh）
      * @param totalCapacityWh 设备满充总能量（单位：Wh）
      * @param tempCelsius 当前电池温度（单位：℃）
+     * @param currentTrendPoints 当前放电周期的细粒度趋势采样点集合（可选，用于激活 Fast 尺度实时跟踪与工况突变敏捷响应）
      * @return 包含三维度剩余续航预测结果的数据聚合实体 [com.battery.analysis.domain.estimator.TripleRuntimeResult]
      */
     fun estimateTripleRuntimes(
@@ -1097,7 +1098,8 @@ object BatteryEnergyCalculator {
         batteryLevelPercent: Float?,
         remainingEnergyWh: Float? = null,
         totalCapacityWh: Float? = null,
-        tempCelsius: Float? = null
+        tempCelsius: Float? = null,
+        currentTrendPoints: List<com.battery.analysis.model.PowerDischargePoint>? = null
     ): com.battery.analysis.domain.estimator.TripleRuntimeResult {
         return runtimeEstimator.estimateTripleRuntimes(
             overview = overview,
@@ -1105,7 +1107,8 @@ object BatteryEnergyCalculator {
             batteryLevelPercent = batteryLevelPercent,
             remainingEnergyWh = remainingEnergyWh,
             totalCapacityWh = totalCapacityWh,
-            tempCelsius = tempCelsius
+            tempCelsius = tempCelsius,
+            currentTrendPoints = currentTrendPoints
         )
     }
 

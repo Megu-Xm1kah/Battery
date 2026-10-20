@@ -60,8 +60,7 @@ object BubbleTooltipHelper {
         val density = context.resources.displayMetrics.density
         val screenWidth = context.resources.displayMetrics.widthPixels
         val screenHeight = context.resources.displayMetrics.heightPixels
-//        val margin = (12 * density).toInt()
-        val margin = (5 * density).toInt()
+        val margin = (BubbleTooltipLayout.DEFAULT_SCREEN_MARGIN_DP * density).toInt()
         val gap = (2 * density).toInt() // 箭头与依附 View 边缘的自然间隙
 
         // 限制气泡最大宽度不超过屏幕可用宽度

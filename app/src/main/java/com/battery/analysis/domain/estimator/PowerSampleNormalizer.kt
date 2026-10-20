@@ -423,10 +423,10 @@ class PowerSampleNormalizer {
             }
         }
 
-        // 2. 倒序解构历史归档记录
+        // 2. 倒序解构历史归档记录（严格按有效结束物理时间戳降序排序）
         val eligibleRecords = allRecords.filter { record ->
-            !record.isCharging && record.id <= (baseTimestamp + 60_000L)
-        }
+            !record.isCharging && record.getEffectiveStartTimeMs() <= (baseTimestamp + 60_000L)
+        }.sortedByDescending { it.getEffectiveEndTimeMs() }
 
         for (record in eligibleRecords) {
             // 若历史记录中包含未完结草稿且当前已存在实时会话，跳过旧草稿以最新实时数据为准
@@ -434,7 +434,7 @@ class PowerSampleNormalizer {
                 continue
             }
 
-            val recEndTs = record.id
+            val recEndTs = record.getEffectiveEndTimeMs()
             val onDur = record.getScreenOnDurationMs()
             val onEnergy = if (record.screenOnEnergyWh > 0f) {
                 record.screenOnEnergyWh.toDouble()

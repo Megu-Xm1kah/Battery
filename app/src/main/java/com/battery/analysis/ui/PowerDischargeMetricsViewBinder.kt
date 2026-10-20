@@ -14,6 +14,7 @@ import com.battery.analysis.databinding.ItemPowerDischargeSpeedBinding
 import com.battery.analysis.databinding.ItemPowerSleepAwakeMetricsBinding
 import com.battery.analysis.manager.PowerOverviewStats
 import com.battery.analysis.manager.PowerUsageManager
+import com.battery.analysis.model.PowerDischargePoint
 import com.battery.analysis.model.PowerDisplayUnit
 import com.battery.analysis.model.SevenDaysDischargeStats
 import com.battery.analysis.util.BatteryEnergyCalculator
@@ -51,6 +52,7 @@ object PowerDischargeMetricsViewBinder {
      * @param batteryLevelPercent 当前电池剩余电量百分比（0.0f ~ 100.0f），若不可用传入 null
      * @param remainingEnergyWh 当前电池剩余能量（单位：Wh），若不可用传入 null
      * @param tempCelsius 电池当前工作温度（单位：℃，可选），用于高精度修正实际物理化学可用能量 K_T
+     * @param currentTrendPoints 当前周期的细粒度趋势采样点集合（可选，用于激活 Fast 尺度实时跟踪与工况突变敏捷响应）
      * @param onCardClick 卡片点击事件监听回调，参数依次为被点击卡片视图与行分类标识（[BatteryEnergyCalculator.ROW_SCREEN_ON] 等）
      */
     fun bindDischargeSpeed(
@@ -61,6 +63,7 @@ object PowerDischargeMetricsViewBinder {
         batteryLevelPercent: Float? = null,
         remainingEnergyWh: Float? = null,
         tempCelsius: Float? = null,
+        currentTrendPoints: List<PowerDischargePoint>? = null,
         onCardClick: ((anchorView: View, rowType: Int) -> Unit)? = null
     ) {
         val context = binding.root.context
@@ -84,14 +87,15 @@ object PowerDischargeMetricsViewBinder {
             tvScreenOffSpeed.text = formatDischargeRateSpannable(offRate)
             tvGlobalSpeed.text = formatDischargeRateSpannable(globalRate)
 
-            // --- 2. 第二行：剩余续航时间（基于自适应多时间尺度与物理能量模型计算，同步融合温度物理修正） ---
+            // --- 2. 第二行：剩余续航时间（基于自适应多时间尺度与物理能量模型计算，同步融合温度物理修正与细粒度点集） ---
             val tripleResult = BatteryEnergyCalculator.estimateTripleRuntimes(
                 overview = overview,
                 sevenDaysStats = sevenDaysStats,
                 batteryLevelPercent = batteryLevelPercent,
                 remainingEnergyWh = remainingEnergyWh,
                 totalCapacityWh = totalCapacityWh,
-                tempCelsius = tempCelsius
+                tempCelsius = tempCelsius,
+                currentTrendPoints = currentTrendPoints
             )
 
             tvScreenOnRemaining.text = formatRemainingDurationTextWithSuffix(context, tripleResult.screenOnEstimate.remainingMs)

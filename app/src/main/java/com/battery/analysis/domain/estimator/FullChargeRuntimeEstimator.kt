@@ -87,13 +87,26 @@ class FullChargeRuntimeEstimator(
         // 1. 全局历史物理加权平均功率 P_global 作为基准底线 (用于比对与工况缺失时的安全降级)
         val pGlobal = weightedHistoryWh / (weightedHistoryMs / 3600000.0)
 
+        // 提取设备实测亮屏中位基准功率与息屏待机底噪基准功率，动态适配不同机型功耗水平（折叠屏、平板或低功耗小屏）
+        val onPowersAll = intervals.filter { it.isScreenOn && it.powerWatts > 0.0 && it.powerWatts.isFinite() }.map { it.powerWatts }
+        val offPowersAll = intervals.filter { !it.isScreenOn && it.powerWatts > 0.0 && it.powerWatts.isFinite() }.map { it.powerWatts }
+
+        val dynamicMedianOnWatts = RobustPowerStatistics.calculateMedian(onPowersAll)
+            ?.takeIf { it > 0.0 } ?: PowerRegimeClassifier.DEFAULT_MEDIAN_ON_WATTS
+        val dynamicBaselineOffWatts = RobustPowerStatistics.calculateMedian(offPowersAll)
+            ?.takeIf { it > 0.0 } ?: PowerRegimeClassifier.DEFAULT_BASELINE_OFF_WATTS
+
         // 2. 按工况细分归集有效放电物理区间 (累计加权持续时长与物理时长)
         val intervalsByRegime = mutableMapOf<PowerRegime, MutableList<DischargeInterval>>()
         val rawDurByRegime = mutableMapOf<PowerRegime, Long>()
         val weightedDurByRegime = mutableMapOf<PowerRegime, Double>()
 
         for (interval in intervals) {
-            val regime = classifier.classify(interval)
+            val regime = classifier.classify(
+                interval = interval,
+                baselineOffWatts = dynamicBaselineOffWatts,
+                medianOnWatts = dynamicMedianOnWatts
+            )
             intervalsByRegime.getOrPut(regime) { mutableListOf() }.add(interval)
             rawDurByRegime[regime] = (rawDurByRegime[regime] ?: 0L) + interval.durationMs
             val weightedDur = interval.durationMs.toDouble() * interval.ageWeight
