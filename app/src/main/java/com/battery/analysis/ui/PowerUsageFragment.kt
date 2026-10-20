@@ -777,27 +777,11 @@ class PowerUsageFragment : Fragment() {
     /**
      * 初始化应用耗电 RecyclerView 列表，并注册列表项点击弹出前后台深度能耗详情 BottomSheet 弹窗监听。
      * 点击单个应用条目时，按需异步定向查询该应用在放电时间段内的后台相关数据（流量、硬件开销），并实时刷新呈现。
+     * 保持列表底部留白为布局声明的标准 10dp，杜绝底部悬空与过大空白。
      */
     private fun setupRecyclerView() {
         binding.recyclerAppUsage.layoutManager = LinearLayoutManager(requireContext())
         binding.recyclerAppUsage.adapter = adapter
-
-        // 动态适配系统导航栏与底部页签栏高度，确保列表滑到底部或少量数据时绝不被底部导航栏遮挡
-        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.recyclerAppUsage) { v, insets ->
-            val navBarInsets = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
-            val displayCutout = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.displayCutout())
-            val bottomInset = maxOf(navBarInsets.bottom, displayCutout.bottom)
-            val density = resources.displayMetrics.density
-            val bottomNavHeightPx = (60 * density).toInt()
-            val totalBottomPadding = bottomNavHeightPx + bottomInset + (10 * density).toInt()
-            v.setPaddingRelative(
-                v.paddingStart,
-                v.paddingTop,
-                v.paddingEnd,
-                totalBottomPadding
-            )
-            insets
-        }
 
         adapter.onListCountChangedListener = { count ->
             updateUsageListTitle(count)
