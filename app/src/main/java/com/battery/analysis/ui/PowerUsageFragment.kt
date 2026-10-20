@@ -455,7 +455,31 @@ class PowerUsageFragment : Fragment() {
             }
         }
 
-        // 2. 列表滚动监听：主 RecyclerView 原生滑动联动控制底部页签栏显隐与滑动期图表冻结
+        // 2. 列表手势与滚动监听：支持触摸向上滑动与原生滚动联动控制底部页签栏显隐，滑动期冻结图表重绘
+        var startTouchY = 0f
+        binding.recyclerAppUsage.setOnTouchListener { _, event ->
+            if (currentDisplayTab != 1) {
+                when (event.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        startTouchY = event.rawY
+                    }
+                    android.view.MotionEvent.ACTION_MOVE -> {
+                        val deltaY = event.rawY - startTouchY
+                        if (deltaY < -12f) {
+                            // 手指向上拖动，确保立即灵敏联动隐藏底部页签栏，避免遮挡底部内容
+                            (activity as? MainActivity)?.setBottomNavigationVisibility(false)
+                            startTouchY = event.rawY
+                        } else if (deltaY > 15f && !binding.recyclerAppUsage.canScrollVertically(-1) && lastAppBarVerticalOffset >= 0) {
+                            // 列表处于最顶部且手指向下拉动，恢复展示底部页签栏
+                            (activity as? MainActivity)?.setBottomNavigationVisibility(true)
+                            startTouchY = event.rawY
+                        }
+                    }
+                }
+            }
+            false
+        }
+
         binding.recyclerAppUsage.addOnScrollListener(object : androidx.recyclerview.widget.RecyclerView.OnScrollListener() {
             override fun onScrollStateChanged(recyclerView: androidx.recyclerview.widget.RecyclerView, newState: Int) {
                 super.onScrollStateChanged(recyclerView, newState)
@@ -757,6 +781,24 @@ class PowerUsageFragment : Fragment() {
     private fun setupRecyclerView() {
         binding.recyclerAppUsage.layoutManager = LinearLayoutManager(requireContext())
         binding.recyclerAppUsage.adapter = adapter
+
+        // 动态适配系统导航栏与底部页签栏高度，确保列表滑到底部或少量数据时绝不被底部导航栏遮挡
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.recyclerAppUsage) { v, insets ->
+            val navBarInsets = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
+            val displayCutout = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.displayCutout())
+            val bottomInset = maxOf(navBarInsets.bottom, displayCutout.bottom)
+            val density = resources.displayMetrics.density
+            val bottomNavHeightPx = (60 * density).toInt()
+            val totalBottomPadding = bottomNavHeightPx + bottomInset + (10 * density).toInt()
+            v.setPaddingRelative(
+                v.paddingStart,
+                v.paddingTop,
+                v.paddingEnd,
+                totalBottomPadding
+            )
+            insets
+        }
+
         adapter.onListCountChangedListener = { count ->
             updateUsageListTitle(count)
         }
@@ -2572,9 +2614,9 @@ class PowerUsageFragment : Fragment() {
 
     /**
      * 依据当前应用列表数据行数与实际内容总高度，自适应校准上滑最大滚动边界。
-     * 当数据仅有一行或几行（内容不足一屏或超出极少）时，限制或锁定上滑折叠，
-     * 确保向上滑动到底时列表卡片底部与视口底端恰好保留 10dp 空白区域，杜绝列表悬空与底部巨大空白。
-     * 具备严格的高度与标志位双重幂等校验，状态未变时绝不修改 LayoutParams，彻底粉碎布局死循环，让系统顺畅进入 LTPO 1Hz 降频节能。
+     * 耗电统计模式下确保 CollapsingToolbarLayout 具有原生联动折叠能力，
+     * 允许用户上滑折叠标题栏以扩大可视区域，并灵敏联动收缩底部页签栏，杜绝误锁定展开导致无法滚动或底部内容被遮挡。
+     * 具备严格的标志位双重幂等校验，状态未变时绝不修改 LayoutParams，粉碎布局死循环。
      */
     private fun updateScrollLimitForShortList() {
         if (_binding == null || currentDisplayTab != 0) return
@@ -2584,25 +2626,15 @@ class PowerUsageFragment : Fragment() {
             if (coordinatorH <= 0) return@post
 
             val collapsingToolbarParams = binding.collapsingToolbar.layoutParams as? com.google.android.material.appbar.AppBarLayout.LayoutParams ?: return@post
-            val canScroll = binding.recyclerAppUsage.canScrollVertically(1) || binding.recyclerAppUsage.canScrollVertically(-1)
-            val targetFlags = if (!canScroll && adapter.getDisplayItemCount() <= 3) {
-                // 1. 数据极少（一屏内完全呈现）：禁用折叠与上滑，保持完整展开且底部留白恰好协调
-                0
-            } else {
-                // 2. 超出一屏：恢复原生联动折叠能力，由联动机制自然滑动到底部
-                com.google.android.material.appbar.AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL or
-                        com.google.android.material.appbar.AppBarLayout.LayoutParams.SCROLL_FLAG_EXIT_UNTIL_COLLAPSED
-            }
+            // 耗电模式下始终保证标题栏支持原生折叠与上滑收拢，确保即使只有单个或少量应用，用户也能向上滑动收缩底部页签并完全呈现应用能耗详情
+            val targetFlags = com.google.android.material.appbar.AppBarLayout.LayoutParams.SCROLL_FLAG_SCROLL or
+                    com.google.android.material.appbar.AppBarLayout.LayoutParams.SCROLL_FLAG_EXIT_UNTIL_COLLAPSED
 
             // 仅在目标标志位与当前生效标志位不一致时才重新赋值 LayoutParams，杜绝无谓的 requestLayout 导致 120Hz 刷新死循环
             if (collapsingToolbarParams.scrollFlags != targetFlags || lastAppliedScrollFlags != targetFlags) {
                 collapsingToolbarParams.scrollFlags = targetFlags
                 lastAppliedScrollFlags = targetFlags
                 binding.collapsingToolbar.layoutParams = collapsingToolbarParams
-                if (targetFlags == 0) {
-                    binding.appbarPower.setExpanded(true, false)
-                    binding.recyclerAppUsage.scrollToPosition(0)
-                }
             }
         }
     }
