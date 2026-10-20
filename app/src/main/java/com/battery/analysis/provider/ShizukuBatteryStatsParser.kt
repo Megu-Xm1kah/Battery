@@ -1889,7 +1889,7 @@ class ShizukuBatteryStatsParser(private val context: Context) {
         @Deprecated("已按用户要求移除人为物理功耗上限")
         const val MAX_STANDBY_POWER_WATTS = 3.0f
 
-        /** 手机息屏待机状态下的典型底座基础功率（单位：W），客观反映基带待机与系统基础唤醒保活底噪 */
+        /** 手机息屏待机状态下在缺少可靠实测样本时的默认初始先验功率（单位：W，DEFAULT_STANDBY_PRIOR） */
         const val DEFAULT_STANDBY_BASE_WATTS = 0.15f
 
         /**

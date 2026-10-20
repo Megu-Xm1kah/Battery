@@ -138,9 +138,9 @@ class PowerEstimator(
         if (isChanging) {
             val base = mediumPowerWatts ?: fastPowerWatts ?: longPowerWatts ?: 2.0
             stateDetector.reset(base)
-            // 连续输入偏离样本以激活检测器的工况突变标志与响应乘数
-            stateDetector.update((base * 2.5).toFloat())
-            stateDetector.update((base * 2.5).toFloat())
+            // 连续输入偏离样本以激活检测器的工况突变标志与响应乘数（确保累计物理偏离时长达到 minRegimeDurationSec 门限）
+            stateDetector.update((base * 2.5).toFloat(), deltaSec = 60.0)
+            stateDetector.update((base * 2.5).toFloat(), deltaSec = 60.0)
         } else {
             val base = mediumPowerWatts ?: fastPowerWatts ?: longPowerWatts ?: 2.0
             stateDetector.reset(base)
@@ -184,8 +184,16 @@ class PowerEstimator(
             recentSamples.removeAt(0)
         }
 
+        // 极端脉冲物理有效持续时间修正：
+        // 冷启动等 15W~18W 瞬态在物理上仅持续 1~2 秒，若为离群脉冲，有效时间步长受物理现实约束（<= 2.0s），杜绝 EWMA 能量过度积分
+        val effectiveDeltaSec = if (sampleWeight <= 0.25 || (power > 5.0f && power > (fastPowerWatts?.toFloat() ?: 1.0f) * 3.5f)) {
+            deltaSec.coerceAtMost(2.0)
+        } else {
+            deltaSec
+        }
+
         // 4. Fast 模型更新（真实连续时间物理 EWMA: alpha = 1 - exp(-dt / tau)，上限平滑约束在 0.30 避免单点支配）
-        val rawAlphaFast = 1.0 - exp(-deltaSec / TAU_FAST_SEC)
+        val rawAlphaFast = 1.0 - exp(-effectiveDeltaSec / TAU_FAST_SEC)
         val effectiveAlphaFast = (rawAlphaFast * sampleWeight * responsiveness).coerceIn(0.001, 0.30)
         fastPowerWatts = if (fastPowerWatts == null) {
             power.toDouble()
@@ -194,7 +202,7 @@ class PowerEstimator(
         }
 
         // 5. Medium 模型更新（更平缓的 EWMA）
-        val rawAlphaMedium = 1.0 - exp(-deltaSec / TAU_MEDIUM_SEC)
+        val rawAlphaMedium = 1.0 - exp(-effectiveDeltaSec / TAU_MEDIUM_SEC)
         val effectiveAlphaMedium = (rawAlphaMedium * sampleWeight).coerceIn(0.0005, 0.15)
         mediumPowerWatts = if (mediumPowerWatts == null) {
             power.toDouble()
@@ -235,7 +243,7 @@ class PowerEstimator(
             lastSampleTimestampMs = currentTs
             sampleCount++
 
-            // 工况迁移检测（累积持续物理时间，只有真正持续偏离才确立新工况）
+            // 工况迁移检测（累积持续物理时间，只有真正持续稳定做功 >= 60s 才确立新工况）
             stateDetector.update(power, deltaSec)
             val isChanging = stateDetector.isRegimeChanging
             val responsiveness = stateDetector.getResponsivenessMultiplier()
@@ -247,8 +255,17 @@ class PowerEstimator(
                 recentSamples.removeAt(0)
             }
 
+            // 极端脉冲物理有效持续时间修正：
+            // 点集抽稀后采样点时间跨度可能达到 10s~30s，若单个点捕获了 App 冷启动 15W~18W 脉冲，
+            // 其真实物理做功持续期不超过 2.0s，单点有效时间步长必须受物理现实约束，杜绝虚假能量放大
+            val effectiveDeltaSec = if (sampleWeight <= 0.25 || (power > 5.0f && power > (fastPowerWatts?.toFloat() ?: 1.0f) * 3.5f)) {
+                deltaSec.coerceAtMost(2.0)
+            } else {
+                deltaSec
+            }
+
             // Fast 模型更新 (真实物理连续 EWMA)
-            val rawAlphaFast = 1.0 - exp(-deltaSec / TAU_FAST_SEC)
+            val rawAlphaFast = 1.0 - exp(-effectiveDeltaSec / TAU_FAST_SEC)
             val effectiveAlphaFast = (rawAlphaFast * sampleWeight * responsiveness).coerceIn(0.001, 0.30)
             fastPowerWatts = if (fastPowerWatts == null) {
                 power.toDouble()
@@ -259,7 +276,7 @@ class PowerEstimator(
             // Medium 尺度：若外部已预设整个会话的宏观累计物理平均功耗，Medium 作为物理稳态基石保持锚定；
             // 仅在无预设宏观功耗时由采样点驱动更新
             if (presetDurationMs <= 0L) {
-                val rawAlphaMedium = 1.0 - exp(-deltaSec / TAU_MEDIUM_SEC)
+                val rawAlphaMedium = 1.0 - exp(-effectiveDeltaSec / TAU_MEDIUM_SEC)
                 val effectiveAlphaMedium = (rawAlphaMedium * sampleWeight).coerceIn(0.0005, 0.15)
                 mediumPowerWatts = if (mediumPowerWatts == null) {
                     power.toDouble()
@@ -398,16 +415,39 @@ class PowerEstimator(
             val gamma = if (!hasLong) {
                 (0.20 + (mult - 1.0) * 0.15).coerceIn(0.20, 0.35)
             } else {
-                (0.30 + (mult - 1.0) * 0.40).coerceIn(0.40, 0.85)
+                val rawGamma = (0.30 + (mult - 1.0) * 0.40).coerceIn(0.40, 0.85)
+                if (totalSessionDurationMs < 300_000L) {
+                    val progress = (totalSessionDurationMs.toDouble() / 300_000.0).coerceIn(0.0, 1.0)
+                    // 拔电放电极早期（前 5 分钟 / 300秒）工况突变时间阻尼保护：
+                    // 刚拔电时会话样本极少，单次刷新操作或点亮瞬态极易产生虚假突变；
+                    // 引入连续平滑时间阻尼，确保 7 天长期习惯保持压舱石作用，杜绝刷新时 Fast 权重脉冲翻转；
+                    // 从 0 分钟时的 0.10 平滑过渡到 5 分钟时的 full rawGamma
+                    0.10 + progress * (rawGamma - 0.10)
+                } else {
+                    rawGamma
+                }
             }
 
             when {
                 // 首选：Fast 存在，向 Fast 尺度快速倾斜
                 hasFast -> {
-                    val wfPrime = baseWf + gamma * (1.0 - baseWf)
-                    val wmPrime = if (hasMedium) (1.0 - gamma) * baseWm else 0.0
-                    val wlPrime = if (hasLong) (1.0 - gamma) * baseWl else 0.0
-                    Triple(wfPrime, wmPrime, wlPrime)
+                    if (totalSessionDurationMs >= 1_200_000L && hasMedium) {
+                        // 若当前会话已持续 20 分钟以上（如稳定运行 35 分钟），Medium 尺度汇聚了数千焦耳的宏观物理稳态，
+                        // 发生工况突变时，向 Fast 适度倾斜以捕捉近期动态，但必须优先守住 Medium 稳态压舱基石：
+                        // Medium 权重至少保留 baseWm 的 90% 且不低于 0.45（45%）；
+                        // Fast 权重限制在 0.30 以内，向 Fast 倾斜主要由 Long 尺度让渡，杜绝全局预测被短时扰动绑架腰斩
+                        val targetWm = (baseWm * 0.90).coerceAtLeast(0.45).coerceAtMost(0.70)
+                        val remainingForFL = (1.0 - targetWm).coerceAtLeast(0.0)
+                        val rawWfShift = baseWf + 0.10 * (mult - 1.0)
+                        val targetWf = if (hasLong) rawWfShift.coerceIn(0.15, 0.30).coerceAtMost(remainingForFL) else remainingForFL
+                        val targetWl = if (hasLong) (remainingForFL - targetWf).coerceAtLeast(0.0) else 0.0
+                        Triple(targetWf, targetWm, targetWl)
+                    } else {
+                        val wfPrime = baseWf + gamma * (1.0 - baseWf)
+                        val wmPrime = if (hasMedium) (1.0 - gamma) * baseWm else 0.0
+                        val wlPrime = if (hasLong) (1.0 - gamma) * baseWl else 0.0
+                        Triple(wfPrime, wmPrime, wlPrime)
+                    }
                 }
                 // 次选：Fast 不存在但 Medium 存在（如只有 Medium + Long），向当前最快的 Medium 尺度倾斜
                 hasMedium && hasLong -> {

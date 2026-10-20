@@ -221,5 +221,157 @@ class PowerEstimatorTest {
         assertNotNull("预测功率不可为空", predicted)
         assertTrue("冷启动预测功率应贴近会话稳态 (当前: $predicted)", predicted!! in 2.0..2.5)
     }
+
+    /**
+     * 测试在拔电放电极早期（前 5 分钟，如 90 秒），若因刷新操作或短时操作触发工况突变，
+     * 自适应时间阻尼机制能够有效约束突变权重扩散，确保 7 天长期大样本（Long）牢牢守住压舱权重（>= 50%），
+     * 预测放电功率保持稳定，彻底杜绝剩余续航发生断崖式蹦床跳变。
+     */
+    @Test
+    fun testEarlyDischargeSpikeDamping_PreventsRuntimeJump() {
+        val testEstimator = PowerEstimator()
+        testEstimator.setLongTermPower(2.0) // 7天长期大样本典型功耗 2.0W
+        // 模拟刚刚拔电放电 90 秒，会话平均 2.0W
+        testEstimator.seedCurrentSession(durationMs = 90_000L, powerWatts = 2.0f)
+
+        // 模拟由于下拉刷新或瞬态脉冲激活了工况突变跃迁
+        testEstimator.notifyRegimeChange(true)
+
+        val (wf, wm, wl) = testEstimator.calculateAdaptiveWeights()
+        assertEquals("权重和必须严格为 1.0", 1.0, wf + wm + wl, 0.0001)
+        assertTrue("拔电极早期（90秒）7天长期习惯基准必须保留压舱地位（wl >= 0.50，当前: $wl）", wl >= 0.50)
+        assertTrue("拔电极早期瞬时 Fast 权重应受到平滑时间阻尼压制（wf <= 0.35，当前: $wf）", wf <= 0.35)
+
+        val predicted = testEstimator.getPredictedPower()
+        assertNotNull("预测放电功率不可为空", predicted)
+        // 即使 Fast 瞬时功率偏高（例如 ~5.0W），预测功率也应当受到 2.0W 锚定，保持在 3.0W 以内
+        assertTrue("拔电极早期预测功耗应保持高度稳定阻尼 (当前: $predicted)", predicted!! < 3.0)
+    }
+
+    /**
+     * 测试当放电会话超过 5 分钟（如 10 分钟）进入成熟期后，若设备真实进入持续高负载工况（如 3D 游戏），
+     * 时间阻尼自然解除，突变机制全额恢复敏捷响应能力，Fast 尺度能快速响应新工况。
+     */
+    @Test
+    fun testMatureDischargeRegimeChange_MaintainsHighResponsiveness() {
+        val testEstimator = PowerEstimator()
+        testEstimator.setLongTermPower(2.0)
+        // 模拟放电已持续 10 分钟 (600,000 ms)，会话平均 2.2W
+        testEstimator.seedCurrentSession(durationMs = 600_000L, powerWatts = 2.2f)
+
+        // 持续进入真实高负载工况突变
+        testEstimator.notifyRegimeChange(true)
+
+        val (wf, wm, wl) = testEstimator.calculateAdaptiveWeights()
+        assertEquals("权重和必须严格为 1.0", 1.0, wf + wm + wl, 0.0001)
+        assertTrue("成熟期工况突变应恢复敏捷响应（wf >= 0.40，当前: $wf）", wf >= 0.40)
+    }
+
+    /**
+     * 测试已稳定放电长达 35 分钟（2,100,000 ms，平均功耗 0.86W）的长会话用机场景：
+     * 验证 Medium 尺度作为凝聚了数千焦耳真实物理做功的稳态基石，在遭遇突发高负载或脉冲跃迁时，
+     * 依然保留坚实的稳态压舱权重（wm >= 0.20，wf <= 0.60），
+     * 预测放电功率保持在稳定合理的区间（< 1.8W），绝不会被单点冲高至 3.5W 导致续航从 14h 暴跌至 4.8h。
+     */
+    /**
+     * 测试已稳定放电长达 35 分钟（2,100,000 ms，平均功耗 0.86W）的长会话用机场景：
+     * 验证 Medium 尺度作为凝聚了数千焦耳真实物理做功的稳态基石，在遭遇突发高负载或脉冲跃迁时，
+     * 依然保留坚实的稳态压舱权重（wm >= 0.40，wf <= 0.35），
+     * 预测放电功率保持在稳定合理的区间（< 1.4W），绝不会被单点冲高至 3.5W 导致续航从 14h 暴跌至 4.8h。
+     */
+    @Test
+    fun testLongSessionMediumBallast_PreventsRuntimeCollapseOnPulse() {
+        val testEstimator = PowerEstimator()
+        testEstimator.setLongTermPower(1.94) // 7天大样本典型功耗 1.94W
+        // 预设用户当前放电已持续 35 分钟 (2,100,000 ms)，当前会话实测平均 0.86W
+        testEstimator.seedCurrentSession(durationMs = 2_100_000L, powerWatts = 0.86f)
+
+        // 模拟短时高功耗脉冲激活突变状态
+        testEstimator.notifyRegimeChange(true)
+
+        val (wf, wm, wl) = testEstimator.calculateAdaptiveWeights()
+        assertEquals("权重和必须严格归一化为 1.0", 1.0, wf + wm + wl, 0.0001)
+        assertTrue("35分钟长会话的 Medium 稳态权重必须保留压舱地位（wm >= 0.40，当前: $wm）", wm >= 0.40)
+        assertTrue("Fast 突变权重在长会话稳态支撑下不得极端失控（wf <= 0.35，当前: $wf）", wf <= 0.35)
+
+        // 验证即使 Fast 测得 3.5W，预测功率也受到 0.86W 稳态有力锚定，保持在 1.4W 以内
+        val predicted = testEstimator.getPredictedPower()
+        assertNotNull("预测放电功率不可为空", predicted)
+        assertTrue("预测功率应平稳保持在 1.4W 以内，杜绝暴增至 3.5W (当前: $predicted)", predicted!! < 1.40)
+    }
+
+    /**
+     * 测试时序回放场景下 App 冷启动脉冲（17.9W）的真实物理瞬态滤波：
+     * 仿真设备持续放电 35 分钟（稳态 0.86W），在最末端出现 15.8W 与 17.9W 的真实 App 冷启动瞬态高功耗。
+     * 验证：
+     * 1. 由于未满足持续稳定做功 >= 60 秒门限，工况突变检测器不误判为 Regime Change；
+     * 2. 点集抽稀产生的时间间隔不放大单点冷启动脉冲的物理能量做功；
+     * 3. 最终预测放电功率保持在稳定健康的 1.1W~1.3W 区间，彻底根治续航时间从 8h 暴跌至 4h48m 的跳变问题。
+     */
+    @Test
+    fun testColdStartPulseAtEndOfLongSession_DoesNotDistortPredictedPower() {
+        val testEstimator = PowerEstimator()
+        testEstimator.setLongTermPower(1.94) // 7天历史基准 1.94W
+        testEstimator.seedCurrentSession(durationMs = 2_130_000L, powerWatts = 0.86f)
+
+        val samples = mutableListOf<PowerSample>()
+        val baseTs = 1_700_000_000_000L
+
+        // 前期 30 个稳定采样点（模拟稳态 0.86W）
+        for (i in 0 until 30) {
+            samples.add(
+                PowerSample(
+                    timestampMs = baseTs + i * 30_000L, // 间隔 30 秒（模拟图表抽稀采样）
+                    voltageVolts = 3.98f,
+                    currentAmperes = 0.21f,
+                    powerWatts = 0.86f,
+                    batteryLevelPercent = 60.0f - (i * 0.1f),
+                    state = ScreenPowerState.SCREEN_ON
+                )
+            )
+        }
+
+        // 最末端注入 App 冷启动真实瞬态高功耗（15.8W 与 17.9W 真实瞬态）
+        val lastTs = baseTs + 30 * 30_000L
+        samples.add(
+            PowerSample(
+                timestampMs = lastTs + 15_000L,
+                voltageVolts = 3.89f,
+                currentAmperes = 4.06f,
+                powerWatts = 15.8f,
+                batteryLevelPercent = 57.0f,
+                state = ScreenPowerState.SCREEN_ON
+            )
+        )
+        samples.add(
+            PowerSample(
+                timestampMs = lastTs + 30_000L,
+                voltageVolts = 3.85f,
+                currentAmperes = 4.65f,
+                powerWatts = 17.9f, // 真实冷启动爆发峰值
+                batteryLevelPercent = 57.0f,
+                state = ScreenPowerState.SCREEN_ON
+            )
+        )
+
+        testEstimator.feedSessionTrendSamples(samples)
+
+        val predictedPower = testEstimator.getPredictedPower()
+        assertNotNull("预测功率不可为空", predictedPower)
+        assertTrue(
+            "预测功率应稳定在 1.30W 以内，当前预测功率为: $predictedPower",
+            predictedPower!! <= 1.30
+        )
+
+        // 验证折算出的亮屏剩余续航（假设可用能量 16.89Wh）
+        val usableEnergyWh = 16.89
+        val remainingHours = usableEnergyWh / predictedPower
+        assertTrue(
+            "亮屏剩余续航应平稳保持在 12h 以上（当前: ${remainingHours}h），绝不可腰斩至 4h48m",
+            remainingHours >= 12.0
+        )
+    }
 }
+
+
 

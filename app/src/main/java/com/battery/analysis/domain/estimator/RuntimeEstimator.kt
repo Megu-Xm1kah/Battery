@@ -148,7 +148,11 @@ class RuntimeEstimator(
         val hasLongData = onPowerEstimator.getLongPower() != null
 
         if (hasSessionData && hasLongData) {
-            qualityReasons.add("基于当前会话与历史多时间尺度融合")
+            if (onPowerEstimator.totalSessionDurationMs < 300_000L) {
+                qualityReasons.add("放电初期优先参考近7天习惯基准，持续运行中")
+            } else {
+                qualityReasons.add("基于当前会话与历史多时间尺度融合")
+            }
         } else if (hasSessionData) {
             qualityReasons.add("基于当前会话直接采样推算")
         } else if (hasLongData) {
@@ -229,7 +233,11 @@ class RuntimeEstimator(
         val hasLongData = offPowerEstimator.getLongPower() != null
 
         if (hasSessionData && hasLongData) {
-            qualityReasons.add("基于待机休眠与唤醒多时间尺度融合")
+            if (offPowerEstimator.totalSessionDurationMs < 300_000L) {
+                qualityReasons.add("待机初期优先参考近7天习惯基准，持续待机中")
+            } else {
+                qualityReasons.add("基于待机休眠与唤醒多时间尺度融合")
+            }
         } else if (hasSessionData) {
             qualityReasons.add("基于当前待机直接采样推算")
         } else if (hasLongData) {

@@ -375,7 +375,9 @@ class PowerUsageManager private constructor(private val context: Context) {
                 screenOffConfidentDurationMs = screenOffConfidentDurationMs,
                 screenOffConfidentEnergyWh = screenOffConfidentEnergyWh,
                 screenOffShortIntervalPowers = screenOffShortIntervalPowers,
-                screenOffLongIntervals = screenOffLongIntervals
+                screenOffLongIntervals = screenOffLongIntervals,
+                samples = samples,
+                recordIntervalMs = recordIntervalMs
             )
 
             val screenOnDisplayEnergyWh = screenOnEnergyWh
@@ -415,6 +417,7 @@ class PowerUsageManager private constructor(private val context: Context) {
 
         /**
          * 计算息屏展示能量。
+         * 采用时间窗口聚合、窗口级 P10 分位数与多窗口支持度校验，彻底杜绝单点偶然噪点支配基线。
          *
          * @param screenOffDurationMs 总息屏时长（毫秒）
          * @param screenOffEnergyWh 原始息屏梯形积分总能量（瓦时）
@@ -422,6 +425,8 @@ class PowerUsageManager private constructor(private val context: Context) {
          * @param screenOffConfidentEnergyWh 落在置信阈值内的息屏积分能量（瓦时）
          * @param screenOffShortIntervalPowers 置信区间加权功率样本列表
          * @param screenOffLongIntervals 休眠长间隔断层列表
+         * @param samples 原始放电瞬态采样点列表（默认 emptyList）
+         * @param recordIntervalMs 底层采样轮询基础周期（毫秒，默认 1000ms）
          * @return 最终用于展示的真实息屏能量（瓦时 Wh）
          */
         private fun computeScreenOffDisplayEnergyWh(
@@ -430,7 +435,9 @@ class PowerUsageManager private constructor(private val context: Context) {
             screenOffConfidentDurationMs: Long,
             screenOffConfidentEnergyWh: Double,
             screenOffShortIntervalPowers: List<WeightedPowerSample>,
-            screenOffLongIntervals: List<LongIntervalSample>
+            screenOffLongIntervals: List<LongIntervalSample>,
+            samples: List<PowerDischargePoint> = emptyList(),
+            recordIntervalMs: Long = 1000L
         ): Double {
             if (screenOffDurationMs <= 0L) return 0.0
             if (screenOffConfidentDurationMs <= 0L && screenOffLongIntervals.isEmpty()) return screenOffEnergyWh
@@ -448,21 +455,32 @@ class PowerUsageManager private constructor(private val context: Context) {
             val validPowers = screenOffShortIntervalPowers.map { it.powerWatts }.filter { it > 0.0 }
             val minPower = validPowers.minOrNull()
 
-            // 物理第一性原理：休眠长断层（Long Gap）对应 CPU 挂起休眠（Deep Sleep）。
-            // 息屏短样本主要由系统或应用唤醒活跃期产生，易受唤醒高频计算与网络尖峰污染（0.15W ~ 0.35W）。
-            // 故待机基线功率应取低位分布（P5 ~ P10）；
-            // 若物理采样序列中捕获到合理的真实待机底噪（<= 0.20W），深度休眠挂起断层优先采纳该实测最低物理真值；
-            // 若所有样本均因唤醒严重污染（> 0.20W），休眠长断层回退至硬件客观休眠基线，杜绝以唤醒态功率虚高放大长断层。
-            val baselinePercentile = 0.05 + (0.10 - 0.05) * confidenceScore
-            var baselinePowerWatts = computeWeightedPercentilePower(screenOffShortIntervalPowers, baselinePercentile)
-                ?: (minPower ?: ShizukuBatteryStatsParser.DEFAULT_STANDBY_BASE_WATTS.toDouble())
+            // 优先通过 StandbyBaselineEstimator 进行时间窗口聚合、稳健 P10 分位数计算与多窗口支持度验证，
+            // 彻底杜绝单次偶然极小值（如 I2C 总线抖动 0.01W）直接支配整夜长断层，并消除高频唤醒选择偏差
+            val baselineEstimate = if (samples.isNotEmpty()) {
+                com.battery.analysis.domain.estimator.StandbyBaselineEstimator.estimate(
+                    samples = samples,
+                    recordIntervalMs = recordIntervalMs
+                )
+            } else {
+                null
+            }
 
-            if (minPower != null && minPower <= 0.20) {
-                if (baselinePowerWatts > 0.20 || minPower < baselinePowerWatts) {
-                    baselinePowerWatts = minPower
+            var baselinePowerWatts = if (baselineEstimate != null && baselineEstimate.confidence != com.battery.analysis.domain.estimator.model.StandbyConfidenceLevel.LOW) {
+                baselineEstimate.baselinePowerWatts
+            } else {
+                val baselinePercentile = 0.05 + (0.10 - 0.05) * confidenceScore
+                var fallbackWatts = computeWeightedPercentilePower(screenOffShortIntervalPowers, baselinePercentile)
+                    ?: (minPower ?: ShizukuBatteryStatsParser.DEFAULT_STANDBY_BASE_WATTS.toDouble())
+
+                if (minPower != null && minPower <= 0.20) {
+                    if (fallbackWatts > 0.20 || minPower < fallbackWatts) {
+                        fallbackWatts = minPower
+                    }
+                } else if (fallbackWatts > 0.20) {
+                    fallbackWatts = ShizukuBatteryStatsParser.DEFAULT_STANDBY_BASE_WATTS.toDouble()
                 }
-            } else if (baselinePowerWatts > 0.20) {
-                baselinePowerWatts = ShizukuBatteryStatsParser.DEFAULT_STANDBY_BASE_WATTS.toDouble()
+                fallbackWatts
             }
 
             var extrapolatedLongGapEnergyWh = 0.0
@@ -853,6 +871,16 @@ class PowerUsageManager private constructor(private val context: Context) {
         internal fun extractQuiescentStandbyWatts(samples: List<PowerDischargePoint>): Float? {
             val validOffSamples = samples.filter { !it.isScreenOn && it.powerWatts > 0f }
             if (validOffSamples.isEmpty()) return null
+
+            // 优先通过 StandbyBaselineEstimator 进行时间窗口聚合与多窗口支持度校验
+            val baselineEstimate = com.battery.analysis.domain.estimator.StandbyBaselineEstimator.estimate(samples)
+            if (baselineEstimate.source == com.battery.analysis.domain.estimator.model.StandbyBaselineSource.MEASURED_WINDOW_P10) {
+                val watts = baselineEstimate.baselinePowerWatts.toFloat()
+                if (watts in 0.015f..MAX_QUIESCENT_STANDBY_WATTS) {
+                    return watts
+                }
+            }
+
             return if (validOffSamples.size >= 3) {
                 val sortedPowers = validOffSamples.map { it.powerWatts }.sorted()
                 val p10Index = (sortedPowers.size * 0.10).toInt().coerceIn(0, sortedPowers.size - 1)

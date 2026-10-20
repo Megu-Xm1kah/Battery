@@ -13,7 +13,7 @@ import kotlin.math.max
  * @param changeThresholdRatio 判定工况突变的相对比例阈值（默认 0.40，即 40%）
  * @param requiredConsecutiveCycles 确认工况跃迁所需的最少连续高偏离采样周期数（默认 2 次）
  * @param recoveryHysteresisRatio 退出工况跃迁返回稳态所需的滞回容限比例（默认 0.25，即 25%）
- * @param minRegimeDurationSec 确立工况突变所需的最小物理持续时间门限（单位：秒，默认 0.0s 兼容基础单测；实际工程中推荐 >= 30.0s）
+ * @param minRegimeDurationSec 确立工况突变所需的最小物理持续稳定做功时间门限（单位：秒，默认 0.0s 兼容基础单测；工业级核心模型如 PowerEstimator 严格指定 >= 60.0s）
  */
 class PowerStateDetector(
     private val minAbsoluteChangeWatts: Double = 0.35,
@@ -63,10 +63,14 @@ class PowerStateDetector(
     /**
      * 输入最新到达的物理功耗采样值，执行双门限与滞回判定，检测是否触发或维持工况跃迁。
      *
-     * 判定准则：
-     * 触发阈值：Threshold_trigger = max(minAbsoluteChangeWatts, changeThresholdRatio * baseline)；
-     * 恢复滞回阈值：Threshold_recovery = max(minAbsoluteChangeWatts * 0.6, recoveryHysteresisRatio * baseline)。
-     * 只有当连续偏离周期数达到 [requiredConsecutiveCycles] 且累计偏离持续时间达到 [minRegimeDurationSec] 时，才确立工况跃迁。
+     * 判定准则与物理第一性原理：
+     * 1. 触发阈值：Threshold_trigger = max(minAbsoluteChangeWatts, changeThresholdRatio * baseline)；
+     * 2. 恢复滞回阈值：Threshold_recovery = max(minAbsoluteChangeWatts * 0.6, recoveryHysteresisRatio * baseline)；
+     * 3. 持续稳定做功校验：确立工况突变必须要求设备在该工况下持续稳定做功达到 [minRegimeDurationSec]（>= 60 秒）；
+     * 4. 极端脉冲物理步长防膨胀：针对 App 冷启动等高达 15W~18W 的瞬态峰值（偏离基线 3.5 倍以上且 > 5W），
+     *    由于真实物理冷启动做功仅持续 1~2 秒，即便在点集抽稀导致采样点时间差达到数十秒时，
+     *    单次脉冲点计入持续做功时间的物理步长严格限制在真实脉冲持续期内（<= 2.0s），
+     *    彻底杜绝抽稀采样点因采样间隔拉大而把单点 1~2 秒的冷启动误判为持续 60 秒做功并触发虚假工况跃迁。
      *
      * @param currentPowerWatts 当前周期测得的物理放电功率（单位：W）
      * @param deltaSec 距上一次采样的物理间隔时间（单位：秒，默认 1.0s）
@@ -101,18 +105,27 @@ class PowerStateDetector(
         val recoveryThreshold = max(minAbsoluteChangeWatts * 0.60, baseP * recoveryHysteresisRatio)
         val safeDelta = deltaSec.coerceIn(0.01, 300.0)
 
+        // 极端脉冲有效持续物理时间步长修正：
+        // 若功耗极大偏离基线（超过基线 3.5 倍且 > 5.0W，典型如冷启动 15W~18W），真实物理脉冲上限为 2.0s，
+        // 绝不因抽稀点间隔 10s~30s 就将单点脉冲按几十秒持续做功累加
+        val effectiveDelta = if (curP > max(5.0, baseP * 3.5)) {
+            safeDelta.coerceAtMost(2.0)
+        } else {
+            safeDelta
+        }
+
         if (!isRegimeChanging) {
-            // 当前处于稳态：检测是否连续触发偏离
+            // 当前处于稳态：检测是否连续触发偏离并持续做功达到 60 秒门限
             if (absDiff > triggerThreshold) {
                 consecutiveDeviationCount++
-                accumulatedDeviationDurationSec += safeDelta
+                accumulatedDeviationDurationSec += effectiveDelta
                 consecutiveSteadyCount = 0
                 accumulatedSteadyDurationSec = 0.0
                 if (consecutiveDeviationCount >= requiredConsecutiveCycles &&
                     (minRegimeDurationSec <= 0.0 || accumulatedDeviationDurationSec >= minRegimeDurationSec)
                 ) {
                     isRegimeChanging = true
-                    // 确认工况跃迁：以较快步长（30%）将基线拉向当前新工况
+                    // 确认工况跃迁（持续做功达到门限）：以较快步长（30%）将基线拉向当前新工况
                     baselinePowerWatts = baseP * 0.70 + curP * 0.30
                 }
             } else {
