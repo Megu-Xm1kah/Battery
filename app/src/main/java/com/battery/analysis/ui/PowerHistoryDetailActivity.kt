@@ -1034,7 +1034,7 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
                 context = applicationContext,
                 currentOverview = null,
                 totalCapacityWh = totalCapacityWh,
-                baseTimestamp = record.id
+                baseTimestamp = record.getEffectiveEndTimeMs()
             )
             val selectedMetrics = headerBinding?.metricSelectorView?.getSelectedMetrics()
                 ?: cachedTimelineState?.selectedMetrics

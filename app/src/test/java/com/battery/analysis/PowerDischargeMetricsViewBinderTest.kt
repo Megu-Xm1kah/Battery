@@ -143,4 +143,24 @@ class PowerDischargeMetricsViewBinderTest {
         val deepSleepMessage = BatteryEnergyCalculator.formatDeepSleepCardDetailMessage(overview, 30.0f)
         assertTrue("深度睡眠卡片弹框详情必须正常显示秒数 06h34m09s", deepSleepMessage.contains("06h34m09s"))
     }
+
+    /**
+     * 验证剩余续航时长仅格式化数值部分（不含说明标签后缀），
+     * 并在数据为 null 或无效时如实返回 "--"，不进行任何捏造伪造。
+     */
+    @Test
+    fun testFormatRemainingDurationOnly() {
+        // 3 小时 16 分钟 (3 * 3600 + 16 * 60) * 1000 = 11,760,000 ms -> 期望 "03h16m"
+        val dur1Ms = (3 * 3600 + 16 * 60) * 1000L
+        assertEquals("03h16m", PowerDischargeMetricsViewBinder.formatRemainingDurationOnly(dur1Ms))
+
+        // 14 小时 13 分钟 -> 期望 "14h13m"
+        val dur2Ms = (14 * 3600 + 13 * 60) * 1000L
+        assertEquals("14h13m", PowerDischargeMetricsViewBinder.formatRemainingDurationOnly(dur2Ms))
+
+        // null 或 <= 0L -> 真实返回 "--"
+        assertEquals("--", PowerDischargeMetricsViewBinder.formatRemainingDurationOnly(null))
+        assertEquals("--", PowerDischargeMetricsViewBinder.formatRemainingDurationOnly(0L))
+        assertEquals("--", PowerDischargeMetricsViewBinder.formatRemainingDurationOnly(-1000L))
+    }
 }

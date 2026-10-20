@@ -646,5 +646,68 @@ class RuntimeEstimatorTest {
         assertNotNull(updatedPower)
         assertTrue("在线流式持续输入高负载后预测功率应逐步上升", updatedPower!! > initialPower)
     }
+
+    /**
+     * 测试 estimateTripleRuntimes 入口在传入当前周期细粒度采样点集合时，
+     * 能够成功激活各维度的 Fast 尺度，感知高负载工况并自适应修正预测功耗与剩余续航。
+     */
+    @Test
+    fun testEstimateTripleRuntimesWithCurrentTrendPoints() {
+        val overview = PowerOverviewStats(
+            avgPowerWatts = 1.8f,
+            screenOnPowerWatts = 2.0f,
+            screenOffPowerWatts = 0.2f,
+            screenOnDurationMs = 1_800_000L,
+            screenOffDurationMs = 3_600_000L,
+            totalDurationMs = 5_400_000L
+        )
+
+        val now = 10_000_000L
+        // 模拟最近出现的游戏高负载采样点（5.0W 持续亮屏）
+        val trendPoints = (0 until 5).map { i ->
+            com.battery.analysis.model.PowerDischargePoint(
+                timestamp = now + i * 10_000L,
+                elapsedHours = 1.5f,
+                batteryLevel = 50,
+                voltageVolts = 3.85f,
+                powerWatts = 5.0f,
+                isScreenOn = true
+            )
+        }
+
+        // 1. 无采样点 baseline：亮屏仅依靠宏观均值 2.0W
+        val baseResult = estimator.estimateTripleRuntimes(
+            overview = overview,
+            sevenDaysStats = null,
+            batteryLevelPercent = 50f,
+            remainingEnergyWh = 10.0f,
+            totalCapacityWh = 20.0f,
+            currentTrendPoints = null
+        )
+
+        // 2. 带细粒度采样点：应灵敏响应近期的 5.0W 高负载
+        val trendResult = estimator.estimateTripleRuntimes(
+            overview = overview,
+            sevenDaysStats = null,
+            batteryLevelPercent = 50f,
+            remainingEnergyWh = 10.0f,
+            totalCapacityWh = 20.0f,
+            currentTrendPoints = trendPoints
+        )
+
+        assertNotNull(baseResult.screenOnEstimate.predictedPowerWatts)
+        assertNotNull(trendResult.screenOnEstimate.predictedPowerWatts)
+        assertTrue(
+            "接入近期高负载细粒度点集后，亮屏预测放电功率应敏捷升高 (基础: ${baseResult.screenOnEstimate.predictedPowerWatts}, 接入点集后: ${trendResult.screenOnEstimate.predictedPowerWatts})",
+            trendResult.screenOnEstimate.predictedPowerWatts!! > baseResult.screenOnEstimate.predictedPowerWatts!!
+        )
+
+        assertNotNull(baseResult.screenOnEstimate.remainingMs)
+        assertNotNull(trendResult.screenOnEstimate.remainingMs)
+        assertTrue(
+            "功耗升高后预测剩余可用时间应相应缩减 (基础: ${baseResult.screenOnEstimate.remainingMs}, 接入点集后: ${trendResult.screenOnEstimate.remainingMs})",
+            trendResult.screenOnEstimate.remainingMs!! < baseResult.screenOnEstimate.remainingMs!!
+        )
+    }
 }
 

@@ -128,7 +128,7 @@ class BubbleTooltipLayout : FrameLayout {
          * 气泡与屏幕左右安全边缘的默认最小安全间距（单位：dp）。
          * 与气泡辅助工具类保持一致，最大化释放宽文本内容排版空间，防止长文字非预期折行。
          */
-        const val DEFAULT_SCREEN_MARGIN_DP: Float = 5f
+        const val DEFAULT_SCREEN_MARGIN_DP: Float = 10f
     }
 
     /**
@@ -139,7 +139,7 @@ class BubbleTooltipLayout : FrameLayout {
      */
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val density = context.resources.displayMetrics.density
-        val screenWidth = context.resources.displayMetrics.widthPixels
+        val screenWidth = rootView?.width?.takeIf { it > 0 } ?: context.resources.displayMetrics.widthPixels
         val margin = (DEFAULT_SCREEN_MARGIN_DP * density).toInt()
         val maxWidth = (screenWidth - 2 * margin).coerceAtLeast(0)
 
@@ -149,6 +149,7 @@ class BubbleTooltipLayout : FrameLayout {
         val targetWidthSpec = when (widthMode) {
             MeasureSpec.UNSPECIFIED -> MeasureSpec.makeMeasureSpec(maxWidth, MeasureSpec.AT_MOST)
             MeasureSpec.AT_MOST -> MeasureSpec.makeMeasureSpec(widthSize.coerceAtMost(maxWidth), MeasureSpec.AT_MOST)
+            MeasureSpec.EXACTLY -> MeasureSpec.makeMeasureSpec(widthSize.coerceAtMost(maxWidth), MeasureSpec.EXACTLY)
             else -> widthMeasureSpec
         }
         super.onMeasure(targetWidthSpec, heightMeasureSpec)

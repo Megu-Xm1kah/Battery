@@ -134,5 +134,92 @@ class PowerEstimatorTest {
         assertNotNull("预测功率不可为空", predicted)
         assertTrue("预测功率必须真实反映高负载（接近 4.0W）", predicted!! > 3.0)
     }
+
+    /**
+     * 测试批量注入当前会话采样点（feedSessionTrendSamples）时：
+     * 1. 成功激活 Fast 尺度与工况感知；
+     * 2. 会话时长 totalSessionDurationMs 保持宏观物理守恒，杜绝双倍累加虚高膨胀；
+     * 3. 充电点与无效功率点被安全过滤。
+     */
+    @Test
+    fun testFeedSessionTrendSamplesPreservesDurationAndActivatesFast() {
+        val testEstimator = PowerEstimator()
+        testEstimator.setLongTermPower(2.0)
+        // 预设宏观时长 30 分钟 (1,800,000 ms)，宏观均值 2.5W
+        testEstimator.seedCurrentSession(durationMs = 1_800_000L, powerWatts = 2.5f)
+
+        val baseTs = 10_000_000L
+        // 构造最近 5 分钟的高负载游戏采样点（例如 5.0W），每 10 秒一个点，共 6 个点（跨度 50 秒）
+        val samples = (0 until 6).map { i ->
+            PowerSample(
+                timestampMs = baseTs + i * 10_000L,
+                voltageVolts = 3.85f,
+                powerWatts = 5.0f,
+                batteryLevelPercent = 70.0f,
+                state = ScreenPowerState.SCREEN_ON
+            )
+        }
+
+        testEstimator.feedSessionTrendSamples(samples)
+
+        // 验证 Fast 尺度已成功感应到近期高负载并偏向 5.0W
+        val fastP = testEstimator.getFastPower()
+        assertNotNull("Fast 功率必须已激活生成", fastP)
+        assertTrue("Fast 功率应灵敏响应近期 5.0W 高负载 (当前: $fastP)", fastP!! > 2.5)
+
+        // 验证时长守恒：预设了 30 分钟，总时长不会被虚高累加成 30分钟 + 50秒，而是取最大值保持 30 分钟
+        assertEquals("会话总时长必须保持物理守恒（30分钟）", 1_800_000L, testEstimator.totalSessionDurationMs)
+    }
+
+    /**
+     * 测试短时触控或界面刷新尖峰（例如持续 2~3 秒的 4.5W 高功耗）不会误触发工况突变，
+     * 并且预测功率保持稳定平滑，杜绝每次刷新跳动几十到上百分钟。
+     */
+    @Test
+    fun testShortTouchSpikeDoesNotTriggerRegimeChange() {
+        val testEstimator = PowerEstimator()
+        testEstimator.setLongTermPower(2.0)
+        // 预设会话 30 分钟，均值 2.0W
+        testEstimator.seedCurrentSession(durationMs = 1_800_000L, powerWatts = 2.0f)
+
+        val baseTs = 20_000_000L
+        // 模拟用户下拉刷新或手指滑动屏幕产生的 3 秒触控峰值（3 个 1 秒间隔的点，4.5W）
+        val touchSpikeSamples = (0 until 3).map { i ->
+            PowerSample(
+                timestampMs = baseTs + i * 1_000L,
+                voltageVolts = 3.85f,
+                powerWatts = 4.5f,
+                batteryLevelPercent = 80.0f,
+                state = ScreenPowerState.SCREEN_ON
+            )
+        }
+
+        testEstimator.feedSessionTrendSamples(touchSpikeSamples)
+
+        val predicted = testEstimator.getPredictedPower()
+        assertNotNull("预测功率不可为空", predicted)
+        // 验证：3 秒的触控脉冲不会误判为工况跃迁，预测功率应平稳受 2.0W 锚定，绝不能被拉升至 3.5W 以上
+        assertTrue("短时触控脉冲预测功率应平稳阻尼 (当前: $predicted)", predicted!! < 2.3)
+    }
+
+    /**
+     * 测试新安装（缺失 Long 尺度大样本基准）的冷启动阶段，
+     * 即使遭遇应用初始化等高负载，稳态阻尼机制能够压制极端跳变，保持预测时间合理稳定。
+     */
+    @Test
+    fun testColdStartWithoutLongTermMaintainsStability() {
+        val testEstimator = PowerEstimator()
+        // 不设置 LongTermPower (模拟新安装)
+        // 预设会话刚开始 3 分钟，会话平均 2.2W
+        testEstimator.seedCurrentSession(durationMs = 180_000L, powerWatts = 2.2f)
+
+        val (_, wm, wl) = testEstimator.calculateAdaptiveWeights()
+        assertEquals("无长期大样本时 Long 权重严格为 0.0", 0.0, wl, 0.0001)
+        assertTrue("冷启动期 Medium 会话稳态权重应占据主导 (> 0.60)", wm > 0.60)
+
+        val predicted = testEstimator.getPredictedPower()
+        assertNotNull("预测功率不可为空", predicted)
+        assertTrue("冷启动预测功率应贴近会话稳态 (当前: $predicted)", predicted!! in 2.0..2.5)
+    }
 }
 

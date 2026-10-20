@@ -33,9 +33,9 @@
             android:paddingHorizontal="5dp"
             android:paddingVertical="8dp">
 
-            <!-- 第一行：放电速度百分比数值 + 亮屏标签文字（无小图标，对齐息屏卡片样式） -->
+            <!-- 第一行：放电速度百分比数值（靠左） + 亮屏标签文字（靠右） -->
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
@@ -43,8 +43,10 @@
                 <!-- 每小时放电占比百分比数值 (如 5.6%/h) -->
                 <TextView
                     android:id="@+id/tv_screen_on_speed"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="start|center_vertical"
                     android:textColor="?android:attr/textColorPrimary"
                     android:textSize="16sp"
                     android:textStyle="bold"
@@ -54,24 +56,47 @@
                     android:id="@+id/tv_screen_on_title"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="3dp"
+                    android:layout_marginStart="2dp"
+                    android:gravity="end|center_vertical"
+                    android:singleLine="true"
                     android:text="@string/power_header_screen_on"
                     android:textColor="?android:attr/textColorSecondary"
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <!-- 第二行：剩余续航时间（时长在前，剩余续航标签在后） -->
-            <TextView
-                android:id="@+id/tv_screen_on_remaining"
-                android:layout_width="wrap_content"
+            <!-- 第二行：剩余续航时间（时长靠左，剩余续航标签靠右） -->
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="3dp"
-                android:ellipsize="end"
-                android:letterSpacing="-0.01"
-                android:singleLine="true"
-                android:textColor="?android:attr/textColorPrimary"
-                android:textSize="11.5sp"
-                tools:text="17h46m 剩余" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tv_screen_on_remaining"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:gravity="start|center_vertical"
+                    android:letterSpacing="-0.01"
+                    android:singleLine="true"
+                    android:textColor="?android:attr/textColorPrimary"
+                    android:textSize="11.5sp"
+                    android:textStyle="bold"
+                    tools:text="17h46m" />
+
+                <TextView
+                    android:id="@+id/tv_screen_on_remaining_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="2dp"
+                    android:gravity="end|center_vertical"
+                    android:singleLine="true"
+                    android:text="@string/power_discharge_remaining_label"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="10sp" />
+            </LinearLayout>
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
@@ -98,9 +123,9 @@
             android:paddingHorizontal="5dp"
             android:paddingVertical="8dp">
 
-            <!-- 第一行：放电速度百分比数值 + 息屏标签文字（无小图标，对齐唤醒卡片样式） -->
+            <!-- 第一行：放电速度百分比数值（靠左） + 息屏标签文字（靠右） -->
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
@@ -108,8 +133,10 @@
                 <!-- 每小时放电占比百分比数值 (如 0.0%/h) -->
                 <TextView
                     android:id="@+id/tv_screen_off_speed"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="start|center_vertical"
                     android:textColor="?android:attr/textColorPrimary"
                     android:textSize="16sp"
                     android:textStyle="bold"
@@ -119,24 +146,47 @@
                     android:id="@+id/tv_screen_off_title"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="3dp"
+                    android:layout_marginStart="2dp"
+                    android:gravity="end|center_vertical"
+                    android:singleLine="true"
                     android:text="@string/power_header_screen_off"
                     android:textColor="?android:attr/textColorSecondary"
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <!-- 第二行：剩余续航时间（时长在前，剩余续航标签在后） -->
-            <TextView
-                android:id="@+id/tv_screen_off_remaining"
-                android:layout_width="wrap_content"
+            <!-- 第二行：剩余续航时间（时长靠左，剩余续航标签靠右） -->
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="3dp"
-                android:ellipsize="end"
-                android:letterSpacing="-0.01"
-                android:singleLine="true"
-                android:textColor="?android:attr/textColorPrimary"
-                android:textSize="11.5sp"
-                tools:text="03d09h 剩余" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tv_screen_off_remaining"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:gravity="start|center_vertical"
+                    android:letterSpacing="-0.01"
+                    android:singleLine="true"
+                    android:textColor="?android:attr/textColorPrimary"
+                    android:textSize="11.5sp"
+                    android:textStyle="bold"
+                    tools:text="03d09h" />
+
+                <TextView
+                    android:id="@+id/tv_screen_off_remaining_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="2dp"
+                    android:gravity="end|center_vertical"
+                    android:singleLine="true"
+                    android:text="@string/power_discharge_remaining_label"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="10sp" />
+            </LinearLayout>
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
@@ -162,9 +212,9 @@
             android:paddingHorizontal="5dp"
             android:paddingVertical="8dp">
 
-            <!-- 第一行：放电速度百分比数值 + 全局标签文字（无小图标，对齐深度睡眠卡片样式） -->
+            <!-- 第一行：放电速度百分比数值（靠左） + 全局标签文字（靠右） -->
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
@@ -172,8 +222,10 @@
                 <!-- 每小时放电占比百分比数值 (如 2.2%/h) -->
                 <TextView
                     android:id="@+id/tv_global_speed"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="start|center_vertical"
                     android:textColor="?android:attr/textColorPrimary"
                     android:textSize="16sp"
                     android:textStyle="bold"
@@ -183,24 +235,47 @@
                     android:id="@+id/tv_global_title"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="3dp"
+                    android:layout_marginStart="2dp"
+                    android:gravity="end|center_vertical"
+                    android:singleLine="true"
                     android:text="@string/power_header_global"
                     android:textColor="?android:attr/textColorSecondary"
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <!-- 第二行：剩余续航时间（时长在前，剩余续航标签在后） -->
-            <TextView
-                android:id="@+id/tv_global_remaining"
-                android:layout_width="wrap_content"
+            <!-- 第二行：剩余续航时间（时长靠左，剩余续航标签靠右） -->
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="3dp"
-                android:ellipsize="end"
-                android:letterSpacing="-0.01"
-                android:singleLine="true"
-                android:textColor="?android:attr/textColorPrimary"
-                android:textSize="11.5sp"
-                tools:text="01d04h 剩余" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tv_global_remaining"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:gravity="start|center_vertical"
+                    android:letterSpacing="-0.01"
+                    android:singleLine="true"
+                    android:textColor="?android:attr/textColorPrimary"
+                    android:textSize="11.5sp"
+                    android:textStyle="bold"
+                    tools:text="01d04h" />
+
+                <TextView
+                    android:id="@+id/tv_global_remaining_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="2dp"
+                    android:gravity="end|center_vertical"
+                    android:singleLine="true"
+                    android:text="@string/power_discharge_remaining_label"
+                    android:textColor="?android:attr/textColorSecondary"
+                    android:textSize="10sp" />
+            </LinearLayout>
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 </LinearLayout>

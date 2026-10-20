@@ -15,7 +15,7 @@ import kotlin.math.exp
  */
 class PowerEstimator(
     private val anomalyDetector: PowerAnomalyDetector = PowerAnomalyDetector(),
-    private val stateDetector: PowerStateDetector = PowerStateDetector()
+    private val stateDetector: PowerStateDetector = PowerStateDetector(minRegimeDurationSec = 60.0)
 ) {
 
     companion object {
@@ -172,8 +172,8 @@ class PowerEstimator(
         totalSessionDurationMs += (deltaSec * 1000.0).toLong()
         sampleCount++
 
-        // 2. 工况迁移检测（先识别是否已处于跃迁或发生跃迁触发）
-        stateDetector.update(power)
+        // 2. 工况迁移检测（先识别是否已处于跃迁或发生跃迁触发，传入 deltaSec 累计持续物理时间）
+        stateDetector.update(power, deltaSec)
         val isChanging = stateDetector.isRegimeChanging
         val responsiveness = stateDetector.getResponsivenessMultiplier()
 
@@ -184,9 +184,9 @@ class PowerEstimator(
             recentSamples.removeAt(0)
         }
 
-        // 4. Fast 模型更新（EWMA，动态 alpha = 1 - exp(-dt / tau)）
-        val alphaFast = (1.0 - exp(-deltaSec / TAU_FAST_SEC)).coerceIn(0.05, 0.60) * sampleWeight * responsiveness
-        val effectiveAlphaFast = alphaFast.coerceIn(0.01, 0.95)
+        // 4. Fast 模型更新（真实连续时间物理 EWMA: alpha = 1 - exp(-dt / tau)，上限平滑约束在 0.30 避免单点支配）
+        val rawAlphaFast = 1.0 - exp(-deltaSec / TAU_FAST_SEC)
+        val effectiveAlphaFast = (rawAlphaFast * sampleWeight * responsiveness).coerceIn(0.001, 0.30)
         fastPowerWatts = if (fastPowerWatts == null) {
             power.toDouble()
         } else {
@@ -194,12 +194,85 @@ class PowerEstimator(
         }
 
         // 5. Medium 模型更新（更平缓的 EWMA）
-        val alphaMedium = (1.0 - exp(-deltaSec / TAU_MEDIUM_SEC)).coerceIn(0.01, 0.30) * sampleWeight
-        val effectiveAlphaMedium = alphaMedium.coerceIn(0.005, 0.50)
+        val rawAlphaMedium = 1.0 - exp(-deltaSec / TAU_MEDIUM_SEC)
+        val effectiveAlphaMedium = (rawAlphaMedium * sampleWeight).coerceIn(0.0005, 0.15)
         mediumPowerWatts = if (mediumPowerWatts == null) {
             power.toDouble()
         } else {
             (effectiveAlphaMedium * power.toDouble()) + ((1.0 - effectiveAlphaMedium) * mediumPowerWatts!!)
+        }
+    }
+
+    /**
+     * 流式批量重放注入当前放电周期的历史细粒度时序采样点集合。
+     * 用于从时序采样点中激活 Fast 尺度实时跟踪、MAD 异常抑制与工况突变感知（PowerStateDetector）。
+     * 若在注入前已通过 [seedCurrentSession] 设定了宏观会话时长 [totalSessionDurationMs]，
+     * 则优先保持真实宏观物理总时长守恒与 Medium 宏观物理稳态基石，杜绝采样点 deltaMs 重复叠加导致时长虚高或局部刷新瞬态冲垮全局；
+     * 若此前尚未设定宏观时长，则依序累加点集跨度并平缓更新 Medium 尺度。
+     *
+     * @param samples 包含电压、功率、状态与时间戳的物理电池采样点列表 [PowerSample]
+     */
+    fun feedSessionTrendSamples(samples: List<PowerSample>) {
+        if (samples.isEmpty()) return
+        val validSamples = samples.filter { it.state != ScreenPowerState.CHARGING && it.powerWatts > 0f }
+            .sortedBy { it.timestampMs }
+        if (validSamples.isEmpty()) return
+
+        val presetDurationMs = totalSessionDurationMs
+        var pointsAccumulatedDurationMs = 0L
+        var prevTs = 0L
+
+        for (sample in validSamples) {
+            val power = sample.powerWatts
+            val currentTs = sample.timestampMs
+            val deltaSec = if (prevTs > 0L && currentTs > prevTs) {
+                ((currentTs - prevTs) / 1000.0).coerceIn(0.1, 300.0)
+            } else {
+                1.0
+            }
+            prevTs = currentTs
+            pointsAccumulatedDurationMs += (deltaSec * 1000.0).toLong()
+            lastSampleTimestampMs = currentTs
+            sampleCount++
+
+            // 工况迁移检测（累积持续物理时间，只有真正持续偏离才确立新工况）
+            stateDetector.update(power, deltaSec)
+            val isChanging = stateDetector.isRegimeChanging
+            val responsiveness = stateDetector.getResponsivenessMultiplier()
+
+            // MAD 异常检验
+            val sampleWeight = anomalyDetector.getSampleWeight(power, recentSamples, isChanging)
+            recentSamples.add(power)
+            if (recentSamples.size > MAX_WINDOW_SIZE) {
+                recentSamples.removeAt(0)
+            }
+
+            // Fast 模型更新 (真实物理连续 EWMA)
+            val rawAlphaFast = 1.0 - exp(-deltaSec / TAU_FAST_SEC)
+            val effectiveAlphaFast = (rawAlphaFast * sampleWeight * responsiveness).coerceIn(0.001, 0.30)
+            fastPowerWatts = if (fastPowerWatts == null) {
+                power.toDouble()
+            } else {
+                (effectiveAlphaFast * power.toDouble()) + ((1.0 - effectiveAlphaFast) * fastPowerWatts!!)
+            }
+
+            // Medium 尺度：若外部已预设整个会话的宏观累计物理平均功耗，Medium 作为物理稳态基石保持锚定；
+            // 仅在无预设宏观功耗时由采样点驱动更新
+            if (presetDurationMs <= 0L) {
+                val rawAlphaMedium = 1.0 - exp(-deltaSec / TAU_MEDIUM_SEC)
+                val effectiveAlphaMedium = (rawAlphaMedium * sampleWeight).coerceIn(0.0005, 0.15)
+                mediumPowerWatts = if (mediumPowerWatts == null) {
+                    power.toDouble()
+                } else {
+                    (effectiveAlphaMedium * power.toDouble()) + ((1.0 - effectiveAlphaMedium) * mediumPowerWatts!!)
+                }
+            }
+        }
+
+        totalSessionDurationMs = if (presetDurationMs > 0L) {
+            kotlin.math.max(presetDurationMs, pointsAccumulatedDurationMs)
+        } else {
+            pointsAccumulatedDurationMs
         }
     }
 
@@ -318,8 +391,15 @@ class PowerEstimator(
     ): Triple<Double, Double, Double> {
         val (finalWf, finalWm, finalWl) = if (stateDetector.isRegimeChanging) {
             val mult = stateDetector.getResponsivenessMultiplier()
-            // 计算自适应响应因子 gamma（取值 0.40 至 0.85 之间）
-            val gamma = (0.30 + (mult - 1.0) * 0.40).coerceIn(0.40, 0.85)
+            // 计算自适应响应因子 gamma：
+            // 若无 7 天长期数据（!hasLong，如新安装或无历史统计），施加稳态阻尼保护，gamma 约束在 0.20 至 0.35 之间，
+            // 确保 Medium 尺度（当前会话稳态均值）至少保留 50%~65% 压舱权重，杜绝冷启动初始化尖峰主导全局预测；
+            // 若具备 7 天长期数据，则保持 0.40 至 0.85 的敏捷突变响应能力。
+            val gamma = if (!hasLong) {
+                (0.20 + (mult - 1.0) * 0.15).coerceIn(0.20, 0.35)
+            } else {
+                (0.30 + (mult - 1.0) * 0.40).coerceIn(0.40, 0.85)
+            }
 
             when {
                 // 首选：Fast 存在，向 Fast 尺度快速倾斜

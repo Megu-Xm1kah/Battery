@@ -6,6 +6,7 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.graphics.Paint
 import android.text.Spannable
 import android.text.SpannableString
 import android.text.Spanned
@@ -58,17 +59,29 @@ object BubbleTooltipHelper {
         tvMessage.text = applyHangingIndent(tvMessage, message)
 
         val density = context.resources.displayMetrics.density
-        val screenWidth = context.resources.displayMetrics.widthPixels
+        val rootWidth = anchorView.rootView?.width ?: 0
+        val screenWidth = if (rootWidth > 0) rootWidth else context.resources.displayMetrics.widthPixels
         val screenHeight = context.resources.displayMetrics.heightPixels
         val margin = (BubbleTooltipLayout.DEFAULT_SCREEN_MARGIN_DP * density).toInt()
         val gap = (2 * density).toInt() // 箭头与依附 View 边缘的自然间隙
 
-        // 限制气泡最大宽度不超过屏幕可用宽度
+        // 限制气泡最大宽度不超过屏幕可用宽度（左右各保留 10dp 安全间距）
         val maxAvailableWidth = (screenWidth - 2 * margin).coerceAtLeast(0)
 
-        // 初步测量气泡尺寸
+        // 自适应计算文本各单行不折行所需的最大理想宽度
+        val horizontalPadding = (bubbleLayout?.let { it.paddingLeft + it.paddingRight } ?: (16 * density).toInt()) +
+            tvMessage.paddingLeft + tvMessage.paddingRight
+        val targetBubbleWidth = calculateAdaptiveBubbleWidth(
+            textView = tvMessage,
+            message = message,
+            maxAvailableWidth = maxAvailableWidth,
+            horizontalPadding = horizontalPadding,
+            density = density
+        )
+
+        // 初步测量气泡尺寸（以自适应宽度进行精确测量）
         popupView.measure(
-            View.MeasureSpec.makeMeasureSpec(maxAvailableWidth, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(targetBubbleWidth, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
         )
         var popupWidth = popupView.measuredWidth
@@ -77,7 +90,7 @@ object BubbleTooltipHelper {
         val anchorLoc = IntArray(2)
         anchorView.getLocationOnScreen(anchorLoc)
 
-        // 水平方向：对齐触摸点或视图中心，并限制在屏幕安全边界内
+        // 水平方向：对齐触摸点或视图中心，并限制在屏幕安全边界内（左右各留出 margin 间距）
         val anchorCenterX = if (touchX != null) {
             anchorLoc[0] + touchX.toInt()
         } else {
@@ -113,7 +126,7 @@ object BubbleTooltipHelper {
 
         // 重新测量以纳入箭头高度内边距
         popupView.measure(
-            View.MeasureSpec.makeMeasureSpec(maxAvailableWidth, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(targetBubbleWidth, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
         )
         popupWidth = popupView.measuredWidth
@@ -134,8 +147,8 @@ object BubbleTooltipHelper {
 
         val popupWindow = PopupWindow(
             popupView,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
+            popupWidth,
+            popupHeight,
             true
         ).apply {
             isOutsideTouchable = true
@@ -232,4 +245,52 @@ object BubbleTooltipHelper {
         }
         return spannable
     }
+
+    /**
+     * 计算单行文本所能展开的最大期望宽度。
+     * 遍历文本中的各段换行行，测量每行文字所需的单行宽度，并返回其中的最大值。
+     *
+     * @param paint 绘制文本所使用的 [Paint] 对象
+     * @param message 待计算的文本内容
+     * @return 文本所有自然行中单行绘制所需的最大宽度（像素）
+     */
+    fun calculateMaxDesiredLineWidth(paint: Paint, message: CharSequence): Float {
+        val str = message.toString()
+        if (str.isEmpty()) return 0f
+        var maxWidth = 0f
+        val lines = str.split("\n")
+        for (line in lines) {
+            val lineWidth = paint.measureText(line)
+            if (lineWidth > maxWidth) {
+                maxWidth = lineWidth
+            }
+        }
+        return maxWidth
+    }
+
+    /**
+     * 依据文本各行的自然单行最大宽度与屏幕可用宽度限制，计算自适应的气泡总宽度。
+     * 确保当文本最长行不超过屏幕最大限制时维持单行不提前折行；当超出时自适应扩展至屏幕最大可用宽度。
+     *
+     * @param textView 用于展示文本的 [TextView]
+     * @param message 待呈现的文本内容
+     * @param maxAvailableWidth 气泡所能占据的屏幕最大可用宽度（已扣除左右安全边距）
+     * @param horizontalPadding 气泡容器与文本视图的左右内边距总和（像素）
+     * @param density 屏幕像素密度
+     * @return 自适应计算后的气泡视图宽度像素值
+     */
+    fun calculateAdaptiveBubbleWidth(
+        textView: TextView,
+        message: CharSequence,
+        maxAvailableWidth: Int,
+        horizontalPadding: Int,
+        density: Float
+    ): Int {
+        val maxLineWidth = calculateMaxDesiredLineWidth(textView.paint, message)
+        // 增加适量的文字缓冲容差（4dp），防止浮点数精度或抗锯齿渲染导致边界字词意外换行
+        val safetyBuffer = (4 * density).toInt()
+        val idealWidth = (maxLineWidth + horizontalPadding + safetyBuffer).toInt()
+        return idealWidth.coerceIn(0, maxAvailableWidth)
+    }
 }
+

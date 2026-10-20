@@ -404,7 +404,6 @@ class RuntimeEstimator(
      * @param currentTrendPoints 当前放电周期的细粒度趋势采样点集合（可选，用于激活 Fast 尺度实时跟踪与工况突变敏捷响应）
      * @return 包含亮屏、息屏与全局综合预测结果的聚合实体 [TripleRuntimeResult]
      */
-    @Suppress("UNUSED_PARAMETER")
     fun estimateTripleRuntimes(
         overview: com.battery.analysis.manager.PowerOverviewStats?,
         sevenDaysStats: com.battery.analysis.model.SevenDaysDischargeStats?,
@@ -471,6 +470,41 @@ class RuntimeEstimator(
         if (overview != null && overview.avgPowerWatts > 0f) {
             val durMs = if (overview.totalDurationMs > 0L) overview.totalDurationMs else 0L
             globalFallbackEstimator.seedCurrentSession(durMs, overview.avgPowerWatts)
+        }
+
+        // 若具备当前会话的细粒度采样点，流式批量重放注入以激活 Fast 尺度实时跟踪与工况突变检测
+        if (!currentTrendPoints.isNullOrEmpty()) {
+            val onSamples = mutableListOf<PowerSample>()
+            val offSamples = mutableListOf<PowerSample>()
+            val globalSamples = mutableListOf<PowerSample>()
+
+            for (pt in currentTrendPoints) {
+                if (pt.powerWatts <= 0f) continue
+                val sample = PowerSample(
+                    timestampMs = pt.timestamp,
+                    voltageVolts = pt.voltageVolts,
+                    currentAmperes = null,
+                    powerWatts = pt.powerWatts,
+                    batteryLevelPercent = pt.batteryLevel.toFloat(),
+                    state = if (pt.isScreenOn) ScreenPowerState.SCREEN_ON else ScreenPowerState.SCREEN_OFF
+                )
+                globalSamples.add(sample)
+                if (pt.isScreenOn) {
+                    onSamples.add(sample)
+                } else {
+                    offSamples.add(sample)
+                }
+            }
+
+            if (onSamples.isNotEmpty()) {
+                onEstimator.feedSessionTrendSamples(onSamples)
+            }
+            if (offSamples.isNotEmpty()) {
+                offEstimator.feedSessionTrendSamples(offSamples)
+            }
+            if (globalSamples.isNotEmpty()) {
+                globalFallbackEstimator.feedSessionTrendSamples(globalSamples)
+            }
         }
 
         // 4. 亮屏与息屏剩余续航独立计算（严格基于会话累计物理稳态均值与历史大样本基准，杜绝被瞬态噪声冲垮）
