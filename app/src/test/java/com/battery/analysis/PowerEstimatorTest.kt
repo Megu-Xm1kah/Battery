@@ -371,6 +371,132 @@ class PowerEstimatorTest {
             remainingHours >= 12.0
         )
     }
+
+    /**
+     * 测试亮屏、息屏与全局三类场景专属时间锚点的渐进收敛特性。
+     * 验证亮屏在 60min、息屏在 240min、全局在 360min 时的成熟稳态权重符合专业设定。
+     */
+    @Test
+    fun testDomainSpecificAdaptiveWeights_ConvergenceAcrossProfiles() {
+        val onEstimator = PowerEstimator(profile = com.battery.analysis.domain.estimator.EstimatorProfile.SCREEN_ON)
+        val offEstimator = PowerEstimator(profile = com.battery.analysis.domain.estimator.EstimatorProfile.SCREEN_OFF)
+        val globalEstimator = PowerEstimator(profile = com.battery.analysis.domain.estimator.EstimatorProfile.GLOBAL)
+
+        // 1. 亮屏锚点（60分钟与120分钟）：60m -> (0.15, 0.55, 0.30)，120m -> (0.15, 0.60, 0.25)
+        val (onWf60, onWm60, onWl60) = onEstimator.interpolateBaselineWeights(3_600_000L)
+        assertEquals(0.15, onWf60, 0.01)
+        assertEquals(0.55, onWm60, 0.01)
+        assertEquals(0.30, onWl60, 0.01)
+
+        val (onWf120, onWm120, onWl120) = onEstimator.interpolateBaselineWeights(7_200_000L)
+        assertEquals(0.15, onWf120, 0.01)
+        assertEquals(0.60, onWm120, 0.01)
+        assertEquals(0.25, onWl120, 0.01)
+
+        // 2. 息屏锚点：4小时(0.10, 0.70, 0.20)，24小时(0.10, 0.80, 0.10)
+        val (offWf4, offWm4, offWl4) = offEstimator.interpolateBaselineWeights(14_400_000L)
+        assertEquals(0.10, offWf4, 0.01)
+        assertEquals(0.70, offWm4, 0.01)
+        assertEquals(0.20, offWl4, 0.01)
+
+        val (offWf24, offWm24, offWl24) = offEstimator.interpolateBaselineWeights(86_400_000L)
+        assertEquals(0.10, offWf24, 0.01)
+        assertEquals(0.80, offWm24, 0.01)
+        assertEquals(0.10, offWl24, 0.01)
+
+        // 3. 全局锚点：6小时(0.15, 0.65, 0.20)，24小时(0.15, 0.75, 0.10)
+        val (gWf6, gWm6, gWl6) = globalEstimator.interpolateBaselineWeights(21_600_000L)
+        assertEquals(0.15, gWf6, 0.01)
+        assertEquals(0.65, gWm6, 0.01)
+        assertEquals(0.20, gWl6, 0.01)
+
+        val (gWf24, gWm24, gWl24) = globalEstimator.interpolateBaselineWeights(86_400_000L)
+        assertEquals(0.15, gWf24, 0.01)
+        assertEquals(0.75, gWm24, 0.01)
+        assertEquals(0.10, gWl24, 0.01)
+    }
+
+    /**
+     * 测试在工况突变状态下，不同场景专属的 Fast 权重硬上限与 Medium 保底约束。
+     * 验证息屏 Fast <= 20% 且 Medium >= 60%，全局 Fast <= 25% 且 Medium >= 55%，亮屏 Fast <= 30% 且 Medium >= 45%。
+     */
+    @Test
+    fun testRegimeChangeLimit_EnforcesProfileSpecificCaps() {
+        // 1. 息屏场景：模拟运行 4 小时，突发工况跃迁
+        val offEst = PowerEstimator(profile = com.battery.analysis.domain.estimator.EstimatorProfile.SCREEN_OFF)
+        offEst.setLongTermPower(0.15)
+        offEst.seedCurrentSession(durationMs = 14_400_000L, powerWatts = 0.15f)
+        offEst.notifyRegimeChange(true)
+        val (offWf, offWm, _) = offEst.calculateAdaptiveWeights()
+        assertTrue("息屏工况突变 Fast 权重必须严格 <= 0.20 (当前: $offWf)", offWf <= 0.205)
+        assertTrue("息屏工况突变 Medium 稳态必须保底 >= 0.60 (当前: $offWm)", offWm >= 0.595)
+
+        // 2. 全局场景：模拟运行 6 小时，突发工况跃迁
+        val globalEst = PowerEstimator(profile = com.battery.analysis.domain.estimator.EstimatorProfile.GLOBAL)
+        globalEst.setLongTermPower(0.85)
+        globalEst.seedCurrentSession(durationMs = 21_600_000L, powerWatts = 0.85f)
+        globalEst.notifyRegimeChange(true)
+        val (gWf, gWm, _) = globalEst.calculateAdaptiveWeights()
+        assertTrue("全局工况突变 Fast 权重必须严格 <= 0.25 (当前: $gWf)", gWf <= 0.255)
+        assertTrue("全局工况突变 Medium 稳态必须保底 >= 0.55 (当前: $gWm)", gWm >= 0.545)
+
+        // 3. 亮屏场景：模拟运行 1 小时，突发工况跃迁
+        val onEst = PowerEstimator(profile = com.battery.analysis.domain.estimator.EstimatorProfile.SCREEN_ON)
+        onEst.setLongTermPower(1.20)
+        onEst.seedCurrentSession(durationMs = 3_600_000L, powerWatts = 1.20f)
+        onEst.notifyRegimeChange(true)
+        val (onWf, onWm, _) = onEst.calculateAdaptiveWeights()
+        assertTrue("亮屏工况突变 Fast 权重必须严格 <= 0.30 (当前: $onWf)", onWf <= 0.305)
+        assertTrue("亮屏工况突变 Medium 稳态必须保底 >= 0.45 (当前: $onWm)", onWm >= 0.445)
+    }
+
+    /**
+     * 验证针对 Float.NaN、Float.POSITIVE_INFINITY 与 Double.NaN 等异常浮点数的严格拦截，
+     * 绝不污染估计器的 Fast/Medium/Long 内部状态。
+     */
+    @Test
+    fun testNaNAndInfiniteSamplesAreSafelyRejected() {
+        val testEst = PowerEstimator()
+        testEst.reset(initialLongPowerWatts = Double.NaN)
+        assertNull("NaN 初始 Long 功率应被拒绝为 null", testEst.getLongPower())
+
+        testEst.setLongTermPower(Double.POSITIVE_INFINITY)
+        assertNull("Infinity Long 功率应被拒绝为 null", testEst.getLongPower())
+
+        testEst.seedMediumTermPower(10_000L, Float.NaN)
+        assertNull("NaN Medium 功率应被拒绝为 null", testEst.getMediumPower())
+
+        testEst.setMediumTermPower(10_000L, Float.POSITIVE_INFINITY)
+        assertNull("Infinity Medium 功率应被拒绝为 null", testEst.getMediumPower())
+
+        // 注入包含 NaN 的单点
+        val nanSample = PowerSample(
+            timestampMs = 1_000_000L,
+            voltageVolts = 3.85f,
+            currentAmperes = 1.0f,
+            powerWatts = Float.NaN,
+            batteryLevelPercent = 80.0f,
+            state = ScreenPowerState.SCREEN_ON
+        )
+        testEst.update(nanSample)
+        assertNull("NaN 功率单点应被 update 拦截，Fast 为空", testEst.getFastPower())
+        assertEquals("有效样本数应为 0", 0, testEst.sampleCount)
+
+        // 注入包含 NaN 的批量点集
+        val batch = listOf(
+            nanSample,
+            PowerSample(
+                timestampMs = 1_001_000L,
+                voltageVolts = 3.85f,
+                currentAmperes = 1.0f,
+                powerWatts = Float.POSITIVE_INFINITY,
+                batteryLevelPercent = 80.0f,
+                state = ScreenPowerState.SCREEN_ON
+            )
+        )
+        testEst.feedSessionTrendSamples(batch)
+        assertNull("NaN 与 Infinity 批量样本应被完全过滤", testEst.getFastPower())
+    }
 }
 
 

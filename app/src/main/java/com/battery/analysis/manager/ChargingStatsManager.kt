@@ -58,6 +58,8 @@ class ChargingStatsManager private constructor(private val context: Context) {
     companion object {
         private const val PREF_KEY_SAVED_SUMMARY = "pref_last_charging_summary"
         private const val PREF_KEY_SAVED_POINTS = "pref_last_charging_points"
+        private const val PREF_KEY_HAS_PERSISTED = "pref_has_persisted_session"
+        private const val PREF_KEY_LAST_PERSISTED_START = "pref_last_persisted_start"
         private const val MAX_SAMPLE_POINTS = 5000
 
         @Volatile
@@ -155,6 +157,75 @@ class ChargingStatsManager private constructor(private val context: Context) {
             nowCharging
         }
 
+        // 场景 0：当前底层系统确在充电，但内存记录为陈旧悬挂会话（超时断开未闭合、电量倒跌、或已归档）
+        val isStaleOngoing = currentSummary.isCharging && confirmedCharging && (
+                (now - currentSummary.endTimestamp).coerceAtLeast(0L) > 180_000L ||
+                (currentLevel in 1..100 && currentSummary.currentLevel in 1..100 && currentLevel < (currentSummary.currentLevel - 2)) ||
+                hasPersistedCurrentSession ||
+                (currentSummary.startTimestamp > 0L && currentSummary.startTimestamp == lastPersistedStartTimestamp)
+        )
+
+        if (isStaleOngoing) {
+            // 结算并归档陈旧悬挂会话
+            val sampleLastPoint = synchronized(samplePoints) { samplePoints.lastOrNull() }
+            val sampleLastLevel = sampleLastPoint?.batteryLevel ?: -1
+            val sampleMaxLevel = synchronized(samplePoints) { samplePoints.maxOfOrNull { it.batteryLevel } } ?: -1
+            val effectiveEndTs = if (sampleLastPoint != null && sampleLastPoint.timestamp > 0L) {
+                sampleLastPoint.timestamp
+            } else if (currentSummary.endTimestamp > 0L) {
+                currentSummary.endTimestamp
+            } else {
+                currentSummary.startTimestamp
+            }
+            val duration = (effectiveEndTs - currentSummary.startTimestamp).coerceAtLeast(0L)
+            val candidateEnd = maxOf(
+                currentSummary.currentLevel,
+                sampleLastLevel,
+                sampleMaxLevel,
+                currentSummary.startLevel + currentSummary.screenOffLevelGain
+            )
+            val realEndLevel = candidateEnd.coerceIn(0, 100)
+            val levelGain = (realEndLevel - currentSummary.startLevel).coerceAtLeast(0)
+
+            val alreadyPersisted = hasPersistedCurrentSession || (currentSummary.startTimestamp > 0L && currentSummary.startTimestamp == lastPersistedStartTimestamp)
+            if (!alreadyPersisted && (duration >= 10000L || currentSummary.chargedEnergyWh > 0.005f || levelGain > 0)) {
+                try {
+                    val recordTime = dateFormatter.get()!!.format(Date(effectiveEndTs))
+                    val snapshotPoints = synchronized(samplePoints) { samplePoints.toList() }
+                    val pointsJson = ChargingHistoryRecord.pointsToJson(snapshotPoints)
+
+                    val record = ChargingHistoryRecord(
+                        id = effectiveEndTs,
+                        recordTime = recordTime,
+                        startTimestamp = currentSummary.startTimestamp,
+                        endTimestamp = effectiveEndTs,
+                        durationMs = duration,
+                        startLevel = currentSummary.startLevel,
+                        endLevel = realEndLevel,
+                        levelGain = levelGain,
+                        chargedEnergyWh = currentSummary.chargedEnergyWh,
+                        avgPowerWatts = currentSummary.avgPowerWatts,
+                        maxPowerWatts = currentSummary.maxPowerWatts,
+                        maxTemperature = currentSummary.maxTemperature,
+                        chargeType = currentSummary.chargeType,
+                        screenOffDurationMs = currentSummary.screenOffDurationMs,
+                        screenOffLevelGain = currentSummary.screenOffLevelGain,
+                        screenOffEnergyWh = currentSummary.screenOffEnergyWh,
+                        samplePointsJson = pointsJson
+                    )
+                    ChargingHistoryDbHelper.getInstance(context).insertRecord(record)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+            hasPersistedCurrentSession = true
+            lastPersistedStartTimestamp = currentSummary.startTimestamp
+
+            // 彻底重置并开启当前真正的新一轮充电
+            onPowerConnected(currentLevel, currentChargeType)
+            return true
+        }
+
         // 场景 1：持久化显示还在充电中，但实际确认已拔掉充电器
         if (currentSummary.isCharging && !confirmedCharging) {
             val sampleLastPoint = synchronized(samplePoints) { samplePoints.lastOrNull() }
@@ -244,8 +315,10 @@ class ChargingStatsManager private constructor(private val context: Context) {
             // 场景 2：当前实际在充电，但上次记录为未充电
             val hasValidPoints = synchronized(samplePoints) { samplePoints.isNotEmpty() }
             val isRecentSession = currentSummary.startTimestamp > 0L &&
+                    !hasPersistedCurrentSession &&
+                    currentSummary.startTimestamp != lastPersistedStartTimestamp &&
                     (now - currentSummary.endTimestamp).coerceAtLeast(0L) < 180_000L &&
-                    currentLevel >= (currentSummary.currentLevel - 1)
+                    currentLevel >= (currentSummary.currentLevel - 2)
 
             if (hasValidPoints && isRecentSession) {
                 // 平滑接续：恢复进行中状态，保持累计时长、充入能量与历史采样点连续性
@@ -431,8 +504,13 @@ class ChargingStatsManager private constructor(private val context: Context) {
         val hasOngoingSession = currentSummary.isCharging && currentSummary.startTimestamp > 0L
 
         // 幂等防重守卫 1：若底层系统当前确在充电，且当前内存中已有进行中的有效充电会话，
-        // 判定为同一充电周期的重复通知或生命周期重入事件，严禁清空采样点与重置会话！
-        if (isSysCharging && hasOngoingSession && hasPoints) {
+        // 且未被归档、距离上次采样在 180 秒内且电量未跌落，判定为同一充电周期的重复通知或生命周期重入事件，严禁清空采样点与重置会话！
+        val isRecentActive = (now - currentSummary.endTimestamp).coerceAtLeast(0L) < 180_000L &&
+                !hasPersistedCurrentSession &&
+                (currentSummary.startTimestamp == 0L || currentSummary.startTimestamp != lastPersistedStartTimestamp) &&
+                (initialLevel <= 0 || initialLevel >= (currentSummary.currentLevel - 2))
+
+        if (isSysCharging && hasOngoingSession && hasPoints && isRecentActive) {
             isCurrentlyCharging = true
             val effectiveType = if (chargeType.isNotEmpty() && chargeType != "未充电") chargeType else sysChargeType
             if (effectiveType.isNotEmpty() && effectiveType != currentSummary.chargeType) {
@@ -446,11 +524,13 @@ class ChargingStatsManager private constructor(private val context: Context) {
         }
 
         // 幂等防重守卫 2（无线充电短时微断开/温控保护/线圈晃动平滑接续）：
-        // 若当前会话已有有效采样点，且距离上次断开时间非常短（如 180 秒内），且电量未跌落，
+        // 若当前会话已有有效采样点，且未被归档，且距离上次断开时间非常短（如 180 秒内），且电量未跌落，
         // 判定为同一充电会话的物理短暂微断开后自动重新握手恢复，平滑接续当前会话，严禁清空历史采样点！
         val isRecentSession = currentSummary.startTimestamp > 0L &&
+                !hasPersistedCurrentSession &&
+                (currentSummary.startTimestamp == 0L || currentSummary.startTimestamp != lastPersistedStartTimestamp) &&
                 (now - currentSummary.endTimestamp).coerceAtLeast(0L) < 180_000L &&
-                (initialLevel <= 0 || initialLevel >= (currentSummary.currentLevel - 1))
+                (initialLevel <= 0 || initialLevel >= (currentSummary.currentLevel - 2))
         if (hasPoints && isRecentSession) {
             isCurrentlyCharging = true
             val effectiveType = if (chargeType.isNotEmpty() && chargeType != "未充电") chargeType else sysChargeType
@@ -466,6 +546,7 @@ class ChargingStatsManager private constructor(private val context: Context) {
 
         isCurrentlyCharging = true
         hasPersistedCurrentSession = false
+        lastPersistedStartTimestamp = 0L
 
         val sysStatus = getOrRefreshSystemBatteryStatus(force = true)
         val fallbackTemp = sysStatus.temperatureCelsius
@@ -575,6 +656,22 @@ class ChargingStatsManager private constructor(private val context: Context) {
         // 严禁向充电走势折线图追加放电数据点，严禁更新充电会话指标与时间戳！
         if (!charging) {
             return point
+        }
+
+        // 核心会话有效性守卫：检测当前是否存在合法且进行中的活跃充电会话。
+        // 若当前未处于充电会话中、会话已持久化归档、距离上次采样超过 180 秒（微断开超时）或电量发生明显下跌：
+        // 判定为全新充电周期启动！必须立即调用 onPowerConnected 初始化开启全新会话，绝不允许向旧会话盲目追加采样点！
+        val hasActiveOngoingSession = isCurrentlyCharging &&
+                currentSummary.isCharging &&
+                currentSummary.startTimestamp > 0L &&
+                !hasPersistedCurrentSession &&
+                (currentSummary.startTimestamp != lastPersistedStartTimestamp) &&
+                (now - currentSummary.endTimestamp).coerceAtLeast(0L) <= 180_000L &&
+                (level <= 0 || level >= (currentSummary.currentLevel - 2))
+
+        if (!hasActiveOngoingSession) {
+            onPowerConnected(level, type)
+            return synchronized(samplePoints) { samplePoints.lastOrNull() } ?: point
         }
 
         // 梯形数值积分微元：计算本采样周期的能量增量 dE
@@ -946,6 +1043,8 @@ class ChargingStatsManager private constructor(private val context: Context) {
         lastSampleTimestamp = 0L
         lastSampleLevel = -1
         lastSamplePower = 0f
+        hasPersistedCurrentSession = false
+        lastPersistedStartTimestamp = 0L
         prefs.edit().clear().apply()
     }
 
@@ -1004,6 +1103,8 @@ class ChargingStatsManager private constructor(private val context: Context) {
             prefs.edit()
                 .putString(PREF_KEY_SAVED_SUMMARY, summaryJson.toString())
                 .putString(PREF_KEY_SAVED_POINTS, pointsArray.toString())
+                .putBoolean(PREF_KEY_HAS_PERSISTED, hasPersistedCurrentSession)
+                .putLong(PREF_KEY_LAST_PERSISTED_START, lastPersistedStartTimestamp)
                 .apply()
         } catch (e: Exception) {
             e.printStackTrace()
@@ -1016,6 +1117,9 @@ class ChargingStatsManager private constructor(private val context: Context) {
      */
     private fun loadSavedChargingSession() {
         try {
+            hasPersistedCurrentSession = prefs.getBoolean(PREF_KEY_HAS_PERSISTED, false)
+            lastPersistedStartTimestamp = prefs.getLong(PREF_KEY_LAST_PERSISTED_START, 0L)
+
             val summaryStr = prefs.getString(PREF_KEY_SAVED_SUMMARY, null)
             if (!summaryStr.isNullOrEmpty()) {
                 val json = JSONObject(summaryStr)

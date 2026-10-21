@@ -1569,6 +1569,7 @@ class PowerUsageManager private constructor(private val context: Context) {
     private val prefs = context.getSharedPreferences("power_stats_prefs", Context.MODE_PRIVATE)
     private val shizukuParser = ShizukuBatteryStatsParser(context)
     private val networkStatsHelper = NetworkStatsHelper(context)
+    private val rollingDischargeBuffer = com.battery.analysis.domain.estimator.RollingDischargeBuffer.getInstance(context)
 
     // 标记当前放电周期（lastUnplugTime）是否已归档持久化，杜绝并发广播与进程重启重复插入
     @Volatile
@@ -2057,6 +2058,8 @@ class PowerUsageManager private constructor(private val context: Context) {
             packageName = packageName
         )
         dischargeRealtimeSamples.add(point)
+        // 同步追加至线性滑动放电缓冲区（跨插拔电维持连续放电记忆）
+        rollingDischargeBuffer.addSample(point, isCharging = false)
 
         // 核心规范：统计数据计算功耗的物理采样点保持高精度，严禁在后台采样收集时就地抽稀，
         // 确保梯形微积分、应用切片能耗分析、静息功耗提取等统计指标 100% 忠实反映真实硬件数据。
@@ -2390,6 +2393,7 @@ class PowerUsageManager private constructor(private val context: Context) {
                 if (accFile.exists()) accFile.delete()
                 tempAccFile.renameTo(accFile)
             }
+            rollingDischargeBuffer.persistBufferAsync()
 
             // 若旧 SharedPreferences 中仍残留旧超大键值，予以清理瘦身
             if (prefs.contains(PREF_KEY_REALTIME_SAMPLES_JSON)) {
@@ -2438,6 +2442,7 @@ class PowerUsageManager private constructor(private val context: Context) {
                         )
                     )
                 }
+                rollingDischargeBuffer.appendSamplesBatch(dischargeRealtimeSamples)
             }
 
             // 恢复物理累加器

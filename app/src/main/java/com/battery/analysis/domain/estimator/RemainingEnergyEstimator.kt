@@ -4,14 +4,16 @@ import com.battery.analysis.domain.estimator.model.DataQuality
 import com.battery.analysis.domain.estimator.model.EnergySource
 
 /**
- * 剩余可用物理能量估算结果实体类。
+ * 电池剩余估算可用电能（Estimated Usable Energy）结果实体类。
+ * 遵循严格物理能量守恒：E_usable = E_base * K_T。
  *
- * @property usableEnergyWh 经过温度修正后的实际可用物理能量（单位：Wh，若无法推算则为 null，严禁假数据）
- * @property rawEnergyWh 未经温度修正的原始物理能量（单位：Wh，若无法推算则为 null）
- * @property source 剩余物理能量的获取来源 [EnergySource]
+ * @property usableEnergyWh 经过平滑温度修正后的估算可用电能（单位：Wh，若无法推算则为 null，严禁假数据）
+ * @property rawEnergyWh 未经温度修正的基准估算电能 E_base（单位：Wh，若无法推算则为 null）
+ * @property source 剩余电能的获取来源 [EnergySource]
  * @property quality 数据质量等级 [DataQuality]
- * @property temperatureFactor 当前环境与电芯温度修正系数 K_T（取值 0.70 至 1.0 之间）
+ * @property temperatureFactor 当前环境与电芯温度平滑修正系数 K_T（取值 0.70 至 1.0 之间）
  * @property notes 相关的计算依据或降级说明标签集合
+ * @property energyConfidence 能量数据源质量与置信度评分（取值 0.0 至 1.0 之间）
  */
 data class UsableRemainingEnergyEstimate(
     val usableEnergyWh: Double?,
@@ -19,13 +21,14 @@ data class UsableRemainingEnergyEstimate(
     val source: EnergySource,
     val quality: DataQuality,
     val temperatureFactor: Double,
-    val notes: Set<String> = emptySet()
+    val notes: Set<String> = emptySet(),
+    val energyConfidence: Double = 1.0
 )
 
 /**
- * 电池当前剩余可用物理能量（瓦时 Wh）高精度计算器。
- * 遵循严格系统底层物理数据优先级顺序，统筹硬件能量寄存器、实时电荷计数器与容量电量折算，
- * 并结合电芯工作温度对锂离子活性与可用化学能进行物理级修正（K_T），
+ * 电池当前剩余估算可用电能（瓦时 Wh）计算器（RemainingEnergyEstimator）。
+ * 遵循严格系统底层物理数据优先级顺序，统筹硬件原生能量寄存器、实时电荷计数器与容量电量折算，
+ * 并结合电芯工作温度对锂离子活性提供经验性平滑连续温度修正（K_T），
  * 严格秉持零虚构数据原则：无有效数据源时如实返回 null。
  */
 class RemainingEnergyEstimator {
@@ -38,22 +41,26 @@ class RemainingEnergyEstimator {
         private const val NWH_TO_WH_FACTOR: Double = 1_000_000_000.0
 
         /**
-         * 计算环境与电芯温度对电池实际可用化学能的物理修正系数 K_T（实验模型）。
-         * 注意：现代智能手机硬件电量计驱动（如 TI 阻抗追踪算法、高通 PMIC）在底层已集成电芯温度与内阻动态补偿；
-         * 除非拥有目标机型的专门实测标定曲线，否则不应在应用层二次叠加通用折损系数，避免造成双重惩罚与过度折损。
+         * 计算环境与电芯温度对电池实际可用电能的经验性平滑修正系数 K_T。
+         * 在常温区间（15℃ 至 38℃）系数为 1.0；
+         * 在低温区间（锂离子活性受限）平滑过渡（-15℃ 为 0.70，15℃ 为 1.0）；
+         * 在高温区间（38℃ 至 50℃）平滑连续过渡至 0.95，彻底消除分段台阶跳变。
          *
          * @param tempCelsius 当前电池温度（单位：摄氏度 ℃，缺失时传入 null）
-         * @return 可用能量物理温度修正系数（未启用标定时返回 1.0）
+         * @return 可用电能平滑温度修正系数（未启用标定时返回 1.0）
          */
         fun calculateTemperatureFactor(tempCelsius: Float?): Double {
             if (tempCelsius == null) return 1.0
             return when {
-                tempCelsius in 15.0f..35.0f -> 1.0
+                tempCelsius in 15.0f..38.0f -> 1.0
                 tempCelsius < 15.0f -> {
-                    val clamped = tempCelsius.coerceIn(-10.0f, 15.0f)
-                    0.75 + ((clamped - (-10.0f)) / 25.0f) * 0.25
+                    val clamped = tempCelsius.coerceIn(-15.0f, 15.0f)
+                    0.70 + ((clamped - (-15.0f)) / 30.0f) * 0.30
                 }
-                tempCelsius > 45.0f -> 0.95
+                tempCelsius > 38.0f -> {
+                    val clamped = tempCelsius.coerceIn(38.0f, 50.0f)
+                    1.0 - ((clamped - 38.0f) / 12.0f) * 0.05
+                }
                 else -> 1.0
             }
         }
@@ -103,7 +110,8 @@ class RemainingEnergyEstimator {
                 source = EnergySource.NATIVE_FULL_ENERGY,
                 quality = DataQuality.VALID,
                 temperatureFactor = kt,
-                notes = setOf("基于直接硬件剩余能量上报")
+                notes = setOf("基于直接硬件剩余能量上报"),
+                energyConfidence = 1.0
             )
         }
 
@@ -118,7 +126,8 @@ class RemainingEnergyEstimator {
                     source = EnergySource.NATIVE_FULL_ENERGY,
                     quality = DataQuality.VALID,
                     temperatureFactor = kt,
-                    notes = setOf("基于硬件电量计原生纳瓦时能量寄存器")
+                    notes = setOf("基于硬件电量计原生纳瓦时能量寄存器"),
+                    energyConfidence = 1.0
                 )
             }
         }
@@ -141,7 +150,8 @@ class RemainingEnergyEstimator {
                         source = EnergySource.FCC_TIMES_NOMINAL_VOLTAGE,
                         quality = DataQuality.VALID,
                         temperatureFactor = kt,
-                        notes = setOf("基于硬件实时电荷计数器与标称电压折算")
+                        notes = setOf("基于硬件实时电荷计数器与标称电压折算"),
+                        energyConfidence = 0.90
                     )
                 }
             }
@@ -160,7 +170,8 @@ class RemainingEnergyEstimator {
                     source = EnergySource.FCC_TIMES_NOMINAL_VOLTAGE,
                     quality = DataQuality.VALID,
                     temperatureFactor = kt,
-                    notes = setOf("基于有效基准容量与电量百分比折算")
+                    notes = setOf("基于有效基准容量与电量百分比折算"),
+                    energyConfidence = 0.75
                 )
             }
         }
@@ -172,7 +183,8 @@ class RemainingEnergyEstimator {
             source = EnergySource.UNAVAILABLE,
             quality = DataQuality.INVALID,
             temperatureFactor = kt,
-            notes = setOf("缺乏有效的硬件能量或容量电量数据")
+            notes = setOf("缺乏有效的硬件能量或容量电量数据"),
+            energyConfidence = 0.0
         )
     }
 }

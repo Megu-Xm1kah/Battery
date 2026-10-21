@@ -1422,21 +1422,8 @@ class PowerUsageFragment : Fragment() {
             ?: powerManager.getEffectiveDeviceCapacityMah().takeIf { it > 0f }
             ?: totalCapacityWh?.takeIf { it > 0f }?.let { (it * 1000f) / BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS }
 
-        val currentRate = if (overview != null) {
-            val totalDurationMs = if (overview.totalDurationMs > 0L) overview.totalDurationMs else parseDurationTextToMs(overview.totalDurationText)
-            val onDurationMs = if (overview.screenOnDurationMs > 0L) overview.screenOnDurationMs else parseDurationTextToMs(overview.screenOnDurationText)
-            val offDurationMs = if (overview.screenOffDurationMs > 0L) overview.screenOffDurationMs else parseDurationTextToMs(overview.screenOffDurationText)
-            when (rowType) {
-                ROW_SCREEN_ON -> adapter.calculateDischargeRatePercentPerHour(overview.screenOnPowerWatts, totalCapacityWh, onDurationMs)
-                ROW_SCREEN_OFF -> adapter.calculateDischargeRatePercentPerHour(overview.screenOffPowerWatts, totalCapacityWh, offDurationMs)
-                ROW_GLOBAL -> adapter.calculateDischargeRatePercentPerHour(overview.avgPowerWatts, totalCapacityWh, totalDurationMs)
-                else -> null
-            }
-        } else {
-            null
-        }
-
         val sevenDays = adapter.getCachedSevenDaysStats()
+        val currentRate = PowerDischargeMetricsViewBinder.getEffectiveDischargeRate(rowType, totalCapacityWh, overview, sevenDays)
         val (sevenDaysRate, sevenDaysDurationMs, fullDurationMs) = when (rowType) {
             ROW_SCREEN_ON -> Triple(
                 sevenDays?.screenOnDischargeRatePercentPerHour,

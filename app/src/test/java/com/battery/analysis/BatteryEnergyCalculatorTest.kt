@@ -528,6 +528,66 @@ class BatteryEnergyCalculatorTest {
     }
 
     /**
+     * 验证全局、亮屏与息屏详情弹窗中，当传入真实电池容量时，
+     * 预测放电功耗行能忠实闭环展示折算的等效放电速度（例如 1.925W / 19.25Wh = 10.0%/h）。
+     */
+    @Test
+    fun testFormatDischargeSpeedDetailMessage_GlobalAndScreenShowsPredictedEquivalentRate() {
+        val remEstimate = com.battery.analysis.domain.estimator.model.RuntimeEstimate(
+            remainingMs = 3600_000L,
+            predictedPowerWatts = 2.0,
+            remainingEnergyWh = 10.0,
+            confidence = 0.9,
+            modelType = com.battery.analysis.domain.estimator.model.RuntimeModelType.MULTI_TIMESCALE,
+            confidenceLevel = com.battery.analysis.domain.estimator.model.RuntimeConfidenceLevel.HIGH
+        )
+
+        // 1. 全局卡片弹窗测试 (电池真实容量 20.0Wh，功耗 2.0W -> 折算速度 10.0%/h)
+        val msgGlobal = BatteryEnergyCalculator.formatDischargeSpeedCardDetailMessage(
+            rowType = BatteryEnergyCalculator.ROW_GLOBAL,
+            currentRatePercentPerHour = 8.5f,
+            sevenDaysRatePercentPerHour = 9.0f,
+            sevenDaysDurationMs = 24L * 3600_000L,
+            fullDurationMs = 11L * 3600_000L,
+            predictedCapacityWh = 20.0f,
+            remainingEstimate = remEstimate
+        )
+        assertTrue("全局弹窗应包含折算速度 10.0%/h", msgGlobal.contains("预测综合功耗：2.00W (可用 10.00Wh) · 折算速度 10.0%/h"))
+
+        // 2. 亮屏卡片弹窗测试
+        val msgOn = BatteryEnergyCalculator.formatDischargeSpeedCardDetailMessage(
+            rowType = BatteryEnergyCalculator.ROW_SCREEN_ON,
+            currentRatePercentPerHour = 10.0f,
+            sevenDaysRatePercentPerHour = 9.5f,
+            sevenDaysDurationMs = 24L * 3600_000L,
+            fullDurationMs = 10L * 3600_000L,
+            predictedCapacityWh = 20.0f,
+            remainingEstimate = remEstimate
+        )
+        assertTrue("亮屏弹窗应包含折算速度 10.0%/h", msgOn.contains("预测放电功耗：2.00W (可用 10.00Wh) · 折算速度 10.0%/h"))
+
+        // 3. 息屏待机卡片弹窗测试 (功耗 0.20W -> 1.0%/h)
+        val offEstimate = com.battery.analysis.domain.estimator.model.RuntimeEstimate(
+            remainingMs = 36000_000L,
+            predictedPowerWatts = 0.20,
+            remainingEnergyWh = 10.0,
+            confidence = 0.9,
+            modelType = com.battery.analysis.domain.estimator.model.RuntimeModelType.MULTI_TIMESCALE,
+            confidenceLevel = com.battery.analysis.domain.estimator.model.RuntimeConfidenceLevel.HIGH
+        )
+        val msgOff = BatteryEnergyCalculator.formatDischargeSpeedCardDetailMessage(
+            rowType = BatteryEnergyCalculator.ROW_SCREEN_OFF,
+            currentRatePercentPerHour = 0.8f,
+            sevenDaysRatePercentPerHour = 1.2f,
+            sevenDaysDurationMs = 24L * 3600_000L,
+            fullDurationMs = 100L * 3600_000L,
+            predictedCapacityWh = 20.0f,
+            remainingEstimate = offEstimate
+        )
+        assertTrue("息屏弹窗应包含折算速度 1.0%/h", msgOff.contains("预测待机功耗：0.20W (可用 10.00Wh) · 折算速度 1.0%/h"))
+    }
+
+    /**
      * 测试息屏耗电、唤醒及深度睡眠三个卡片弹框中均包含独立的放电速度行。
      */
     @Test

@@ -540,6 +540,48 @@ class ChargingHistoryRecordTest {
         // 亮屏充入量不为负数
         assertEquals(0, record.getScreenOnLevelGain())
     }
+
+    /**
+     * 测试当采样点序列存在超过 30 分钟的时间断层与电量跌落时能够准确识别断层切片并还原真实独立充电。
+     */
+    @Test
+    fun testSamplePointsBreakDetectionAndExtraction() {
+        val baseTime = 1792500000000L // 10/20 19:08
+        val points = mutableListOf<ChargingSamplePoint>()
+
+        // 第一段充电：19:08 ~ 19:33（49% ~ 80%）
+        points.add(ChargingSamplePoint(baseTime, 21.0f, 49, 32.0f, 4.0f, 5250f))
+        points.add(ChargingSamplePoint(baseTime + 1500_000L, 20.0f, 80, 34.0f, 4.2f, 4760f))
+
+        // 中间发生断层（跨越 11 个多小时，电量跌落至 43%）
+        val morningTime = baseTime + 41700_000L // 10/21 06:43 左右
+        points.add(ChargingSamplePoint(morningTime, 18.0f, 43, 30.0f, 3.9f, 4615f))
+        points.add(ChargingSamplePoint(morningTime + 1800_000L, 15.0f, 79, 33.0f, 4.3f, 3488f))
+
+        // 验证采样点断层检测逻辑
+        var breakIdx = -1
+        for (i in 1 until points.size) {
+            val prev = points[i - 1]
+            val curr = points[i]
+            val dtMs = curr.timestamp - prev.timestamp
+            if (dtMs > 1800_000L || (prev.batteryLevel in 1..100 && curr.batteryLevel in 1..100 && curr.batteryLevel < prev.batteryLevel - 2)) {
+                breakIdx = i
+                break
+            }
+        }
+
+        assertEquals(2, breakIdx)
+
+        // 验证后半段能够正确提取出第二天的真实独立充电
+        val secondHalf = points.subList(breakIdx, points.size)
+        assertEquals(2, secondHalf.size)
+        assertEquals(43, secondHalf.first().batteryLevel)
+        assertEquals(79, secondHalf.last().batteryLevel)
+        val realGain = secondHalf.last().batteryLevel - secondHalf.first().batteryLevel
+        assertEquals(36, realGain)
+        val realDuration = secondHalf.last().timestamp - secondHalf.first().timestamp
+        assertEquals(1800_000L, realDuration)
+    }
 }
 
 

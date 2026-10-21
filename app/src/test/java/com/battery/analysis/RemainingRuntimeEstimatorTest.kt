@@ -264,10 +264,11 @@ class RemainingRuntimeEstimatorTest {
 
         assertEquals("亮屏续航 10Wh / 2W = 5h", 18_000_000L, onEstimate.remainingMs!!)
         assertEquals("待机续航 10Wh / 0.5W = 20h", 72_000_000L, offEstimate.remainingMs!!)
-        assertEquals(RemainingModelVersion.REMAINING_RUNTIME_V2_1, onEstimate.modelVersion)
-        assertEquals(RemainingModelVersion.REMAINING_RUNTIME_V2_1, offEstimate.modelVersion)
-        assertEquals(RemainingModelVersion.REMAINING_RUNTIME_V2_1, globalEstimate.modelVersion)
+        assertEquals(RemainingModelVersion.REMAINING_RUNTIME_V2_2, onEstimate.modelVersion)
+        assertEquals(RemainingModelVersion.REMAINING_RUNTIME_V2_2, offEstimate.modelVersion)
+        assertEquals(RemainingModelVersion.REMAINING_RUNTIME_V2_2, globalEstimate.modelVersion)
         assertEquals(RuntimeModelType.GLOBAL_COMPOSITE, globalEstimate.modelType)
+        assertNotNull("升级后必须包含结构化多维度置信度剖析", onEstimate.confidenceBreakdown)
 
         // 验证质量解释说明
         assertTrue("亮屏结果包含质量依据", onEstimate.qualityReasons.isNotEmpty())
@@ -379,4 +380,146 @@ class RemainingRuntimeEstimatorTest {
             fallbackEstimate.remainingMs!! in fallbackEstimate.minRemainingMs!!..fallbackEstimate.maxRemainingMs!!
         )
     }
+
+    /**
+     * 测试电芯温度连续平滑修正函数在全温区内的连续性与单调性，
+     * 验证彻底消除 45℃ 处 0.05 的阶跃断崖跳变，且在 -15℃ 至 15℃ 保持平滑爬升。
+     */
+    @Test
+    fun testTemperatureCorrectionContinuityAndMonotonicity() {
+        // 1. 验证 44.9℃ 与 45.1℃ 在边界处的平滑连续性（绝对变化量远小于 0.01，彻底消除原 0.05 阶跃断崖）
+        val k44_9 = RemainingEnergyEstimator.calculateTemperatureFactor(44.9f)
+        val k45_1 = RemainingEnergyEstimator.calculateTemperatureFactor(45.1f)
+        assertTrue(
+            "45℃ 邻域温区必须平滑连续无阶跃 (k44.9=$k44_9, k45.1=$k45_1)",
+            kotlin.math.abs(k44_9 - k45_1) < 0.002
+        )
+
+        // 2. 验证 -15℃ 至 15℃ 区间单调递增
+        var prevK = RemainingEnergyEstimator.calculateTemperatureFactor(-15.0f)
+        assertEquals("低温下界 -15℃ 系数为 0.70", 0.70, prevK, 0.001)
+        for (temp in -14..15) {
+            val currK = RemainingEnergyEstimator.calculateTemperatureFactor(temp.toFloat())
+            assertTrue("温度升高系数必须平滑递增 ($temp ℃: $currK >= $prevK)", currK >= prevK)
+            prevK = currK
+        }
+        assertEquals("常温 15℃ 系数达到 1.0", 1.0, prevK, 0.001)
+
+        // 3. 验证常温区间 15℃ 至 38℃ 恒定为 1.0
+        assertEquals(1.0, RemainingEnergyEstimator.calculateTemperatureFactor(20.0f), 0.001)
+        assertEquals(1.0, RemainingEnergyEstimator.calculateTemperatureFactor(35.0f), 0.001)
+
+        // 4. 验证高温区间 38℃ 至 50℃ 平滑衰减至 0.95
+        assertEquals("高温 50℃ 系数为 0.95", 0.95, RemainingEnergyEstimator.calculateTemperatureFactor(50.0f), 0.001)
+    }
+
+    /**
+     * 测试工况突变检测器在退出突变后的连续阻尼平滑衰减机制，
+     * 验证响应系数从 1.5 连续渐进回落至 1.0，杜绝权重瞬间断崖跳变。
+     */
+    @Test
+    fun testRegimeChangeSmoothDecayRecovery() {
+        val detector = PowerStateDetector(
+            minAbsoluteChangeWatts = 0.35,
+            changeThresholdRatio = 0.40,
+            requiredConsecutiveCycles = 2,
+            minRegimeDurationSec = 0.0
+        )
+        detector.reset(1.50)
+
+        // 连续 2 周期重载触发突变
+        detector.update(3.50f, deltaSec = 1.0)
+        detector.update(3.50f, deltaSec = 1.0)
+        assertTrue("确认进入工况突变", detector.isRegimeChanging)
+        assertEquals("突变激活期响应系数为 1.5", 1.5, detector.getResponsivenessMultiplier(), 0.001)
+
+        // 重载持续，基线快速跟进至 3.50W 附近，触发滞回稳态退出条件
+        for (i in 0 until 10) {
+            detector.update(3.50f, deltaSec = 1.0)
+        }
+        assertFalse("基线跟进稳态后已平稳退出突变状态", detector.isRegimeChanging)
+        assertTrue("退出后开启阻尼衰减过渡 (recoveryDecayRatio > 0)", detector.recoveryDecayRatio > 0.0)
+
+        // 刚退出瞬间衰减比例为 1.0，响应系数依然维持在接近 1.5 的连续过渡起点
+        val multJustExited = detector.getResponsivenessMultiplier()
+        assertTrue("退出瞬间响应系数维持在平滑过渡起点 ($multJustExited)", multJustExited > 1.45)
+
+        // 经过 60 秒（半衰期）物理时间阻尼衰减，衰减因子降至约 0.50*exp(-1)=0.36，响应系数平滑回落
+        detector.update(3.50f, deltaSec = 60.0)
+        val multAfter60s = detector.getResponsivenessMultiplier()
+        assertTrue("60s后系数平滑回落至中间过渡态 ($multAfter60s)", multAfter60s in 1.10..1.35)
+        assertTrue("系数随物理时间单调回落", multAfter60s < multJustExited)
+
+        // 再经过 300 秒衰减过渡彻底完成，完全自然回归基准 1.0
+        detector.update(3.50f, deltaSec = 300.0)
+        assertEquals("过渡完成后响应系数完全平滑回归 1.0", 1.0, detector.getResponsivenessMultiplier(), 0.01)
+    }
+
+    /**
+     * 测试多尺度数据质量因子（Data Quality Factor）对动态权重的调节作用，
+     * 验证当长期先验质量下降时，Long 权重减小，Fast 与 Medium 权重自适应获得更多补偿。
+     */
+    @Test
+    fun testMultiScaleDataQualityModulatesWeights() {
+        val estimator = PowerEstimator()
+        estimator.reset(initialLongPowerWatts = 2.0)
+        estimator.seedCurrentSession(durationMs = 600_000L, powerWatts = 2.0f) // 10分钟
+
+        // 1. 默认数据充分高质量场景（C_long = 1.0）
+        estimator.setLongTermQuality(1.0)
+        val (_, wmFull, wlFull) = estimator.calculateAdaptiveWeights()
+
+        // 2. 样本稀疏或工况不匹配场景（C_long = 0.5）
+        estimator.setLongTermQuality(0.50)
+        val (wfLow, wmLow, wlLow) = estimator.calculateAdaptiveWeights()
+
+        // 验证：长期先验质量降低后，其有效权重相应降低，而实测模型权重提升
+        assertTrue("长期数据质量偏低时其权重应降低 (满分: $wlFull, 低分: $wlLow)", wlLow < wlFull)
+        assertTrue("Fast 与 Medium 应补偿增加以反映当前实测权重 (满分Wm: $wmFull, 补偿Wm: $wmLow)", wmLow > wmFull)
+        assertEquals("动态凸组合总和恒为 1.0", 1.0, wfLow + wmLow + wlLow, 0.0001)
+    }
+
+    /**
+     * 测试多因素结构化置信度剖析（ConfidenceBreakdown）体系，
+     * 验证能量、功耗、工况、历史、温度 5 维子置信度的科学构建及低电量审慎提示。
+     */
+    @Test
+    fun testConfidenceBreakdownMultiFactors() {
+        val runtimeEstimator = RuntimeEstimator()
+        val onEstimator = PowerEstimator()
+        onEstimator.seedCurrentSession(1_800_000L, 2.5f)
+
+        // 常规健康状态（SOC 50%, 25℃）
+        val normalResult = runtimeEstimator.estimateScreenOn(
+            usableEnergyWh = 12.0,
+            onPowerEstimator = onEstimator,
+            batteryLevelPercent = 50.0f,
+            tempCelsius = 25.0f,
+            energyConfidence = 0.95
+        )
+        val normalBreakdown = normalResult.confidenceBreakdown
+        assertNotNull("必须输出结构化置信度剖析", normalBreakdown)
+        assertEquals(0.95, normalBreakdown!!.energyConfidence, 0.001)
+        assertEquals(1.0, normalBreakdown.temperatureConfidence, 0.001)
+        assertFalse("常规电量下无低电量风险", normalBreakdown.isLowSocRisk)
+        assertTrue("综合总置信度非负且合理", normalBreakdown.totalConfidence in 0.40..1.0)
+
+        // 低电量极端场景（SOC 5%, 0℃）
+        val lowSocResult = runtimeEstimator.estimateScreenOn(
+            usableEnergyWh = 1.0,
+            onPowerEstimator = onEstimator,
+            batteryLevelPercent = 5.0f,
+            tempCelsius = 0.0f,
+            energyConfidence = 0.80
+        )
+        val lowBreakdown = lowSocResult.confidenceBreakdown
+        assertNotNull(lowBreakdown)
+        assertTrue("低电量状态必须标明风险", lowBreakdown!!.isLowSocRisk)
+        assertTrue("低温下温度置信度科学适度折损", lowBreakdown.temperatureConfidence < 1.0)
+        assertTrue(
+            "质量解释中必须包含审慎提示而非假数据掩饰",
+            lowSocResult.qualityReasons.any { it.contains("低于10%") }
+        )
+    }
 }
+

@@ -12,6 +12,7 @@ import androidx.core.text.HtmlCompat
 import com.battery.analysis.R
 import com.battery.analysis.databinding.ItemPowerDischargeSpeedBinding
 import com.battery.analysis.databinding.ItemPowerSleepAwakeMetricsBinding
+import com.battery.analysis.domain.estimator.RollingDischargeBuffer
 import com.battery.analysis.manager.PowerOverviewStats
 import com.battery.analysis.manager.PowerUsageManager
 import com.battery.analysis.model.PowerDischargePoint
@@ -67,19 +68,9 @@ object PowerDischargeMetricsViewBinder {
         onCardClick: ((anchorView: View, rowType: Int) -> Unit)? = null
     ) {
         with(binding) {
-            val totalDurationMs = if (overview != null) {
-                if (overview.totalDurationMs > 0L) overview.totalDurationMs else parseDurationTextToMs(overview.totalDurationText)
-            } else 0L
-            val onDurationMs = if (overview != null) {
-                if (overview.screenOnDurationMs > 0L) overview.screenOnDurationMs else parseDurationTextToMs(overview.screenOnDurationText)
-            } else 0L
-            val offDurationMs = if (overview != null) {
-                if (overview.screenOffDurationMs > 0L) overview.screenOffDurationMs else parseDurationTextToMs(overview.screenOffDurationText)
-            } else 0L
-
-            val onRate = if (overview != null) calculateDischargeRatePercentPerHour(overview.screenOnPowerWatts, totalCapacityWh, onDurationMs) else null
-            val offRate = if (overview != null) calculateDischargeRatePercentPerHour(overview.screenOffPowerWatts, totalCapacityWh, offDurationMs) else null
-            val globalRate = if (overview != null) calculateDischargeRatePercentPerHour(overview.avgPowerWatts, totalCapacityWh, totalDurationMs) else null
+            val onRate = getEffectiveDischargeRate(BatteryEnergyCalculator.ROW_SCREEN_ON, totalCapacityWh, overview, sevenDaysStats)
+            val offRate = getEffectiveDischargeRate(BatteryEnergyCalculator.ROW_SCREEN_OFF, totalCapacityWh, overview, sevenDaysStats)
+            val globalRate = getEffectiveDischargeRate(BatteryEnergyCalculator.ROW_GLOBAL, totalCapacityWh, overview, sevenDaysStats)
 
             // --- 1. 第一行：当前放电速度百分比速率 ---
             tvScreenOnSpeed.text = formatDischargeRateSpannable(onRate)
@@ -437,6 +428,65 @@ object PowerDischargeMetricsViewBinder {
     }
 
     /**
+     * 计算并获取指定维度的有效实测放电速度（优先物理做功微积分功率折算，兜底滑动时序与单次会话统计）。
+     * 针对息屏、亮屏与全局综合场景，优先基于连续滑动窗口/会话实测的平均微积分功率及电池满充物理能量计算高精度放电速率，
+     * 彻底消除 Android 系统广播电量 1% 粗粒度整型阶梯量化跳变（Integer Quantization Noise）导致的速率虚高放大问题；
+     * 仅在设备总容量不可用或功率缺失时，才回退到基于百分比电量差值的粗粒度掉电率。
+     *
+     * @param rowType 行分类标识（[BatteryEnergyCalculator.ROW_SCREEN_ON] 等）
+     * @param totalCapacityWh 设备满充总能量容量（单位：Wh）
+     * @param overview 当前放电统计实体 [PowerOverviewStats]，若无数据传入 null
+     * @param sevenDaysStats 过去 7 天统计实体 [SevenDaysDischargeStats]，用于动态提供待机底噪画像（可选）
+     * @return 实测放电速率（单位：%/h，缺失时返回 null）
+     */
+    fun getEffectiveDischargeRate(
+        rowType: Int,
+        totalCapacityWh: Float?,
+        overview: PowerOverviewStats?,
+        sevenDaysStats: SevenDaysDischargeStats? = null
+    ): Float? {
+        val rollingBuffer = RollingDischargeBuffer.getInstanceOrNull()
+        val offLowW = sevenDaysStats?.v2Result?.profile?.offLowPowerW
+        return when (rowType) {
+            BatteryEnergyCalculator.ROW_SCREEN_ON -> {
+                val win = rollingBuffer?.extractRollingScreenOnWindow(7200_000L)
+                val w = win?.avgPowerWatts?.takeIf { it > 0f } ?: overview?.screenOnPowerWatts?.takeIf { it > 0f } ?: 0f
+                val dur = win?.effectiveDurationMs?.takeIf { it > 0L } ?: (overview?.screenOnDurationMs ?: 0L)
+                val powerRate = calculateDischargeRatePercentPerHour(w, totalCapacityWh, dur)
+                val sessionPercentRate = if (overview != null && overview.screenOnPercent > 0f && overview.screenOnDurationMs > 0L) {
+                    val hrs = overview.screenOnDurationMs / 3600000.0f
+                    if (hrs > 0.05f) overview.screenOnPercent / hrs else null
+                } else null
+                powerRate ?: win?.dischargeRatePercentPerHour ?: sessionPercentRate
+            }
+            BatteryEnergyCalculator.ROW_SCREEN_OFF -> {
+                val win = rollingBuffer?.extractRollingScreenOffWindow(14400_000L, baselineSleepWatts = offLowW)
+                val w = win?.avgPowerWatts?.takeIf { it > 0f } ?: overview?.screenOffPowerWatts?.takeIf { it > 0f } ?: 0f
+                val dur = win?.effectiveDurationMs?.takeIf { it > 0L } ?: (overview?.screenOffDurationMs ?: 0L)
+                val powerRate = calculateDischargeRatePercentPerHour(w, totalCapacityWh, dur)
+                val sessionPercentRate = if (overview != null && overview.screenOffPercent > 0f && overview.screenOffDurationMs > 0L) {
+                    val hrs = overview.screenOffDurationMs / 3600000.0f
+                    if (hrs > 0.05f) overview.screenOffPercent / hrs else null
+                } else null
+                powerRate ?: win?.dischargeRatePercentPerHour ?: sessionPercentRate
+            }
+            BatteryEnergyCalculator.ROW_GLOBAL -> {
+                val win = rollingBuffer?.extractRollingGlobalWindow(21600_000L, baselineSleepWatts = offLowW)
+                val w = win?.avgPowerWatts?.takeIf { it > 0f } ?: overview?.avgPowerWatts?.takeIf { it > 0f } ?: 0f
+                val dur = win?.effectiveDurationMs?.takeIf { it > 0L } ?: (overview?.totalDurationMs ?: 0L)
+                val powerRate = calculateDischargeRatePercentPerHour(w, totalCapacityWh, dur)
+                val sessionPercentRate = if (overview != null && overview.totalDurationMs > 0L) {
+                    val totalPct = overview.screenOnPercent + overview.screenOffPercent
+                    val hrs = overview.totalDurationMs / 3600000.0f
+                    if (totalPct > 0f && hrs > 0.05f) totalPct / hrs else null
+                } else null
+                powerRate ?: win?.dischargeRatePercentPerHour ?: sessionPercentRate
+            }
+            else -> null
+        }
+    }
+
+    /**
      * 根据放电平均功耗与电池总容量能量计算每小时放电百分比速率（%/h）。
      *
      * 遵循物理学定义：
@@ -454,14 +504,14 @@ object PowerDischargeMetricsViewBinder {
         totalCapacityWh: Float?,
         durationMs: Long
     ): Float? {
-        if (totalCapacityWh == null || totalCapacityWh <= 0f) {
+        if (totalCapacityWh == null || !totalCapacityWh.isFinite() || totalCapacityWh <= 0f) {
             return null
         }
-        if (powerWatts <= 0f || durationMs <= 0L) {
+        if (!powerWatts.isFinite() || powerWatts <= 0f || durationMs <= 0L) {
             return null
         }
         val rate = (powerWatts / totalCapacityWh) * 100f
-        return if (rate > 0f) rate else null
+        return if (rate.isFinite() && rate > 0f) rate else null
     }
 
     /**

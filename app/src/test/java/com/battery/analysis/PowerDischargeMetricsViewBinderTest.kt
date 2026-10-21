@@ -163,4 +163,32 @@ class PowerDischargeMetricsViewBinderTest {
         assertEquals("--", PowerDischargeMetricsViewBinder.formatRemainingDurationOnly(0L))
         assertEquals("--", PowerDischargeMetricsViewBinder.formatRemainingDurationOnly(-1000L))
     }
+
+    /**
+     * 验证有效放电速率计算优先采用物理微积分功率与电池满充总能量换算，
+     * 彻底消除粗粒度整型电量 1% 跳变阶梯带来的量化噪声（如把 2.1%/h 放大至 4.4%/h 的缺陷）。
+     */
+    @Test
+    fun testGetEffectiveDischargeRate_PrioritizesPhysicalPowerCalculus() {
+        val totalCapacityWh = 29.62f
+        val overview = PowerOverviewStats(
+            avgPowerWatts = 1.51f,
+            totalDurationMs = 27120_000L,
+            screenOffDurationMs = 2586_000L, // 43m06s
+            screenOffEnergyWh = 0.453f,
+            screenOffPowerWatts = 0.63f,
+            screenOffPercent = 1.5f
+        )
+
+        val rate = PowerDischargeMetricsViewBinder.getEffectiveDischargeRate(
+            rowType = BatteryEnergyCalculator.ROW_SCREEN_OFF,
+            totalCapacityWh = totalCapacityWh,
+            overview = overview
+        )
+
+        org.junit.Assert.assertNotNull("实测放电速度不应为 null", rate)
+        // 0.63W / 29.62Wh * 100% ≈ 2.127%/h
+        assertEquals(2.13f, rate!!, 0.05f)
+    }
 }
+

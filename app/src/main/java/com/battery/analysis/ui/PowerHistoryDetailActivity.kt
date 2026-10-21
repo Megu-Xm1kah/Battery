@@ -881,21 +881,8 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
             ?: powerMgr.getEffectiveDeviceCapacityMah().takeIf { it > 0f }
             ?: totalCapacityWh?.takeIf { it > 0f }?.let { (it * 1000f) / BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS }
 
-        val currentRate = if (overview != null) {
-            val totalDurationMs = if (overview.totalDurationMs > 0L) overview.totalDurationMs else parseDurationTextToMs(overview.totalDurationText)
-            val onDurationMs = if (overview.screenOnDurationMs > 0L) overview.screenOnDurationMs else parseDurationTextToMs(overview.screenOnDurationText)
-            val offDurationMs = if (overview.screenOffDurationMs > 0L) overview.screenOffDurationMs else parseDurationTextToMs(overview.screenOffDurationText)
-            when (rowType) {
-                BatteryEnergyCalculator.ROW_SCREEN_ON -> PowerDischargeMetricsViewBinder.calculateDischargeRatePercentPerHour(overview.screenOnPowerWatts, totalCapacityWh, onDurationMs)
-                BatteryEnergyCalculator.ROW_SCREEN_OFF -> PowerDischargeMetricsViewBinder.calculateDischargeRatePercentPerHour(overview.screenOffPowerWatts, totalCapacityWh, offDurationMs)
-                BatteryEnergyCalculator.ROW_GLOBAL -> PowerDischargeMetricsViewBinder.calculateDischargeRatePercentPerHour(overview.avgPowerWatts, totalCapacityWh, totalDurationMs)
-                else -> null
-            }
-        } else {
-            null
-        }
-
         val sevenDays = cachedSevenDaysStats
+        val currentRate = PowerDischargeMetricsViewBinder.getEffectiveDischargeRate(rowType, totalCapacityWh, overview, sevenDays)
         val (sevenDaysRate, sevenDaysDurationMs, fullDurationMs) = when (rowType) {
             BatteryEnergyCalculator.ROW_SCREEN_ON -> Triple(
                 sevenDays?.screenOnDischargeRatePercentPerHour,

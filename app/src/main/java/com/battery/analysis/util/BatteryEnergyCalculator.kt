@@ -781,7 +781,8 @@ object BatteryEnergyCalculator {
                             append("  工况预期范围：$minStr(重载) ~ $maxStr(轻载)\n")
                         }
                         if (remainingEstimate.predictedPowerWatts != null && remainingEstimate.predictedPowerWatts > 0.0) {
-                            val pStr = String.format(Locale.US, "%.2fW", remainingEstimate.predictedPowerWatts)
+                            val predWatts = remainingEstimate.predictedPowerWatts
+                            val pStr = String.format(Locale.US, "%.2fW", predWatts)
                             val remEnergyWh = remainingEstimate.remainingEnergyWh
                             val eSuffix = if (remEnergyWh != null && remEnergyWh > 0.0) {
                                 val energyText = if (displayUnit == PowerDisplayUnit.MAH) {
@@ -793,7 +794,11 @@ object BatteryEnergyCalculator {
                                 }
                                 " (可用 $energyText)"
                             } else ""
-                            append("  预测放电功耗：$pStr$eSuffix\n")
+                            val rateSuffix = if (predictedCapacityWh != null && predictedCapacityWh > 0f) {
+                                val predRate = (predWatts / predictedCapacityWh) * 100.0
+                                String.format(Locale.US, " · 折算速度 %.1f%%/h", predRate)
+                            } else ""
+                            append("  预测放电功耗：$pStr$eSuffix$rateSuffix\n")
                         }
                     } else {
                         append("• 当前剩余续航：$remainingDurStr\n")
@@ -854,7 +859,8 @@ object BatteryEnergyCalculator {
                             append("  工况预期范围：$minStr(频繁唤醒) ~ $maxStr(深度休眠)\n")
                         }
                         if (remainingEstimate.predictedPowerWatts != null && remainingEstimate.predictedPowerWatts > 0.0) {
-                            val pStr = String.format(Locale.US, "%.2fW", remainingEstimate.predictedPowerWatts)
+                            val predWatts = remainingEstimate.predictedPowerWatts
+                            val pStr = String.format(Locale.US, "%.2fW", predWatts)
                             val remEnergyWh = remainingEstimate.remainingEnergyWh
                             val eSuffix = if (remEnergyWh != null && remEnergyWh > 0.0) {
                                 val energyText = if (displayUnit == PowerDisplayUnit.MAH) {
@@ -866,7 +872,11 @@ object BatteryEnergyCalculator {
                                 }
                                 " (可用 $energyText)"
                             } else ""
-                            append("  预测待机功耗：$pStr$eSuffix\n")
+                            val rateSuffix = if (predictedCapacityWh != null && predictedCapacityWh > 0f) {
+                                val predRate = (predWatts / predictedCapacityWh) * 100.0
+                                String.format(Locale.US, " · 折算速度 %.1f%%/h", predRate)
+                            } else ""
+                            append("  预测待机功耗：$pStr$eSuffix$rateSuffix\n")
                         }
                     } else {
                         append("• 当前剩余续航：$remainingDurStr\n")
@@ -897,7 +907,8 @@ object BatteryEnergyCalculator {
                             append("  工况预期范围：$minStr(偏重载) ~ $maxStr(偏轻载)\n")
                         }
                         if (remainingEstimate.predictedPowerWatts != null && remainingEstimate.predictedPowerWatts > 0.0) {
-                            val pStr = String.format(Locale.US, "%.2fW", remainingEstimate.predictedPowerWatts)
+                            val predWatts = remainingEstimate.predictedPowerWatts
+                            val pStr = String.format(Locale.US, "%.2fW", predWatts)
                             val remEnergyWh = remainingEstimate.remainingEnergyWh
                             val eSuffix = if (remEnergyWh != null && remEnergyWh > 0.0) {
                                 val energyText = if (displayUnit == PowerDisplayUnit.MAH) {
@@ -909,7 +920,11 @@ object BatteryEnergyCalculator {
                                 }
                                 " (可用 $energyText)"
                             } else ""
-                            append("  预测综合功耗：$pStr$eSuffix\n")
+                            val rateSuffix = if (predictedCapacityWh != null && predictedCapacityWh > 0f) {
+                                val predRate = (predWatts / predictedCapacityWh) * 100.0
+                                String.format(Locale.US, " · 折算速度 %.1f%%/h", predRate)
+                            } else ""
+                            append("  预测综合功耗：$pStr$eSuffix$rateSuffix\n")
                         }
                     } else {
                         append("• 当前剩余续航：$remainingDurStr\n")
@@ -1143,8 +1158,8 @@ object BatteryEnergyCalculator {
             null
         } ?: return null
 
-        val curRate = currentRatePercentPerHour?.takeIf { it > 0f }
-        val sevenDaysRate = sevenDaysRatePercentPerHour?.takeIf { it > 0f }
+        val curRate = currentRatePercentPerHour?.takeIf { it.isFinite() && it > 0f }
+        val sevenDaysRate = sevenDaysRatePercentPerHour?.takeIf { it.isFinite() && it > 0f }
 
         if (curRate == null && sevenDaysRate == null) {
             return null
@@ -1196,13 +1211,13 @@ object BatteryEnergyCalculator {
         remainingBatteryPercent: Float?,
         fallbackGlobalRemainingMs: Long?
     ): Long? {
-        if (screenOnRate != null && screenOnRate > 0f &&
-            screenOffRate != null && screenOffRate > 0f &&
+        if (screenOnRate != null && screenOnRate.isFinite() && screenOnRate > 0f &&
+            screenOffRate != null && screenOffRate.isFinite() && screenOffRate > 0f &&
             sceneScreenOnRatio != null && sceneScreenOnRatio in 0.0f..1.0f &&
             remainingBatteryPercent != null && remainingBatteryPercent > 0f
         ) {
             val compositeRate = (sceneScreenOnRatio * screenOnRate) + ((1.0f - sceneScreenOnRatio) * screenOffRate)
-            if (compositeRate > 0f) {
+            if (compositeRate.isFinite() && compositeRate > 0f) {
                 val remainingHours = remainingBatteryPercent.toDouble() / compositeRate.toDouble()
                 val remainingMs = Math.round(remainingHours * 3600.0 * 1000.0)
                 if (remainingMs > 0L) return remainingMs

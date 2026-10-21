@@ -45,19 +45,24 @@ class PowerStateDetector(
     var isRegimeChanging: Boolean = false
         private set
 
+    /** 工况突变退出后的平滑阻尼衰减比例（1.0 连续平滑衰减至 0.0，杜绝权重阶跃跳变） */
+    var recoveryDecayRatio: Double = 0.0
+        private set
+
     /**
-     * 重置状态检测器上下文，清空偏离计数、累积时长与工况跃迁标志。
+     * 重置状态检测器上下文，清空偏离计数、累积时长、衰减过渡与工况跃迁标志。
      * 通常在屏幕开关切换、充电插拔或启动新的统计会话时调用。
      *
      * @param initialBaselineWatts 可选的初始稳态基线功率（单位：W，若无传入 null）
      */
     fun reset(initialBaselineWatts: Double? = null) {
-        baselinePowerWatts = initialBaselineWatts?.takeIf { it > 0.0 }
+        baselinePowerWatts = initialBaselineWatts?.takeIf { it.isFinite() && it > 0.0 }
         consecutiveDeviationCount = 0
         accumulatedDeviationDurationSec = 0.0
         consecutiveSteadyCount = 0
         accumulatedSteadyDurationSec = 0.0
         isRegimeChanging = false
+        recoveryDecayRatio = 0.0
     }
 
     /**
@@ -77,7 +82,7 @@ class PowerStateDetector(
      * @return 返回当前是否处于工况跃迁激活状态 [Boolean]
      */
     fun update(currentPowerWatts: Float, deltaSec: Double = 1.0): Boolean {
-        if (currentPowerWatts <= 0f) {
+        if (!currentPowerWatts.isFinite() || currentPowerWatts <= 0f) {
             consecutiveDeviationCount = 0
             accumulatedDeviationDurationSec = 0.0
             consecutiveSteadyCount = 0
@@ -121,6 +126,7 @@ class PowerStateDetector(
                 accumulatedDeviationDurationSec += effectiveDelta
                 consecutiveSteadyCount = 0
                 accumulatedSteadyDurationSec = 0.0
+                recoveryDecayRatio = 0.0 // 出现新偏离时立即终止衰减过渡
                 if (consecutiveDeviationCount >= requiredConsecutiveCycles &&
                     (minRegimeDurationSec <= 0.0 || accumulatedDeviationDurationSec >= minRegimeDurationSec)
                 ) {
@@ -131,6 +137,13 @@ class PowerStateDetector(
             } else {
                 consecutiveDeviationCount = 0
                 accumulatedDeviationDurationSec = 0.0
+                // 平滑阻尼衰减更新：半衰期约 60 秒 (tau = 60.0s)，逐步收敛回 0.0
+                if (recoveryDecayRatio > 0.0) {
+                    recoveryDecayRatio *= kotlin.math.exp(-safeDelta / 60.0)
+                    if (recoveryDecayRatio < 0.01) {
+                        recoveryDecayRatio = 0.0
+                    }
+                }
                 // 稳态平缓更新基线（惯性 EWMA，95% 历史 + 5% 当前）
                 baselinePowerWatts = baseP * 0.95 + curP * 0.05
             }
@@ -144,6 +157,7 @@ class PowerStateDetector(
                     (minRegimeDurationSec <= 0.0 || accumulatedSteadyDurationSec >= minRegimeDurationSec)
                 ) {
                     isRegimeChanging = false
+                    recoveryDecayRatio = 1.0 // 确立退出跃迁，开启连续平滑阻尼衰减过渡，杜绝突变权重大幅跳变
                     consecutiveDeviationCount = 0
                     accumulatedDeviationDurationSec = 0.0
                     consecutiveSteadyCount = 0
@@ -160,16 +174,24 @@ class PowerStateDetector(
     }
 
     /**
-     * 获取工况跃迁状态下的自适应权重修正系数。
-     * 发生工况跃迁时增大当前近期模型（Fast/Medium）的权重响应速度，减小历史长期惯性。
+     * 获取工况跃迁状态或突变平滑衰减过渡期的自适应权重修正系数。
+     * 发生工况跃迁时增大当前近期模型（Fast/Medium）的权重响应速度，减小历史长期惯性；
+     * 退出跃迁后通过指数阻尼平滑回落，杜绝阶跃式时间跳变。
      *
      * @return 介于 1.0 至 2.0 之间的快速响应加权乘子
      */
     fun getResponsivenessMultiplier(): Double {
-        return if (isRegimeChanging) {
-            1.5 + (consecutiveDeviationCount.coerceAtMost(5) - requiredConsecutiveCycles).coerceAtLeast(0) * 0.1
-        } else {
-            1.0
+        return when {
+            isRegimeChanging -> {
+                1.5 + (consecutiveDeviationCount.coerceAtMost(5) - requiredConsecutiveCycles).coerceAtLeast(0) * 0.1
+            }
+            recoveryDecayRatio > 0.0 -> {
+                // 退出跃迁后的平滑阻尼过渡期，从 1.5 连续渐进回落至 1.0
+                1.0 + 0.5 * recoveryDecayRatio
+            }
+            else -> {
+                1.0
+            }
         }
     }
 }

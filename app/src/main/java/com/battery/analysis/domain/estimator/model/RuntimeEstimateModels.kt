@@ -55,8 +55,32 @@ enum class RemainingModelVersion {
     /** 阶段二升级版本：双门限突变响应 + MAD 工况联动 + 物理可用能量四级优先级与温度修正 */
     REMAINING_RUNTIME_V2,
     /** 阶段三修正升级版本（v2.1）：严格规范单位 + 凸组合跃迁响应 + 连续权重插值 + 忠实物理直读 */
-    REMAINING_RUNTIME_V2_1
+    REMAINING_RUNTIME_V2_1,
+    /** 阶段四升级版本（v2.2）：自适应作息融合 + 工况突变平滑衰减 + 多尺度质量因子 + 多因素子置信度 */
+    REMAINING_RUNTIME_V2_2
 }
+
+/**
+ * 剩余续航预测多因素置信度细分评估实体（Confidence Breakdown）。
+ * 遵循置信度与主预测时长解耦原则：反映各维度的可靠性与不确定性，绝不直接篡改剩余物理续航数值。
+ *
+ * @property energyConfidence 电池剩余估算可用电能来源与质量分 (0.0 ~ 1.0)
+ * @property powerConfidence 放电功耗多时间尺度一致性与覆盖度分 (0.0 ~ 1.0)
+ * @property stateConfidence 工况稳态与突变收敛分 (0.0 ~ 1.0)
+ * @property historyConfidence 长期先验大样本充足度分 (0.0 ~ 1.0)
+ * @property temperatureConfidence 环境与电芯温度适应度分 (0.0 ~ 1.0)
+ * @property totalConfidence 综合多因素加权置信度分 (0.0 ~ 1.0)
+ * @property isLowSocRisk 是否处于低电量非线性风险区 (SOC < 10%)
+ */
+data class ConfidenceBreakdown(
+    val energyConfidence: Double,
+    val powerConfidence: Double,
+    val stateConfidence: Double,
+    val historyConfidence: Double,
+    val temperatureConfidence: Double,
+    val totalConfidence: Double,
+    val isLowSocRisk: Boolean = false
+)
 
 /**
  * 剩余续航预测输出结果实体类。
@@ -74,6 +98,7 @@ enum class RemainingModelVersion {
  * @property maxRemainingMs 轻负载/节能工况情景假设下的预期较长剩余时长（单位：毫秒，可选）
  * @property qualityReasons 预测数据质量与降级原因列表（用于解释置信度与模型依据）
  * @property unavailableReason 数据不可用时的明确物理原因（当 remainingMs 为 null 时说明原因）
+ * @property confidenceBreakdown 多因素置信度细分评估实体 [ConfidenceBreakdown]（可选）
  */
 data class RuntimeEstimate(
     val remainingMs: Long?,
@@ -82,10 +107,11 @@ data class RuntimeEstimate(
     val confidence: Double,
     val modelType: RuntimeModelType,
     val sampleCount: Int = 0,
-    val modelVersion: RemainingModelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
+    val modelVersion: RemainingModelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_2,
     val confidenceLevel: RuntimeConfidenceLevel = RuntimeConfidenceLevel.fromScore(confidence),
     val minRemainingMs: Long? = null,
     val maxRemainingMs: Long? = null,
     val qualityReasons: List<String> = emptyList(),
-    val unavailableReason: String? = null
+    val unavailableReason: String? = null,
+    val confidenceBreakdown: ConfidenceBreakdown? = null
 )

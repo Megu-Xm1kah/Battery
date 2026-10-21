@@ -107,12 +107,113 @@ class RuntimeEstimator(
      * @param lightPowerW 历史大样本实测亮屏轻载工况功率（单位：W，可选）
      * @return 亮屏剩余续航估计结果实体 [RuntimeEstimate]
      */
+    /**
+     * 计算并构建多时间尺度与物理环境多因素置信度细分评估实体。
+     * 遵循置信度与主预测时长解耦原则：反映各维度的不确定性，不直接打折篡改剩余物理续航数值。
+     *
+     * @param powerEstimator 对应场景的多时间尺度功耗估计器 [PowerEstimator]
+     * @param batteryLevelPercent 当前电池电量百分比（可选）
+     * @param tempCelsius 当前电池温度（单位：℃，可选）
+     * @param energyConfidence 电池剩余估算可用电能数据源质量分（0.0 ~ 1.0）
+     * @return 包含综合置信度得分与结构化置信度细分实体的二元组 [Pair]
+     */
+    private fun calculateConfidenceBreakdown(
+        powerEstimator: PowerEstimator,
+        batteryLevelPercent: Float?,
+        tempCelsius: Float?,
+        energyConfidence: Double = 0.90
+    ): Pair<Double, com.battery.analysis.domain.estimator.model.ConfidenceBreakdown> {
+        val hasSessionData = powerEstimator.totalSessionDurationMs > 0L
+        val hasLongData = powerEstimator.getLongPower() != null
+
+        // 1. 能量源置信度 (0.0 ~ 1.0)
+        val cEnergy = energyConfidence.coerceIn(0.10, 1.0)
+
+        // 2. 功耗一致性与覆盖度置信度 (0.0 ~ 1.0)
+        val sessionDur = powerEstimator.totalSessionDurationMs
+        var cPower = when {
+            sessionDur >= 7_200_000L -> 0.95
+            sessionDur >= 3_600_000L -> 0.88
+            sessionDur >= 1_800_000L -> 0.80
+            sessionDur >= 1_200_000L -> 0.70
+            sessionDur >= 600_000L -> 0.60
+            sessionDur >= 300_000L -> 0.50
+            sessionDur > 0L -> 0.40
+            else -> 0.35
+        }
+        val f = powerEstimator.getFastPower()
+        val m = powerEstimator.getMediumPower()
+        if (f != null && m != null && m > 0.0) {
+            val dev = kotlin.math.abs(f - m) / m
+            if (dev < 0.15) cPower = (cPower + 0.05).coerceAtMost(1.0)
+        }
+
+        // 3. 工况稳态置信度 (0.0 ~ 1.0)
+        val cState = when {
+            hasSessionData && powerEstimator.getConfidence() < 0.40 -> 0.50
+            else -> 0.90
+        }
+
+        // 4. 历史先验置信度 (0.0 ~ 1.0)
+        val cHistory = if (hasLongData) powerEstimator.getLongDataQuality() else 0.40
+
+        // 5. 温度适应度置信度 (0.0 ~ 1.0)
+        val cTemp = when {
+            tempCelsius == null -> 0.90
+            tempCelsius in 15.0f..38.0f -> 1.0
+            tempCelsius in 0.0f..45.0f -> 0.85
+            else -> 0.70
+        }
+
+        // 6. 是否处于低电量风险区
+        val isLowSoc = batteryLevelPercent != null && batteryLevelPercent < 10.0f
+
+        // 多因素加权几何综合得分：ln(C) = 0.25*ln(E) + 0.35*ln(P) + 0.20*ln(S) + 0.15*ln(H) + 0.05*ln(T)
+        val logTotal = 0.25 * kotlin.math.ln(cEnergy.coerceAtLeast(0.01)) +
+                0.35 * kotlin.math.ln(cPower.coerceAtLeast(0.01)) +
+                0.20 * kotlin.math.ln(cState.coerceAtLeast(0.01)) +
+                0.15 * kotlin.math.ln(cHistory.coerceAtLeast(0.01)) +
+                0.05 * kotlin.math.ln(cTemp.coerceAtLeast(0.01))
+        var total = kotlin.math.exp(logTotal).coerceIn(0.10, 1.0)
+
+        if (isLowSoc) {
+            total = (total * 0.80).coerceIn(0.10, 1.0)
+        }
+
+        val breakdown = com.battery.analysis.domain.estimator.model.ConfidenceBreakdown(
+            energyConfidence = cEnergy,
+            powerConfidence = cPower,
+            stateConfidence = cState,
+            historyConfidence = cHistory,
+            temperatureConfidence = cTemp,
+            totalConfidence = total,
+            isLowSocRisk = isLowSoc
+        )
+        return Pair(total, breakdown)
+    }
+
+    /**
+     * 预测持续亮屏使用状态下的理论剩余续航时长。
+     * 严格遵循物理做功定律：T_remaining = E_remaining / P_predicted。
+     * 当具备设备实测的大样本重载与轻载工况功率时，精确推导工况预期范围；无实测数据时如实返回 null，严禁人为臆造范围。
+     *
+     * @param usableEnergyWh 当前电池有效可用物理能量（单位：Wh）
+     * @param onPowerEstimator 亮屏多时间尺度功耗估计器 [PowerEstimator]
+     * @param batteryLevelPercent 当前电池电量百分比（用于低电量置信度评估）
+     * @param heavyPowerW 历史大样本实测亮屏重载工况功率（单位：W，可选）
+     * @param lightPowerW 历史大样本实测亮屏轻载工况功率（单位：W，可选）
+     * @param tempCelsius 电池当前温度（单位：℃，可选）
+     * @param energyConfidence 电池剩余电能估算数据源置信度（0.0 ~ 1.0）
+     * @return 亮屏剩余续航估计结果实体 [RuntimeEstimate]
+     */
     fun estimateScreenOn(
         usableEnergyWh: Double?,
         onPowerEstimator: PowerEstimator,
         batteryLevelPercent: Float? = null,
         heavyPowerW: Double? = null,
-        lightPowerW: Double? = null
+        lightPowerW: Double? = null,
+        tempCelsius: Float? = null,
+        energyConfidence: Double = 0.90
     ): RuntimeEstimate {
         val predictedPower = onPowerEstimator.getPredictedPower()
         if (usableEnergyWh == null || usableEnergyWh <= 0.0 || predictedPower == null || predictedPower <= 0.0) {
@@ -126,7 +227,7 @@ class RuntimeEstimator(
                 remainingEnergyWh = usableEnergyWh,
                 confidence = 0.0,
                 modelType = RuntimeModelType.INSUFFICIENT_DATA,
-                modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
+                modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_2,
                 unavailableReason = reason
             )
         }
@@ -142,26 +243,31 @@ class RuntimeEstimator(
         val safeMinOnMs = if (remainingMs > 0L) kotlin.math.min(minOnMs, remainingMs) else minOnMs
         val safeMaxOnMs = if (remainingMs > 0L) kotlin.math.max(maxOnMs, remainingMs) else maxOnMs
 
-        var confidence = onPowerEstimator.getConfidence()
+        val (confidence, breakdown) = calculateConfidenceBreakdown(
+            powerEstimator = onPowerEstimator,
+            batteryLevelPercent = batteryLevelPercent,
+            tempCelsius = tempCelsius,
+            energyConfidence = energyConfidence
+        )
+
         val qualityReasons = mutableListOf<String>()
         val hasSessionData = onPowerEstimator.totalSessionDurationMs > 0L
         val hasLongData = onPowerEstimator.getLongPower() != null
 
         if (hasSessionData && hasLongData) {
             if (onPowerEstimator.totalSessionDurationMs < 300_000L) {
-                qualityReasons.add("放电初期优先参考近7天习惯基准，持续运行中")
+                qualityReasons.add("基于当前剩余电量，优先参考近7天亮屏习惯基准稳态推算")
             } else {
-                qualityReasons.add("基于当前会话与历史多时间尺度融合")
+                qualityReasons.add("基于当前剩余电量与实测连续亮屏多时间尺度融合")
             }
         } else if (hasSessionData) {
-            qualityReasons.add("基于当前会话直接采样推算")
+            qualityReasons.add("基于当前剩余电量与实测亮屏特征直接推算")
         } else if (hasLongData) {
-            qualityReasons.add("当前会话尚无稳定样本，采用近7天历史大样本基准推算")
+            qualityReasons.add("基于当前剩余电量与近7天亮屏历史大样本基准推算")
         }
 
         if (batteryLevelPercent != null && batteryLevelPercent < 10.0f) {
-            confidence *= 0.80 // 低电量区域压降变化剧烈，提示预测不确定性
-            qualityReasons.add("剩余电量低于10%，放电极化内阻增大")
+            qualityReasons.add("剩余电量低于10%，剩余续航受负载变化与端电压下降影响更大")
         }
 
         val modelType = if (onPowerEstimator.totalSessionDurationMs > 0L) RuntimeModelType.MULTI_TIMESCALE else RuntimeModelType.CURRENT
@@ -173,10 +279,11 @@ class RuntimeEstimator(
             confidence = confidence,
             modelType = modelType,
             sampleCount = onPowerEstimator.sampleCount,
-            modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
+            modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_2,
             minRemainingMs = if (remainingMs > 0L && safeMinOnMs > 0L) safeMinOnMs else null,
             maxRemainingMs = if (remainingMs > 0L && safeMaxOnMs > 0L) safeMaxOnMs else null,
-            qualityReasons = qualityReasons
+            qualityReasons = qualityReasons,
+            confidenceBreakdown = breakdown
         )
     }
 
@@ -190,6 +297,8 @@ class RuntimeEstimator(
      * @param batteryLevelPercent 当前电池电量百分比（用于低电量置信度评估）
      * @param offHighPowerW 历史大样本实测息屏唤醒活跃工况功率（单位：W，可选）
      * @param offLowPowerW 历史大样本实测息屏深睡休眠工况功率（单位：W，可选）
+     * @param tempCelsius 电池当前温度（单位：℃，可选）
+     * @param energyConfidence 电池剩余电能估算数据源置信度（0.0 ~ 1.0）
      * @return 息屏待机剩余续航估计结果实体 [RuntimeEstimate]
      */
     fun estimateScreenOff(
@@ -197,7 +306,9 @@ class RuntimeEstimator(
         offPowerEstimator: PowerEstimator,
         batteryLevelPercent: Float? = null,
         offHighPowerW: Double? = null,
-        offLowPowerW: Double? = null
+        offLowPowerW: Double? = null,
+        tempCelsius: Float? = null,
+        energyConfidence: Double = 0.90
     ): RuntimeEstimate {
         val predictedPower = offPowerEstimator.getPredictedPower()
         if (usableEnergyWh == null || usableEnergyWh <= 0.0 || predictedPower == null || predictedPower <= 0.0) {
@@ -211,7 +322,7 @@ class RuntimeEstimator(
                 remainingEnergyWh = usableEnergyWh,
                 confidence = 0.0,
                 modelType = RuntimeModelType.INSUFFICIENT_DATA,
-                modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
+                modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_2,
                 unavailableReason = reason
             )
         }
@@ -227,26 +338,31 @@ class RuntimeEstimator(
         val safeMinOffMs = if (remainingMs > 0L) kotlin.math.min(minOffMs, remainingMs) else minOffMs
         val safeMaxOffMs = if (remainingMs > 0L) kotlin.math.max(maxOffMs, remainingMs) else maxOffMs
 
-        var confidence = offPowerEstimator.getConfidence()
+        val (confidence, breakdown) = calculateConfidenceBreakdown(
+            powerEstimator = offPowerEstimator,
+            batteryLevelPercent = batteryLevelPercent,
+            tempCelsius = tempCelsius,
+            energyConfidence = energyConfidence
+        )
+
         val qualityReasons = mutableListOf<String>()
         val hasSessionData = offPowerEstimator.totalSessionDurationMs > 0L
         val hasLongData = offPowerEstimator.getLongPower() != null
 
         if (hasSessionData && hasLongData) {
             if (offPowerEstimator.totalSessionDurationMs < 300_000L) {
-                qualityReasons.add("待机初期优先参考近7天习惯基准，持续待机中")
+                qualityReasons.add("基于当前剩余电量，优先参考近7天待机习惯基准稳态推算")
             } else {
-                qualityReasons.add("基于待机休眠与唤醒多时间尺度融合")
+                qualityReasons.add("基于当前剩余电量与实测待机休眠唤醒多时间尺度融合")
             }
         } else if (hasSessionData) {
-            qualityReasons.add("基于当前待机直接采样推算")
+            qualityReasons.add("基于当前剩余电量与实测待机特征直接推算")
         } else if (hasLongData) {
-            qualityReasons.add("当前会话尚无待机样本，采用近7天历史大样本基准推算")
+            qualityReasons.add("基于当前剩余电量与近7天待机历史大样本基准推算")
         }
 
         if (batteryLevelPercent != null && batteryLevelPercent < 10.0f) {
-            confidence *= 0.80
-            qualityReasons.add("剩余电量低于10%，放电极化内阻增大")
+            qualityReasons.add("剩余电量低于10%，剩余续航受负载变化与端电压下降影响更大")
         }
 
         val modelType = if (offPowerEstimator.totalSessionDurationMs > 0L) RuntimeModelType.MULTI_TIMESCALE else RuntimeModelType.CURRENT
@@ -258,10 +374,11 @@ class RuntimeEstimator(
             confidence = confidence,
             modelType = modelType,
             sampleCount = offPowerEstimator.sampleCount,
-            modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
+            modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_2,
             minRemainingMs = if (remainingMs > 0L && safeMinOffMs > 0L) safeMinOffMs else null,
             maxRemainingMs = if (remainingMs > 0L && safeMaxOffMs > 0L) safeMaxOffMs else null,
-            qualityReasons = qualityReasons
+            qualityReasons = qualityReasons,
+            confidenceBreakdown = breakdown
         )
     }
 
@@ -288,7 +405,9 @@ class RuntimeEstimator(
         fallbackGlobalEstimator: PowerEstimator? = null,
         batteryLevelPercent: Float? = null,
         heavyGlobalPowerW: Double? = null,
-        lightGlobalPowerW: Double? = null
+        lightGlobalPowerW: Double? = null,
+        tempCelsius: Float? = null,
+        energyConfidence: Double = 0.90
     ): RuntimeEstimate {
         if (usableEnergyWh == null || usableEnergyWh <= 0.0) {
             return RuntimeEstimate(
@@ -297,7 +416,7 @@ class RuntimeEstimator(
                 remainingEnergyWh = null,
                 confidence = 0.0,
                 modelType = RuntimeModelType.INSUFFICIENT_DATA,
-                modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
+                modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_2,
                 unavailableReason = "剩余物理可用能量不可用"
             )
         }
@@ -320,12 +439,24 @@ class RuntimeEstimator(
                 val safeMinGlobalMs = if (remainingMs > 0L) kotlin.math.min(minGlobalMs, remainingMs) else minGlobalMs
                 val safeMaxGlobalMs = if (remainingMs > 0L) kotlin.math.max(maxGlobalMs, remainingMs) else maxGlobalMs
 
-                var blendedConfidence = (onPowerEstimator.getConfidence() * 0.5 + offPowerEstimator.getConfidence() * 0.5)
+                val (onConf, onBreakdown) = calculateConfidenceBreakdown(onPowerEstimator, batteryLevelPercent, tempCelsius, energyConfidence)
+                val (offConf, offBreakdown) = calculateConfidenceBreakdown(offPowerEstimator, batteryLevelPercent, tempCelsius, energyConfidence)
+                val blendedConfidence = (onConf * 0.5 + offConf * 0.5)
+
+                val blendedBreakdown = com.battery.analysis.domain.estimator.model.ConfidenceBreakdown(
+                    energyConfidence = (onBreakdown.energyConfidence + offBreakdown.energyConfidence) / 2.0,
+                    powerConfidence = (onBreakdown.powerConfidence + offBreakdown.powerConfidence) / 2.0,
+                    stateConfidence = (onBreakdown.stateConfidence + offBreakdown.stateConfidence) / 2.0,
+                    historyConfidence = (onBreakdown.historyConfidence + offBreakdown.historyConfidence) / 2.0,
+                    temperatureConfidence = (onBreakdown.temperatureConfidence + offBreakdown.temperatureConfidence) / 2.0,
+                    totalConfidence = blendedConfidence,
+                    isLowSocRisk = onBreakdown.isLowSocRisk
+                )
+
                 val qualityReasons = mutableListOf<String>()
-                qualityReasons.add("融合用户日常作息亮屏/息屏时间占空比")
+                qualityReasons.add("基于当前剩余电量，融合用户日常作息亮屏/息屏时间占空比")
                 if (batteryLevelPercent != null && batteryLevelPercent < 10.0f) {
-                    blendedConfidence *= 0.80
-                    qualityReasons.add("剩余电量低于10%，放电极化内阻增大")
+                    qualityReasons.add("剩余电量低于10%，剩余续航受负载变化与端电压下降影响更大")
                 }
                 return RuntimeEstimate(
                     remainingMs = if (remainingMs > 0L) remainingMs else null,
@@ -334,10 +465,11 @@ class RuntimeEstimator(
                     confidence = blendedConfidence,
                     modelType = RuntimeModelType.GLOBAL_COMPOSITE,
                     sampleCount = onPowerEstimator.sampleCount + offPowerEstimator.sampleCount,
-                    modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
+                    modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_2,
                     minRemainingMs = if (remainingMs > 0L && safeMinGlobalMs > 0L) safeMinGlobalMs else null,
                     maxRemainingMs = if (remainingMs > 0L && safeMaxGlobalMs > 0L) safeMaxGlobalMs else null,
-                    qualityReasons = qualityReasons
+                    qualityReasons = qualityReasons,
+                    confidenceBreakdown = blendedBreakdown
                 )
             }
         }
@@ -365,11 +497,22 @@ class RuntimeEstimator(
             val safeMinFallbackMs = if (remainingMs > 0L) kotlin.math.min(minFallbackMs, remainingMs) else minFallbackMs
             val safeMaxFallbackMs = if (remainingMs > 0L) kotlin.math.max(maxFallbackMs, remainingMs) else maxFallbackMs
 
-            var fallbackConfidence = selectedEstimator.getConfidence()
-            val qualityReasons = mutableListOf("细分场景不全，降级至单项或全局直接采样")
+            val (_, fallbackBreakdown) = calculateConfidenceBreakdown(
+                powerEstimator = selectedEstimator,
+                batteryLevelPercent = batteryLevelPercent,
+                tempCelsius = tempCelsius,
+                energyConfidence = energyConfidence
+            )
+            // 降级主置信度如实继承自被选中的估计器，若处于低电量风险区则相应打折
+            val fallbackConfidence = if (batteryLevelPercent != null && batteryLevelPercent < 10.0f) {
+                selectedEstimator.getConfidence() * 0.70
+            } else {
+                selectedEstimator.getConfidence()
+            }
+
+            val qualityReasons = mutableListOf("基于当前剩余电量，细分场景不全降级至全局特征推算")
             if (batteryLevelPercent != null && batteryLevelPercent < 10.0f) {
-                fallbackConfidence *= 0.80
-                qualityReasons.add("剩余电量低于10%，放电极化内阻增大")
+                qualityReasons.add("剩余电量低于10%，剩余续航受负载变化与端电压下降影响更大")
             }
 
             return RuntimeEstimate(
@@ -379,10 +522,11 @@ class RuntimeEstimator(
                 confidence = fallbackConfidence,
                 modelType = RuntimeModelType.CURRENT,
                 sampleCount = selectedEstimator.sampleCount,
-                modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
+                modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_2,
                 minRemainingMs = if (remainingMs > 0L && safeMinFallbackMs > 0L) safeMinFallbackMs else null,
                 maxRemainingMs = if (remainingMs > 0L && safeMaxFallbackMs > 0L) safeMaxFallbackMs else null,
-                qualityReasons = qualityReasons
+                qualityReasons = qualityReasons,
+                confidenceBreakdown = fallbackBreakdown
             )
         }
 
@@ -392,7 +536,7 @@ class RuntimeEstimator(
             remainingEnergyWh = usableEnergyWh,
             confidence = 0.0,
             modelType = RuntimeModelType.INSUFFICIENT_DATA,
-            modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_1,
+            modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_2,
             unavailableReason = "缺乏亮屏、息屏或全局有效放电功耗数据"
         )
     }
@@ -421,12 +565,33 @@ class RuntimeEstimator(
         tempCelsius: Float? = null,
         currentTrendPoints: List<com.battery.analysis.model.PowerDischargePoint>? = null
     ): TripleRuntimeResult {
-        val usableEnergy = calculateUsableEnergyWh(
+        val effectiveCapacityMah = if (totalCapacityWh != null && totalCapacityWh > 0f) {
+            (totalCapacityWh * 1000.0f) / RemainingEnergyEstimator.DEFAULT_NOMINAL_VOLTAGE.toFloat()
+        } else null
+
+        val energyEstimate = remainingEnergyEstimator.estimateUsableRemainingEnergy(
             remainingEnergyWh = remainingEnergyWh,
             batteryLevelPercent = batteryLevelPercent,
-            totalCapacityWh = totalCapacityWh,
-            tempCelsius = tempCelsius
+            effectiveCapacityMah = effectiveCapacityMah,
+            tempCelsius = tempCelsius,
+            nominalVoltage = RemainingEnergyEstimator.DEFAULT_NOMINAL_VOLTAGE
         )
+        val usableEnergy = energyEstimate.usableEnergyWh
+        val energyConfidence = energyEstimate.energyConfidence
+
+        // 评估长期历史大样本数据质量分（反映样本充分度）
+        val longQuality = when {
+            sevenDaysStats?.v2Result != null -> {
+                when (sevenDaysStats.v2Result.dataSufficiency) {
+                    com.battery.analysis.domain.estimator.model.DataSufficiencyLevel.SUFFICIENT -> 1.0
+                    com.battery.analysis.domain.estimator.model.DataSufficiencyLevel.MODERATE -> 0.85
+                    com.battery.analysis.domain.estimator.model.DataSufficiencyLevel.INSUFFICIENT -> 0.60
+                }
+            }
+            sevenDaysStats?.screenOnDurationMs != null && sevenDaysStats.screenOnDurationMs >= 3600_000L * 24 -> 0.90
+            sevenDaysStats != null -> 0.70
+            else -> 0.50
+        }
 
         // 提取大样本实测工况画像（零假数据原则，仅消费真实历史统计值）
         val profile = sevenDaysStats?.v2Result?.profile
@@ -435,8 +600,16 @@ class RuntimeEstimator(
         val offHighW = profile?.offHighPowerW
         val offLowW = profile?.offLowPowerW
 
-        // 1. 构建亮屏多时间尺度估计器（优先对接 v2Result 预测功耗作为 Long 尺度基准）
-        val onEstimator = PowerEstimator()
+        // 优先尝试从线性向前滑动放电时序缓冲区中提取成熟滑动做功切片（亮屏 120m、息屏 4h、全局 6h）
+        // 动态注入真实设备画像中的休眠底噪 offLowW，严禁硬编码虚拟底噪
+        val rollingBuffer = RollingDischargeBuffer.getInstanceOrNull()
+        val rollingOnWindow = rollingBuffer?.extractRollingScreenOnWindow(7200_000L) // 最多向前线性回溯 120 分钟（2小时）有效亮屏做功切片
+        val rollingOffWindow = rollingBuffer?.extractRollingScreenOffWindow(14400_000L, baselineSleepWatts = offLowW) // 4小时有效息屏待机切片（覆盖半天待机与完整Doze周期）
+        val rollingGlobalWindow = rollingBuffer?.extractRollingGlobalWindow(21600_000L, baselineSleepWatts = offLowW) // 6小时有效全局放电切片（覆盖半天综合用机大周期）
+
+        // 1. 构建亮屏多时间尺度估计器（配置亮屏专属动态平衡权重）
+        val onEstimator = PowerEstimator(profile = EstimatorProfile.SCREEN_ON)
+        onEstimator.setLongTermQuality(longQuality)
         val longOnPower = sevenDaysStats?.v2Result?.predictedScreenOnPowerWatts
             ?: if (sevenDaysStats != null && totalCapacityWh != null && totalCapacityWh > 0f) {
                 val rate = sevenDaysStats.screenOnDischargeRatePercentPerHour
@@ -445,13 +618,21 @@ class RuntimeEstimator(
                 } else null
             } else null
         onEstimator.setLongTermPower(longOnPower)
-        if (overview != null && overview.screenOnPowerWatts > 0f) {
-            val durMs = if (overview.screenOnDurationMs > 0L) overview.screenOnDurationMs else 0L
-            onEstimator.seedCurrentSession(durMs, overview.screenOnPowerWatts)
+
+        val effectiveOnWatts = rollingOnWindow?.avgPowerWatts?.takeIf { it > 0f }
+            ?: overview?.screenOnPowerWatts?.takeIf { it > 0f }
+            ?: 0f
+        val effectiveOnDurMs = rollingOnWindow?.effectiveDurationMs?.takeIf { it > 0L }
+            ?: overview?.screenOnDurationMs?.takeIf { it > 0L }
+            ?: 0L
+
+        if (effectiveOnWatts > 0f) {
+            onEstimator.seedMediumTermPower(effectiveOnDurMs, effectiveOnWatts)
         }
 
-        // 2. 构建息屏待机多时间尺度估计器（优先对接 v2Result 预测功耗作为 Long 尺度基准）
-        val offEstimator = PowerEstimator()
+        // 2. 构建息屏待机多时间尺度估计器（优先对接连续向前滑动待机做功窗口 rollingOffWindow 作为 Medium 稳态基石）
+        val offEstimator = PowerEstimator(profile = EstimatorProfile.SCREEN_OFF)
+        offEstimator.setLongTermQuality(longQuality)
         val longOffPower = sevenDaysStats?.v2Result?.predictedScreenOffPowerWatts
             ?: if (sevenDaysStats != null && totalCapacityWh != null && totalCapacityWh > 0f) {
                 val rate = sevenDaysStats.screenOffDischargeRatePercentPerHour
@@ -460,13 +641,21 @@ class RuntimeEstimator(
                 } else null
             } else null
         offEstimator.setLongTermPower(longOffPower)
-        if (overview != null && overview.screenOffPowerWatts > 0f) {
-            val durMs = if (overview.screenOffDurationMs > 0L) overview.screenOffDurationMs else 0L
-            offEstimator.seedCurrentSession(durMs, overview.screenOffPowerWatts)
+
+        val effectiveOffWatts = rollingOffWindow?.avgPowerWatts?.takeIf { it > 0f }
+            ?: overview?.screenOffPowerWatts?.takeIf { it > 0f }
+            ?: 0f
+        val effectiveOffDurMs = rollingOffWindow?.effectiveDurationMs?.takeIf { it > 0L }
+            ?: overview?.screenOffDurationMs?.takeIf { it > 0L }
+            ?: 0L
+
+        if (effectiveOffWatts > 0f) {
+            offEstimator.seedMediumTermPower(effectiveOffDurMs, effectiveOffWatts)
         }
 
-        // 3. 构建全局直接估计器备用（优先对接 v2Result 预测功耗作为 Long 尺度基准）
-        val globalFallbackEstimator = PowerEstimator()
+        // 3. 构建全局直接估计器备用（优先对接连续向前滑动全局放电窗口 rollingGlobalWindow 作为 Medium 稳态基石）
+        val globalFallbackEstimator = PowerEstimator(profile = EstimatorProfile.GLOBAL)
+        globalFallbackEstimator.setLongTermQuality(longQuality)
         val longGlobalPower = sevenDaysStats?.v2Result?.predictedPowerWatts
             ?: if (sevenDaysStats != null && totalCapacityWh != null && totalCapacityWh > 0f) {
                 val rate = sevenDaysStats.globalDischargeRatePercentPerHour
@@ -475,17 +664,23 @@ class RuntimeEstimator(
                 } else null
             } else null
         globalFallbackEstimator.setLongTermPower(longGlobalPower)
-        if (overview != null && overview.avgPowerWatts > 0f) {
-            val durMs = if (overview.totalDurationMs > 0L) overview.totalDurationMs else 0L
-            globalFallbackEstimator.seedCurrentSession(durMs, overview.avgPowerWatts)
+
+        val effectiveGlobalWatts = rollingGlobalWindow?.avgPowerWatts?.takeIf { it > 0f }
+            ?: overview?.avgPowerWatts?.takeIf { it > 0f }
+            ?: 0f
+        val effectiveGlobalDurMs = rollingGlobalWindow?.effectiveDurationMs?.takeIf { it > 0L }
+            ?: overview?.totalDurationMs?.takeIf { it > 0L }
+            ?: 0L
+
+        if (effectiveGlobalWatts > 0f) {
+            globalFallbackEstimator.seedMediumTermPower(effectiveGlobalDurMs, effectiveGlobalWatts)
         }
 
-        // 若具备当前会话的细粒度采样点，流式批量重放注入以激活 Fast 尺度实时跟踪与工况突变检测
-        if (!currentTrendPoints.isNullOrEmpty()) {
-            val onSamples = mutableListOf<PowerSample>()
-            val offSamples = mutableListOf<PowerSample>()
-            val globalSamples = mutableListOf<PowerSample>()
+        // 细粒度时序采样点流式重放：以连续向前滑动窗口时序样本为主导，激活 Fast 实时跟踪与工况突变检测
+        val onSamples = mutableListOf<PowerSample>()
+        val globalSamples = mutableListOf<PowerSample>()
 
+        if (!currentTrendPoints.isNullOrEmpty()) {
             for (pt in currentTrendPoints) {
                 if (pt.powerWatts <= 0f) continue
                 val sample = PowerSample(
@@ -499,29 +694,41 @@ class RuntimeEstimator(
                 globalSamples.add(sample)
                 if (pt.isScreenOn) {
                     onSamples.add(sample)
-                } else {
-                    offSamples.add(sample)
                 }
-            }
-
-            if (onSamples.isNotEmpty()) {
-                onEstimator.feedSessionTrendSamples(onSamples)
-            }
-            if (offSamples.isNotEmpty()) {
-                offEstimator.feedSessionTrendSamples(offSamples)
-            }
-            if (globalSamples.isNotEmpty()) {
-                globalFallbackEstimator.feedSessionTrendSamples(globalSamples)
             }
         }
 
-        // 4. 亮屏与息屏剩余续航独立计算（严格基于会话累计物理稳态均值与历史大样本基准，杜绝被瞬态噪声冲垮）
+        // 彻底去拔电会话化：优先完全由滑动窗口时序驱动；仅在滑动窗口无样本时由外部点集承接
+        val finalOnSamples = when {
+            rollingOnWindow != null && rollingOnWindow.samples.isNotEmpty() -> rollingOnWindow.samples
+            else -> onSamples
+        }
+        val finalGlobalSamples = when {
+            rollingGlobalWindow != null && rollingGlobalWindow.samples.isNotEmpty() -> rollingGlobalWindow.samples
+            else -> globalSamples
+        }
+
+        if (finalOnSamples.isNotEmpty()) {
+            onEstimator.feedSessionTrendSamples(finalOnSamples)
+        }
+        // 核心修正：息屏待机状态绝不注入离散时序采样点。
+        // 息屏绝大多数时间处于 AP 深度睡眠（Deep Sleep / Suspend），后台采样协程挂起；
+        // 离散采集到的极少数点几乎全为灭屏瞬态或偶发唤醒锁峰值（1.2W~1.8W），数学上属于典型有偏样本（Wakeup Bias）。
+        // 若强行注入会导致待机 Fast EWMA 被虚高拉抬并误触发工况突变，打压 Long 稳态基准。
+        // 息屏稳态由库仑计能量积分 sessionOffWatts 与 7 天大样本典型待机基准 longOffPower 联合驱动，天然免受瞬态噪声污染。
+        if (finalGlobalSamples.isNotEmpty()) {
+            globalFallbackEstimator.feedSessionTrendSamples(finalGlobalSamples)
+        }
+
+        // 4. 亮屏与息屏剩余续航独立计算（严格基于连续滑动放电稳态均值与历史大样本基准，杜绝被瞬态噪声冲垮）
         val onEstimate = estimateScreenOn(
             usableEnergyWh = usableEnergy,
             onPowerEstimator = onEstimator,
             batteryLevelPercent = batteryLevelPercent,
             heavyPowerW = heavyOnW,
-            lightPowerW = lightOnW
+            lightPowerW = lightOnW,
+            tempCelsius = tempCelsius,
+            energyConfidence = energyConfidence
         )
 
         val offEstimate = estimateScreenOff(
@@ -529,12 +736,44 @@ class RuntimeEstimator(
             offPowerEstimator = offEstimator,
             batteryLevelPercent = batteryLevelPercent,
             offHighPowerW = offHighW,
-            offLowPowerW = offLowW
+            offLowPowerW = offLowW,
+            tempCelsius = tempCelsius,
+            energyConfidence = energyConfidence
         )
 
-        // 5. 全局综合续航推算（融合亮屏/待机占空比与真实工况，优先采用 v2Result 画像中的精确占空比）
-        val screenOnRatio = sevenDaysStats?.v2Result?.profile?.screenOnRatio
+        // 5. 全局综合续航推算（融合当前放电周期/滑动窗口近期行为与 7 天长期习惯，自适应连续阻尼加权）
+        val longScreenOnRatio = sevenDaysStats?.v2Result?.profile?.screenOnRatio
             ?: sevenDaysStats?.sceneScreenOnRatio?.toDouble()
+
+        // 提取连续滑动放电时序的全局物理时长与亮屏时长（彻底脱离单次拔电会话，严格保证分子与分母同源）
+        val effectiveTotalScopeDur = rollingGlobalWindow?.effectiveDurationMs?.takeIf { it > 0L }
+            ?: overview?.totalDurationMs?.takeIf { it > 0L }
+            ?: 0L
+        val effectiveOnScopeDur = rollingGlobalWindow?.screenOnDurationMs?.takeIf { it >= 0L }
+            ?: rollingOnWindow?.effectiveDurationMs?.takeIf { it > 0L }
+            ?: overview?.screenOnDurationMs?.takeIf { it > 0L }
+            ?: 0L
+
+        val recentScreenOnRatio = if (effectiveTotalScopeDur >= 600_000L && effectiveOnScopeDur >= 0L) {
+            (effectiveOnScopeDur.toDouble() / effectiveTotalScopeDur.toDouble()).coerceIn(0.0, 1.0)
+        } else null
+
+        // 依据有效观测时长自适应确定近期占空比可信度权重 alpha (0~6h 随观测时间从 0.0 连续平滑递增至最高 0.35)
+        // 遵循生理与昼夜节律物理阻尼：全天日常作息保底占 65% 以上，杜绝单次日间连续用机行为被过度放大为全天预期
+        val screenOnRatio = when {
+            longScreenOnRatio != null && recentScreenOnRatio != null -> {
+                val alpha = if (effectiveTotalScopeDur > 0L) {
+                    ((effectiveTotalScopeDur.toDouble() / 21600_000.0) * 0.35).coerceIn(0.0, 0.35)
+                } else {
+                    0.0
+                }
+                (alpha * recentScreenOnRatio) + ((1.0 - alpha) * longScreenOnRatio)
+            }
+            longScreenOnRatio != null -> longScreenOnRatio
+            recentScreenOnRatio != null -> recentScreenOnRatio
+            else -> null
+        }
+
         val heavyGlobalW = if (screenOnRatio != null && heavyOnW != null && offHighW != null) {
             screenOnRatio * heavyOnW + (1.0 - screenOnRatio) * offHighW
         } else null
@@ -550,13 +789,16 @@ class RuntimeEstimator(
             fallbackGlobalEstimator = globalFallbackEstimator,
             batteryLevelPercent = batteryLevelPercent,
             heavyGlobalPowerW = heavyGlobalW,
-            lightGlobalPowerW = lightGlobalW
+            lightGlobalPowerW = lightGlobalW,
+            tempCelsius = tempCelsius,
+            energyConfidence = energyConfidence
         )
 
         return TripleRuntimeResult(
             screenOnEstimate = onEstimate,
             screenOffEstimate = offEstimate,
-            globalEstimate = globalEstimate
+            globalEstimate = globalEstimate,
+            modelVersion = RemainingModelVersion.REMAINING_RUNTIME_V2_2
         )
     }
 }
@@ -574,5 +816,5 @@ data class TripleRuntimeResult(
     val screenOffEstimate: RuntimeEstimate,
     val globalEstimate: RuntimeEstimate,
     val modelVersion: com.battery.analysis.domain.estimator.model.RemainingModelVersion =
-        com.battery.analysis.domain.estimator.model.RemainingModelVersion.REMAINING_RUNTIME_V2_1
+        com.battery.analysis.domain.estimator.model.RemainingModelVersion.REMAINING_RUNTIME_V2_2
 )

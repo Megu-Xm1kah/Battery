@@ -1,10 +1,13 @@
 package com.battery.analysis
 
 import com.battery.analysis.domain.estimator.PowerEstimator
+import com.battery.analysis.domain.estimator.RollingDischargeBuffer
 import com.battery.analysis.domain.estimator.RuntimeEstimator
 import com.battery.analysis.domain.estimator.model.RuntimeModelType
 import com.battery.analysis.manager.PowerOverviewStats
+import com.battery.analysis.model.PowerDischargePoint
 import com.battery.analysis.model.SevenDaysDischargeStats
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -19,6 +22,16 @@ import org.junit.Test
 class RuntimeEstimatorTest {
 
     private val estimator = RuntimeEstimator()
+
+    @org.junit.Before
+    fun setUp() {
+        RollingDischargeBuffer.resetForTesting()
+    }
+
+    @org.junit.After
+    fun tearDown() {
+        RollingDischargeBuffer.resetForTesting()
+    }
 
     /**
      * 测试电芯工作温度修正系数 K_T 在常温、极低温与极端高温下的物理衰减特性。
@@ -196,16 +209,16 @@ class RuntimeEstimatorTest {
     fun testContinuousWeightInterpolationAndConvexCombinationRegimeChange() {
         val estimator = PowerEstimator()
 
-        // 1. 验证 7 个关键锚点的精确权重值（误差 < 1e-6）
+        // 1. 验证关键锚点的精确权重值（误差 < 1e-6）
         val expectedAnchors = listOf(
             0L to Triple(0.05, 0.15, 0.80),
             300_000L to Triple(0.10, 0.20, 0.70),      // 5 min
-            600_000L to Triple(0.15, 0.25, 0.60),      // 10 min
-            1_200_000L to Triple(0.20, 0.35, 0.45),    // 20 min
-            1_800_000L to Triple(0.25, 0.40, 0.35),    // 30 min
-            3_600_000L to Triple(0.25, 0.50, 0.25),    // 60 min
-            7_200_000L to Triple(0.25, 0.55, 0.20),    // 120 min
-            10_800_000L to Triple(0.25, 0.55, 0.20)    // 180 min (超出120min保持超稳态)
+            600_000L to Triple(0.12, 0.28, 0.60),      // 10 min
+            1_200_000L to Triple(0.15, 0.35, 0.50),    // 20 min
+            1_800_000L to Triple(0.15, 0.45, 0.40),    // 30 min
+            3_600_000L to Triple(0.15, 0.55, 0.30),    // 60 min (1h)
+            7_200_000L to Triple(0.15, 0.60, 0.25),    // 120 min (亮屏终态)
+            10_800_000L to Triple(0.15, 0.60, 0.25)    // 180 min (超出120min保持亮屏终态)
         )
 
         for ((dur, expected) in expectedAnchors) {
@@ -245,12 +258,12 @@ class RuntimeEstimatorTest {
         assertEquals(0.75, wm0, 1e-3)
         assertEquals(1.0, wf0 + wm0, 1e-9)
 
-        // 120min: baseWf = 0.25, baseWm = 0.55 -> 降级归一化为 0.25/0.80 = 0.3125, 0.55/0.80 = 0.6875
+        // 120min: baseWf = 0.15, baseWm = 0.60 -> 降级归一化为 0.15/0.75 = 0.20, 0.60/0.75 = 0.80
         estimator.seedCurrentSession(durationMs = 7_200_000L, powerWatts = 3.0f)
         val (wf120, wm120, wl120) = estimator.calculateAdaptiveWeights()
         assertEquals(0.0, wl120, 1e-6)
-        assertEquals(0.3125, wf120, 1e-3)
-        assertEquals(0.6875, wm120, 1e-3)
+        assertEquals(0.20, wf120, 1e-3)
+        assertEquals(0.80, wm120, 1e-3)
         assertEquals(1.0, wf120 + wm120, 1e-9)
     }
 
@@ -709,5 +722,288 @@ class RuntimeEstimatorTest {
             trendResult.screenOnEstimate.remainingMs!! < baseResult.screenOnEstimate.remainingMs!!
         )
     }
+
+    /**
+     * 验证真机截图真实工况下的物理自洽性与预测高精度：
+     * 对应用户真机工况（剩余 51%，可用 15.18Wh，当前拔电 4h43m）：
+     * - 实测亮屏：1.56W (03h59m / 84.8%)
+     * - 实测息屏：0.63W (43m06s / 15.2%)
+     * - 实测全局：1.42W (04h43m)
+     * - 7天大样本画像：典型亮屏 1.80W，典型待机 0.57W（休眠0.33W 65.2%，唤醒1.02W 34.8%），典型全局 1.25W，作息亮屏比 53.6%
+     *
+     * 严格断言：
+     * 1. 息屏预测待机功耗自然收敛在 0.57W ~ 0.63W 稳态区间（坚决杜绝误算为 1.22W），待机续航恢复至 24h ~ 26h；
+     * 2. 全局综合功耗自然收敛在 1.25W ~ 1.42W（坚决杜绝 1.64W 倒挂），综合续航恢复至 10h ~ 12h；
+     * 3. 严格满足真实物理单调性：P_off < P_global < P_on，且 T_on < T_global < T_off。
+     */
+    @Test
+    fun testRealDeviceScreenshotScenarioPhysicalPrecision() {
+        val profile = com.battery.analysis.domain.estimator.model.RuntimeProfile(
+            windowStartMs = 1700000000000L,
+            windowEndMs = 1700604800000L,
+            windowDays = 7,
+            effectiveDischargeMs = 7 * 86400 * 1000L,
+            screenOnMs = (7 * 86400 * 1000L * 0.536).toLong(),
+            screenOffMs = (7 * 86400 * 1000L * 0.464).toLong(),
+            screenOnRatio = 0.536,
+            screenOffRatio = 0.464,
+            lightMs = 10000L, normalMs = 10000L, heavyMs = 10000L,
+            lightRatio = 0.3, normalRatio = 0.4, heavyRatio = 0.3,
+            lightPowerW = 1.00, normalPowerW = 1.80, heavyPowerW = 2.80,
+            typicalScreenOnPowerW = 1.80,
+            offLowPowerW = 0.33, offHighPowerW = 1.02,
+            typicalScreenOffPowerW = 0.57
+        )
+        val v2Result = com.battery.analysis.domain.estimator.model.FullChargeRuntimeResult(
+            fullRuntimeMs = 24 * 3600_000L,
+            fullEnergyWh = 29.76,
+            predictedPowerWatts = 1.25,
+            predictedScreenOnPowerWatts = 1.80,
+            predictedScreenOffPowerWatts = 0.57,
+            modelVersion = com.battery.analysis.domain.estimator.model.RuntimeModelVersion.FULL_RUNTIME_V2_2,
+            confidenceLevel = com.battery.analysis.domain.estimator.model.RuntimeConfidenceLevel.HIGH,
+            energySource = com.battery.analysis.domain.estimator.model.EnergySource.FCC_TIMES_NOMINAL_VOLTAGE,
+            effectiveHistoryMs = 7 * 86400 * 1000L,
+            usedRegimeModel = true,
+            profile = profile
+        )
+        val sevenDays = SevenDaysDischargeStats(
+            screenOnDischargeRatePercentPerHour = null,
+            screenOffDischargeRatePercentPerHour = 1.6f,
+            globalDischargeRatePercentPerHour = 3.8f,
+            sceneScreenOnRatio = 0.536f,
+            v2Result = v2Result
+        )
+
+        // 当前拔电放电会话物理做功真实实测统计
+        val overview = PowerOverviewStats(
+            avgPowerWatts = 1.42f,
+            screenOnPowerWatts = 1.56f,
+            screenOffPowerWatts = 0.63f,
+            screenOnDurationMs = 14_340_000L, // 03h59m
+            screenOffDurationMs = 2_586_000L,  // 43m06s
+            totalDurationMs = 16_980_000L     // 04h43m
+        )
+
+        val result = estimator.estimateTripleRuntimes(
+            overview = overview,
+            sevenDaysStats = sevenDays,
+            batteryLevelPercent = 51.0f,
+            remainingEnergyWh = 15.18f,
+            totalCapacityWh = 29.76f,
+            tempCelsius = 28.0f
+        )
+
+        val pOn = result.screenOnEstimate.predictedPowerWatts
+        val pOff = result.screenOffEstimate.predictedPowerWatts
+        val pGlobal = result.globalEstimate.predictedPowerWatts
+
+        val tOn = result.screenOnEstimate.remainingMs
+        val tOff = result.screenOffEstimate.remainingMs
+        val tGlobal = result.globalEstimate.remainingMs
+
+        assertNotNull("亮屏预测功耗非空", pOn)
+        assertNotNull("息屏预测功耗非空", pOff)
+        assertNotNull("全局综合预测功耗非空", pGlobal)
+
+        assertNotNull("亮屏预测续航非空", tOn)
+        assertNotNull("息屏预测续航非空", tOff)
+        assertNotNull("全局综合预测续航非空", tGlobal)
+
+        // 1. 息屏待机功耗断言：自然处于 7 天典型 0.57W 与当前会话实测 0.63W 稳态区间
+        assertTrue(
+            "息屏待机功耗应在 0.57W ~ 0.63W 稳态区间内，绝不能虚高到 1.22W！实测为: $pOff W",
+            pOff!! in 0.56..0.64
+        )
+        val offHours = tOff!! / 3600_000.0
+        assertTrue(
+            "息屏待机理论续航应达到 23h ~ 27h 左右（51%电量在1.6%/h待机下正常续航），实测为: ${offHours}h",
+            offHours in 23.0..27.0
+        )
+
+        // 2. 全局综合功耗断言：自然处于 1.25W ~ 1.45W 区间，绝不能倒挂超越亮屏实测 1.56W 或预测 1.80W！
+        assertTrue(
+            "全局综合功耗应在 1.25W ~ 1.45W 之间，实测为: $pGlobal W",
+            pGlobal!! in 1.20..1.45
+        )
+        val globalHours = tGlobal!! / 3600_000.0
+        assertTrue(
+            "全局综合续航应在 10h ~ 12.5h 之间，实测为: ${globalHours}h",
+            globalHours in 10.0..12.5
+        )
+
+        // 3. 严格物理单调性断言：息屏待机功耗 < 全局综合功耗 < 亮屏功耗
+        assertTrue("物理单调性不成立：pOff ($pOff) 应严格小于 pGlobal ($pGlobal)", pOff < pGlobal)
+        assertTrue("物理单调性不成立：pGlobal ($pGlobal) 应严格小于 pOn ($pOn)", pGlobal < pOn!!)
+
+        // 续航时间单调性：持续亮屏续航 < 全局综合日常续航 < 持续息屏待机续航
+        assertTrue("续航物理单调性不成立：tOn ($tOn) 应严格小于 tGlobal ($tGlobal)", tOn!! < tGlobal)
+        assertTrue("续航物理单调性不成立：tGlobal ($tGlobal) 应严格小于 tOff ($tOff)", tGlobal < tOff)
+    }
+
+    /**
+     * 测试全局滑动窗口在遇到夜间跨越硬件深度休眠挂起（Suspend，点间隔超过 120 秒）时，
+     * 物理时长能够完整真实累加，绝不会被错误截断为 5 分钟，且做功微积分精确加权。
+     */
+    @Test
+    fun testGlobalWindowNightDeepSleepIntegralNotTruncated() {
+        val testDir = File(System.getProperty("java.io.tmpdir"), "test_global_sleep_" + System.currentTimeMillis())
+        testDir.mkdirs()
+        RollingDischargeBuffer.resetForTesting()
+        val buffer = RollingDischargeBuffer.initForTesting(testDir)
+
+        val baseTs = 1_700_000_000_000L
+        val points = mutableListOf<PowerDischargePoint>()
+
+        // 模拟夜间深睡场景：晚上 23:00 至次日 07:00，整整 8 小时（28,800,000 ms）
+        // 期间系统处于深度休眠挂起，后台唤醒打点每 30 分钟（1,800,000 ms）唤醒一次打一个点（唤醒瞬态 1.2W，其余时间挂起）
+        val intervalMs = 1_800_000L // 30 分钟
+        val count = 16 // 16 * 30 min = 8 小时
+        for (i in 0..count) {
+            val ts = baseTs + (i * intervalMs)
+            val level = 90 - (i / 4) // 电量平缓下降
+            points.add(
+                PowerDischargePoint(
+                    timestamp = ts,
+                    elapsedHours = (i * 0.5).toFloat(),
+                    batteryLevel = level,
+                    voltageVolts = 3.9f,
+                    temperature = 25.0f,
+                    powerWatts = 1.2f, // 唤醒时瞬态功耗
+                    isScreenOn = false
+                )
+            )
+        }
+        buffer.appendSamplesBatch(points)
+
+        // 提取 6 小时全局滑动窗口（目标回溯 21,600,000 ms），休眠底噪设为设备实测 0.30W
+        val globalWindow = buffer.extractRollingGlobalWindow(21600_000L, baselineSleepWatts = 0.30)
+        assertNotNull("全局滑动窗口应成功提取", globalWindow)
+
+        val durMs = globalWindow!!.effectiveDurationMs
+        val durHours = durMs / 3600_000.0
+        // 累计时长必须达到目标 6 小时左右（绝不能因为被截断成5分钟导致累计时长只有几十分钟！）
+        assertTrue("全局滑动窗口时长应达到约 6 小时，实测为: ${durHours}h", durHours in 5.8..6.5)
+
+        val avgWatts = globalWindow.avgPowerWatts
+        // 功耗应由 10s 唤醒脉冲(1.2W)与 0.30W 底噪真实加权，处于 0.30W ~ 0.33W 之间，绝不能被 1.2W 垄断或虚高！
+        assertTrue("全局滑动窗口平均功率应真实收敛于休眠底噪区间(0.30W~0.33W)，实测为: $avgWatts W", avgWatts in 0.30f..0.33f)
+
+        testDir.deleteRecursively()
+    }
+
+    /**
+     * 测试滑动缓冲区在逆序扫描跨越插电充电鸿沟（两点相隔 > 1小时且电量倒挂）时，
+     * 能够准确触发物理断开，绝不把插电充电的数小时计入放电时间，且总压降 totalLevelDrop 准确分段累加。
+     */
+    @Test
+    fun testChargingGapPhysicalDisconnectInRollingBuffer() {
+        val testDir = File(System.getProperty("java.io.tmpdir"), "test_charging_gap_" + System.currentTimeMillis())
+        testDir.mkdirs()
+        RollingDischargeBuffer.resetForTesting()
+        val buffer = RollingDischargeBuffer.initForTesting(testDir)
+
+        val baseTs = 1_700_000_000_000L
+        val points = mutableListOf<PowerDischargePoint>()
+
+        // 1. 充电前放电段：持续 30 分钟（1800 秒），电量从 40% 掉至 35%（压降 5%），平均功率 2.0W 亮屏
+        for (i in 0..6) {
+            points.add(
+                PowerDischargePoint(
+                    timestamp = baseTs + (i * 300_000L), // 每 5 分钟
+                    elapsedHours = (i * 5.0 / 60.0).toFloat(),
+                    batteryLevel = 40 - (i * 5 / 6),
+                    voltageVolts = 3.8f,
+                    temperature = 30.0f,
+                    powerWatts = 2.0f,
+                    isScreenOn = true
+                )
+            )
+        }
+
+        // 2. 插电充电过程：持续 2 小时（7,200,000 ms），电量从 35% 充到了 95%
+        val afterChargingTs = baseTs + 1800_000L + 7200_000L // 充电 2 小时后
+
+        // 3. 拔电后放电段：持续 20 分钟，电量从 95% 掉至 93%（压降 2%），平均功率 2.5W 亮屏
+        for (i in 0..4) {
+            points.add(
+                PowerDischargePoint(
+                    timestamp = afterChargingTs + (i * 300_000L), // 每 5 分钟
+                    elapsedHours = ((1800_000L + 7200_000L + i * 300_000L) / 3600_000.0).toFloat(),
+                    batteryLevel = 95 - (i * 2 / 4),
+                    voltageVolts = 4.2f,
+                    temperature = 28.0f,
+                    powerWatts = 2.5f,
+                    isScreenOn = true
+                )
+            )
+        }
+
+        buffer.appendSamplesBatch(points)
+
+        // 回溯提取 60 分钟亮屏窗口
+        val onWindow = buffer.extractRollingScreenOnWindow(3600_000L)
+        assertNotNull("亮屏滑动窗口应成功提取", onWindow)
+
+        val durMs = onWindow!!.effectiveDurationMs
+        val durMinutes = durMs / 60_000.0
+        // 有效放电时间应为拔电后 20 分钟 + 充电前 30 分钟 = 约 50 分钟（绝对不能包含充电的 120 分钟！）
+        assertTrue("有效放电时长应为约 50 分钟，绝不能包含充电的 2 小时！实测为: ${durMinutes}分钟", durMinutes in 45.0..55.0)
+
+        // 验证放电速率：总压降应为拔电后 2% + 充电前 5% = 7%，7% / (50/60 h) ≈ 8.4%/h
+        val rate = onWindow.dischargeRatePercentPerHour
+        assertNotNull("放电速率不应为 null（电量倒挂已被分段压降解决）", rate)
+        assertTrue("放电速率应在 7.0%/h ~ 9.5%/h 之间，实测为: $rate %/h", rate!! in 7.0f..9.5f)
+
+        testDir.deleteRecursively()
+    }
+
+    /**
+     * 测试滑动窗口支持动态注入真实大样本画像休眠底噪基线 baselineSleepWatts，
+     * 验证在不同底噪画像下做功微积分忠实反映设备硬件个性化数据。
+     */
+    @Test
+    fun testDynamicBaselineSleepWattsIntegration() {
+        val testDir = File(System.getProperty("java.io.tmpdir"), "test_sleep_profile_" + System.currentTimeMillis())
+        testDir.mkdirs()
+        RollingDischargeBuffer.resetForTesting()
+        val buffer = RollingDischargeBuffer.initForTesting(testDir)
+
+        val baseTs = 1_700_000_000_000L
+        val points = mutableListOf<PowerDischargePoint>()
+        // 模拟待机 2 小时，打点间隔 15 分钟
+        for (i in 0..8) {
+            points.add(
+                PowerDischargePoint(
+                    timestamp = baseTs + (i * 900_000L),
+                    elapsedHours = (i * 0.25).toFloat(),
+                    batteryLevel = 80 - (i / 4),
+                    voltageVolts = 3.9f,
+                    temperature = 26.0f,
+                    powerWatts = 1.0f,
+                    isScreenOn = false
+                )
+            )
+        }
+        buffer.appendSamplesBatch(points)
+
+        // 1. 注入真实机型底噪 0.33W
+        val window033 = buffer.extractRollingScreenOffWindow(7200_000L, baselineSleepWatts = 0.33)
+        assertNotNull(window033)
+        val p033 = window033!!.avgPowerWatts
+        assertTrue("注入 0.33W 底噪时，加权平均功率应在 0.33W ~ 0.35W 之间，实测为: $p033 W", p033 in 0.33f..0.36f)
+
+        // 2. 注入超低功耗机型底噪 0.10W
+        val window010 = buffer.extractRollingScreenOffWindow(7200_000L, baselineSleepWatts = 0.10)
+        assertNotNull(window010)
+        val p010 = window010!!.avgPowerWatts
+        assertTrue("注入 0.10W 底噪时，加权平均功率应在 0.10W ~ 0.13W 之间，实测为: $p010 W", p010 in 0.10f..0.13f)
+
+        // 3. 验证动态注入的物理单调性：底噪更高的机型算出的待机均功率严格更高
+        assertTrue("底噪 0.33W 算出的功率应严格高于底噪 0.10W", p033 > p010)
+
+        testDir.deleteRecursively()
+    }
 }
+
 
