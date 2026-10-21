@@ -7,12 +7,14 @@
     <!-- 顶级 ViewPager2 容器：承载“耗电/充电”、“检测”、“设置”三大顶级页面 -->
     <androidx.viewpager2.widget.ViewPager2
         android:id="@+id/main_view_pager"
+        android:layout_above="@id/layout_bottom_nav_container"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
     <!-- 底部导航容器（包含底部分割线与导航栏，支持整体平滑联动平移下沉隐藏与上浮显示） -->
     <LinearLayout
         android:id="@+id/layout_bottom_nav_container"
+        android:elevation="8dp"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_alignParentBottom="true"
@@ -34,7 +36,7 @@
             app:elevation="8dp"
             app:itemIconTint="@color/selector_nav_item_color"
             app:itemTextColor="@color/selector_nav_item_color"
-            app:labelVisibilityMode="unlabeled"
+            app:labelVisibilityMode="labeled"
             app:menu="@menu/bottom_nav_menu"
             app:paddingBottomSystemWindowInsets="false"
             app:paddingTopSystemWindowInsets="false" />
