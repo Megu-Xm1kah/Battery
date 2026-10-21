@@ -190,5 +190,51 @@ class PowerDischargeMetricsViewBinderTest {
         // 0.63W / 29.62Wh * 100% ≈ 2.127%/h
         assertEquals(2.13f, rate!!, 0.05f)
     }
+
+    /**
+     * 测试当前会话实测放电速度计算，验证基于功率做功积分物理速率与会话有效时长的精准度。
+     */
+    @Test
+    fun testCalculateSessionDischargeRate() {
+        val totalCapacityWh = 20.0f
+        val overview = PowerOverviewStats(
+            avgPowerWatts = 1.0f,
+            totalDurationMs = 3600_000L * 3,
+            screenOnDurationMs = 3600_000L + 60_000L * 15 + 1000L * 30,
+            screenOnPowerWatts = 2.0f,
+            screenOffDurationMs = 3600_000L + 60_000L * 44 + 1000L * 30,
+            screenOffPowerWatts = 0.4f
+        )
+
+        // 亮屏：2.0W / 20.0Wh * 100% = 10.0%/h
+        val (onRate, onDur) = PowerDischargeMetricsViewBinder.calculateSessionDischargeRate(
+            rowType = BatteryEnergyCalculator.ROW_SCREEN_ON,
+            totalCapacityWh = totalCapacityWh,
+            overview = overview
+        )
+        org.junit.Assert.assertNotNull(onRate)
+        assertEquals(10.0f, onRate!!, 0.01f)
+        assertEquals(3600_000L + 60_000L * 15 + 1000L * 30, onDur)
+
+        // 息屏：0.4W / 20.0Wh * 100% = 2.0%/h
+        val (offRate, offDur) = PowerDischargeMetricsViewBinder.calculateSessionDischargeRate(
+            rowType = BatteryEnergyCalculator.ROW_SCREEN_OFF,
+            totalCapacityWh = totalCapacityWh,
+            overview = overview
+        )
+        org.junit.Assert.assertNotNull(offRate)
+        assertEquals(2.0f, offRate!!, 0.01f)
+        assertEquals(3600_000L + 60_000L * 44 + 1000L * 30, offDur)
+
+        // 全局：1.0W / 20.0Wh * 100% = 5.0%/h
+        val (globalRate, globalDur) = PowerDischargeMetricsViewBinder.calculateSessionDischargeRate(
+            rowType = BatteryEnergyCalculator.ROW_GLOBAL,
+            totalCapacityWh = totalCapacityWh,
+            overview = overview
+        )
+        org.junit.Assert.assertNotNull(globalRate)
+        assertEquals(5.0f, globalRate!!, 0.01f)
+        assertEquals(3600_000L * 3, globalDur)
+    }
 }
 

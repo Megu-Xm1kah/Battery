@@ -923,6 +923,12 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
         }
         val remDurationMs = remEstimate?.remainingMs
 
+        val (sessionRate, sessionDurationMs) = PowerDischargeMetricsViewBinder.calculateSessionDischargeRate(
+            rowType = rowType,
+            totalCapacityWh = totalCapacityWh,
+            overview = overview
+        )
+
         val message = BatteryEnergyCalculator.formatDischargeSpeedCardDetailMessage(
             rowType = rowType,
             currentRatePercentPerHour = currentRate,
@@ -936,7 +942,10 @@ class PowerHistoryDetailActivity : AppCompatActivity() {
             remainingDurationMs = remDurationMs,
             v2Result = sevenDays?.v2Result,
             remainingEstimate = remEstimate,
-            displayUnit = currentDisplayUnit
+            displayUnit = currentDisplayUnit,
+            nominalVoltageVolts = BatteryEnergyCalculator.DEFAULT_NOMINAL_VOLTAGE_VOLTS,
+            sessionRatePercentPerHour = sessionRate,
+            sessionDurationMs = sessionDurationMs
         )
         if (message.isNotBlank()) {
             showBubbleTooltip(anchorView, message, autoDismissMs = 0L)
